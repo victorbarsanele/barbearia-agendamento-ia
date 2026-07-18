@@ -1,0 +1,54 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StatusAgendamento {
+  AGENDADO
+  CONFIRMADO
+  CANCELADO
+  CONCLUIDO
+}
+
+model Cliente {
+  id           String        @id @default(cuid())
+  nome         String
+  telefone     String        @unique
+  email        String?
+  createdAt    DateTime      @default(now()) @db.Timestamptz(3)
+  agendamentos Agendamento[]
+
+  @@map("clientes")
+}
+
+model Servico {
+  id            String        @id @default(cuid())
+  nome          String
+  duracaoMinutos Int
+  preco         Decimal?      @db.Decimal(10, 2)
+  agendamentos  Agendamento[]
+
+  @@map("servicos")
+}
+
+model Agendamento {
+  id             String            @id @default(cuid())
+  clienteId      String
+  servicoId      String
+  dataHoraInicio DateTime          @db.Timestamptz(3)
+  dataHoraFim    DateTime          @db.Timestamptz(3)
+  status         StatusAgendamento @default(AGENDADO)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+
+  cliente        Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  servico        Servico           @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+
+  @@index([clienteId])
+  @@index([servicoId])
+  @@index([dataHoraInicio, dataHoraFim, status])
+  @@map("agendamentos")
+}
