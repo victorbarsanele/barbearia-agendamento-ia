@@ -41,6 +41,7 @@ export function DateTimePicker({
     const minuteButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
     const hourScrollTimerRef = useRef<number | null>(null);
     const minuteScrollTimerRef = useRef<number | null>(null);
+    const skipNextAutoAlignRef = useRef(false);
 
     useEffect(() => {
         if (value) {
@@ -53,7 +54,24 @@ export function DateTimePicker({
     const selectedMinute = valueParts?.minute ?? '';
 
     useEffect(() => {
+        return () => {
+            if (hourScrollTimerRef.current !== null) {
+                window.clearTimeout(hourScrollTimerRef.current);
+            }
+
+            if (minuteScrollTimerRef.current !== null) {
+                window.clearTimeout(minuteScrollTimerRef.current);
+            }
+        };
+    }, []);
+
+    useEffect(() => {
         if (!valueParts) {
+            return;
+        }
+
+        if (skipNextAutoAlignRef.current) {
+            skipNextAutoAlignRef.current = false;
             return;
         }
 
@@ -76,13 +94,25 @@ export function DateTimePicker({
     }, [valueParts?.hour, valueParts?.minute]);
 
     const emitDate = (date: Date) => {
+        // Evita realinhar scroll quando mudança veio da própria interação interna.
+        skipNextAutoAlignRef.current = true;
+        setViewDate(date);
         onChange(date);
     };
 
     const getActiveDate = (): Date => {
         const parts = getBrazilDateParts(value ?? viewDate);
 
-        return createBrazilDate(parts.year, parts.monthIndex, parts.day, 6, 0);
+        const hour = selectedHour || parts.hour || '06';
+        const minute = selectedMinute || parts.minute || '00';
+
+        return createBrazilDate(
+            parts.year,
+            parts.monthIndex,
+            parts.day,
+            Number(hour),
+            Number(minute),
+        );
     };
 
     const handleHourSelect = (hour: string) => {
@@ -199,9 +229,11 @@ export function DateTimePicker({
                 key={value ? getBrazilDateKey(value) : 'calendar-empty'}
                 valueKey={value ? getBrazilDateKey(value) : null}
                 onChange={(dateKey) => {
+                    skipNextAutoAlignRef.current = true;
                     const nextDate = new Date(
                         `${dateKey}T${selectedHour || '06'}:${selectedMinute || '00'}:00-03:00`,
                     );
+                    setViewDate(nextDate);
                     onChange(nextDate);
                 }}
                 minDateKey={minDate ? getBrazilDateKey(minDate) : null}

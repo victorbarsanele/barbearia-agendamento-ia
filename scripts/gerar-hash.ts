@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { hash } from 'bcryptjs';
 
 async function main(): Promise<void> {
