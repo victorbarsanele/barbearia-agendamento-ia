@@ -4,6 +4,10 @@ import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 
+function normalizarTelefone(telefone: string): string {
+    return telefone.replace(/\D/g, '');
+}
+
 function isForeignKeyConflict(error: unknown): boolean {
     if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -39,15 +43,21 @@ export async function criar(data: {
     nome: string;
     telefone: string;
 }): Promise<Cliente> {
-    const existente = await clienteRepository.buscarPorTelefone(data.telefone);
+    const telefone = normalizarTelefone(data.telefone);
+    const existente = await clienteRepository.buscarPorTelefone(telefone);
     if (existente) {
         throw new AppError('Telefone já cadastrado.', 409);
     }
-    return clienteRepository.criar(data);
+    return clienteRepository.criar({
+        ...data,
+        telefone,
+    });
 }
 
 export async function buscarPorTelefone(telefone: string): Promise<Cliente> {
-    const cliente = await clienteRepository.buscarPorTelefone(telefone);
+    const cliente = await clienteRepository.buscarPorTelefone(
+        normalizarTelefone(telefone),
+    );
     if (!cliente) {
         throw new AppError('Cliente não encontrado.', 404);
     }
@@ -66,19 +76,22 @@ export async function atualizar(
     id: string,
     data: { nome: string; telefone: string },
 ): Promise<Cliente> {
+    const telefone = normalizarTelefone(data.telefone);
     const clienteExistente = await clienteRepository.buscarPorId(id);
     if (!clienteExistente) {
         throw new AppError('Cliente não encontrado.', 404);
     }
 
-    const clienteComTelefone = await clienteRepository.buscarPorTelefone(
-        data.telefone,
-    );
+    const clienteComTelefone =
+        await clienteRepository.buscarPorTelefone(telefone);
     if (clienteComTelefone && clienteComTelefone.id !== id) {
         throw new AppError('Telefone já cadastrado.', 409);
     }
 
-    return clienteRepository.atualizar(id, data);
+    return clienteRepository.atualizar(id, {
+        ...data,
+        telefone,
+    });
 }
 
 export async function excluirPorId(id: string): Promise<void> {

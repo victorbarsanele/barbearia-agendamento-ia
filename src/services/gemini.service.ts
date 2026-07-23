@@ -5,6 +5,7 @@ import {
     GoogleGenAI,
 } from '@google/genai';
 import { StatusAgendamento } from '@prisma/client';
+import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
@@ -20,6 +21,17 @@ const HORA_FECHAMENTO = 19;
 const DIAS_FUNCIONAMENTO = [1, 2, 3, 4, 5, 6] as const;
 const MAX_HISTORY_ITEMS = 20;
 const SLOT_MINUTOS = 30;
+const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
+const GEMINI_RETRY_JITTER_FACTOR = 0.2;
+const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
+    'Estou com alta demanda no momento, tente novamente em alguns instantes.';
+
+class GeminiRateLimitError extends AppError {
+    constructor() {
+        super(GEMINI_RATE_LIMIT_FALLBACK_MESSAGE, 503);
+        this.name = 'GeminiRateLimitError';
+    }
+}
 
 interface ConversaItem {
     role: 'user' | 'model';
@@ -37,8 +49,8 @@ interface CriarAgendamentoArgs {
     dataHoraInicio: string;
 }
 
-interface ConsultarAgendamentoArgs {
-    telefone: string;
+interface AtualizarAgendamentoArgs {
+    dataHoraInicio: string;
 }
 
 type HistoricoRole = 'user' | 'model';
@@ -47,6 +59,9 @@ const conversationHistory = new Map<string, ConversaItem[]>();
 
 const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
+    'Sempre que cliente mencionar agendamento, reagendamento ou cancelamento, chame consultarAgendamento novamente antes de decidir a próxima ação.',
+    'Sempre que cliente perguntar sobre disponibilidade de horário, chame buscarHorariosDisponiveis novamente, mesmo que já tenha consultado antes na mesma conversa.',
+    'Nunca reutilize resposta antiga do histórico para inferir se cliente tem agendamento ativo, pois estado pode ter mudado no painel administrativo.',
     'Sempre responda em português brasileiro.',
     'Seja cordial, direta e breve.',
     'Responda em no máximo 2 ou 3 frases curtas por mensagem.',
@@ -62,11 +77,16 @@ const BASE_SYSTEM_PROMPT = [
     'Antes de sugerir horários, chame a função buscarServicos.',
     'Sempre confirme os dados com o cliente antes de criar o agendamento.',
     'Quando necessário, faça perguntas curtas para coletar dados faltantes.',
+    'Ao pedir data ao cliente, nunca mencione formato técnico (ex.: YYYY-MM-DD); peça data de forma natural e converta internamente para usar as tools.',
     'Quando o cliente enviar perguntas curtas e vagas após sua mensagem (ex.: "por que?", "como assim?", "o que aconteceu?"), interprete sempre no contexto imediato da conversa antes de recusar por escopo.',
     'Só recuse quando a mensagem estiver claramente fora de agendamento mesmo considerando o histórico da conversa.',
     'Evite inventar horários ou serviços inexistentes.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
     'Se criarAgendamento retornar sucesso=false, explique ao cliente exatamente o texto de mensagem retornado pela tool, sem trocar por "erro interno" genérico.',
+    'Só chame atualizarAgendamento ou cancelarAgendamento depois de confirmação explícita do cliente em uma mensagem separada (ex.: "sim", "pode confirmar").',
+    'Nunca chame atualizarAgendamento ou cancelarAgendamento no mesmo turno em que você sugere novo horário ou ação.',
+    'Se cliente já tiver agendamento ativo e mensagem puder significar tanto novo agendamento quanto reagendamento, pergunte explicitamente a intenção antes de chamar criarAgendamento ou atualizarAgendamento.',
+    'Nunca presuma silenciosamente se deve criar ou reagendar quando houver ambiguidade.',
 ].join(' ');
 
 function getNowInBrasiliaIso(): string {
@@ -109,13 +129,14 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'buscarHorariosDisponiveis',
         description:
-            'Retorna horários livres em uma data no formato YYYY-MM-DD, considerando agenda e funcionamento (09h-19h, seg-sab).',
+            'Retorna horários livres em uma data desejada, considerando agenda e funcionamento (09h-19h, seg-sab).',
         parametersJsonSchema: {
             type: 'object',
             properties: {
                 data: {
                     type: 'string',
-                    description: 'Data no formato YYYY-MM-DD.',
+                    description:
+                        'Data desejada para consulta de disponibilidade.',
                 },
             },
             required: ['data'],
@@ -157,16 +178,35 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'consultarAgendamento',
         description:
-            'Consulta os agendamentos futuros de um cliente pelo telefone.',
+            'Consulta os agendamentos futuros do cliente da sessão atual.',
+        parametersJsonSchema: {
+            type: 'object',
+            properties: {},
+        },
+    },
+    {
+        name: 'atualizarAgendamento',
+        description:
+            'Reagenda o agendamento ativo mais próximo do cliente da conversa para um novo horário.',
         parametersJsonSchema: {
             type: 'object',
             properties: {
-                telefone: {
+                dataHoraInicio: {
                     type: 'string',
-                    description: 'Telefone do cliente (com DDD).',
+                    description:
+                        'Nova data/hora de início em formato ISO 8601.',
                 },
             },
-            required: ['telefone'],
+            required: ['dataHoraInicio'],
+        },
+    },
+    {
+        name: 'cancelarAgendamento',
+        description:
+            'Cancela o agendamento ativo mais próximo do cliente da conversa.',
+        parametersJsonSchema: {
+            type: 'object',
+            properties: {},
         },
     },
 ];
@@ -210,6 +250,55 @@ function normalizePhone(value: string): string {
     return extractPhoneDigits(value);
 }
 
+function buildPhoneVariants(value: string): string[] {
+    const digits = normalizePhone(value);
+
+    if (!digits) {
+        return [];
+    }
+
+    const variants = new Set<string>([digits]);
+
+    if (
+        digits.startsWith('55') &&
+        (digits.length === 12 || digits.length === 13)
+    ) {
+        variants.add(digits.slice(2));
+    } else if (digits.length === 10 || digits.length === 11) {
+        variants.add(`55${digits}`);
+    }
+
+    return Array.from(variants);
+}
+
+async function buscarClientePorTelefoneVariantes(
+    telefone: string,
+): Promise<Awaited<ReturnType<typeof clienteRepository.buscarPorTelefone>>> {
+    const variants = buildPhoneVariants(telefone);
+
+    for (const variant of variants) {
+        const cliente = await clienteRepository.buscarPorTelefone(variant);
+        if (cliente) {
+            return cliente;
+        }
+    }
+
+    // Fallback para base legada com telefone salvo com máscara/pontuação.
+    const clientes = await clienteRepository.listarTodos();
+    const variantsSet = new Set(variants);
+
+    for (const cliente of clientes) {
+        const normalized = normalizePhone(cliente.telefone);
+        const normalizedVariants = buildPhoneVariants(normalized);
+
+        if (normalizedVariants.some((item) => variantsSet.has(item))) {
+            return cliente;
+        }
+    }
+
+    return null;
+}
+
 function normalizeBrazilPhoneForEvolution(value: string): string {
     const digits = normalizePhone(value);
 
@@ -246,6 +335,137 @@ function normalizeDateTimeInput(value: string): string {
     return `${date}T${hour}:${minute}:${secondSafe}-03:00`;
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
+}
+
+function readNumericStatusFromRecord(
+    record: Record<string, unknown> | null,
+    key: string,
+): number | null {
+    if (!record) {
+        return null;
+    }
+
+    const raw = record[key];
+
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+        return raw;
+    }
+
+    if (typeof raw === 'string') {
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    return null;
+}
+
+function extractErrorStatusCode(error: unknown): number | null {
+    if (!error || typeof error !== 'object') {
+        return null;
+    }
+
+    const root = error as Record<string, unknown>;
+
+    const directStatus =
+        readNumericStatusFromRecord(root, 'status') ??
+        readNumericStatusFromRecord(root, 'statusCode') ??
+        readNumericStatusFromRecord(root, 'code');
+
+    if (directStatus !== null) {
+        return directStatus;
+    }
+
+    const response =
+        root.response && typeof root.response === 'object'
+            ? (root.response as Record<string, unknown>)
+            : null;
+
+    const responseStatus = readNumericStatusFromRecord(response, 'status');
+    if (responseStatus !== null) {
+        return responseStatus;
+    }
+
+    const cause =
+        root.cause && typeof root.cause === 'object'
+            ? (root.cause as Record<string, unknown>)
+            : null;
+
+    const causeStatus =
+        readNumericStatusFromRecord(cause, 'status') ??
+        readNumericStatusFromRecord(cause, 'statusCode');
+
+    return causeStatus;
+}
+
+function isGeminiRateLimitError(error: unknown): boolean {
+    return extractErrorStatusCode(error) === 429;
+}
+
+function buildBackoffDelayMs(
+    baseDelayMs: number,
+    randomFn: () => number = Math.random,
+): number {
+    const random = randomFn();
+    const clampedRandom = Math.min(Math.max(random, 0), 1);
+    const jitter = (clampedRandom * 2 - 1) * GEMINI_RETRY_JITTER_FACTOR;
+    return Math.max(0, Math.round(baseDelayMs * (1 + jitter)));
+}
+
+interface Retry429Options {
+    randomFn?: () => number;
+    sleepFn?: (ms: number) => Promise<void>;
+    warnFn?: (message: string, context: Record<string, unknown>) => void;
+}
+
+async function executeWith429Retry<T>(
+    operation: () => Promise<T>,
+    options: Retry429Options = {},
+): Promise<T> {
+    const randomFn = options.randomFn ?? Math.random;
+    const sleepFn = options.sleepFn ?? sleep;
+    const warnFn = options.warnFn ?? console.warn;
+
+    for (
+        let attempt = 0;
+        attempt <= GEMINI_RETRY_DELAYS_MS.length;
+        attempt += 1
+    ) {
+        try {
+            return await operation();
+        } catch (error) {
+            const isRateLimit = isGeminiRateLimitError(error);
+            const canRetry =
+                isRateLimit && attempt < GEMINI_RETRY_DELAYS_MS.length;
+
+            if (!canRetry) {
+                if (isRateLimit) {
+                    throw new GeminiRateLimitError();
+                }
+
+                throw error;
+            }
+
+            const retryNumber = attempt + 1;
+            const baseDelayMs = GEMINI_RETRY_DELAYS_MS[attempt];
+            const delayMs = buildBackoffDelayMs(baseDelayMs, randomFn);
+
+            warnFn('[GEMINI API] Retry por rate limit (429)', {
+                tentativaRetry: retryNumber,
+                tentativasMaximasRetry: GEMINI_RETRY_DELAYS_MS.length,
+                esperaMs: delayMs,
+            });
+
+            await sleepFn(delayMs);
+        }
+    }
+
+    throw new GeminiRateLimitError();
+}
+
 function formatInBrasilia(date: Date): string {
     return new Intl.DateTimeFormat('pt-BR', {
         timeZone: TIME_ZONE,
@@ -256,6 +476,36 @@ function formatInBrasilia(date: Date): string {
         minute: '2-digit',
         hour12: false,
     }).format(date);
+}
+
+function toBrasiliaDate(date: Date): Date {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TIME_ZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+    }).formatToParts(date);
+
+    const year = parts.find((part) => part.type === 'year')?.value ?? '0000';
+    const month = parts.find((part) => part.type === 'month')?.value ?? '01';
+    const day = parts.find((part) => part.type === 'day')?.value ?? '01';
+    const hour = parts.find((part) => part.type === 'hour')?.value ?? '00';
+    const minute = parts.find((part) => part.type === 'minute')?.value ?? '00';
+    const second = parts.find((part) => part.type === 'second')?.value ?? '00';
+
+    return new Date(
+        `${year}-${month}-${day}T${hour}:${minute}:${second}-03:00`,
+    );
+}
+
+function ehAgendamentoAtivoFuturo(dataHoraInicio: Date): boolean {
+    const inicioEmBrasilia = toBrasiliaDate(dataHoraInicio).getTime();
+    const agoraEmBrasilia = toBrasiliaDate(new Date()).getTime();
+    return inicioEmBrasilia >= agoraEmBrasilia;
 }
 
 function parseDateOnly(date: string): Date | null {
@@ -411,7 +661,8 @@ async function buscarHorariosDisponiveisTool(
         return {
             data: args.data,
             horarios: [],
-            observacao: 'Data inválida. Use o formato YYYY-MM-DD.',
+            observacao:
+                'Data inválida. Informe dia, mês e ano para eu verificar horários.',
         };
     }
 
@@ -491,8 +742,7 @@ async function criarAgendamentoTool(args: CriarAgendamentoArgs): Promise<{
         };
     }
 
-    let cliente =
-        await clienteRepository.buscarPorTelefone(telefoneNormalizado);
+    let cliente = await buscarClientePorTelefoneVariantes(telefoneNormalizado);
 
     if (!cliente) {
         cliente = await clienteRepository.criar({
@@ -542,9 +792,7 @@ async function criarAgendamentoTool(args: CriarAgendamentoArgs): Promise<{
     }
 }
 
-async function consultarAgendamentoTool(
-    args: ConsultarAgendamentoArgs,
-): Promise<{
+async function consultarAgendamentoTool(telefone: string): Promise<{
     telefone: string;
     agendamentos: Array<{
         id: string;
@@ -552,30 +800,41 @@ async function consultarAgendamentoTool(
         dataHoraInicio: string;
         status: string;
     }>;
+    observacao?: string;
 }> {
-    const telefoneNormalizado = normalizePhone(args.telefone);
+    const telefoneNormalizado = normalizePhone(telefone);
     const cliente =
-        await clienteRepository.buscarPorTelefone(telefoneNormalizado);
+        await buscarClientePorTelefoneVariantes(telefoneNormalizado);
 
     if (!cliente) {
         return {
             telefone: telefoneNormalizado,
             agendamentos: [],
+            observacao: 'sem agendamento futuro ativo',
         };
     }
 
-    const now = Date.now();
     const allAgendamentos = await agendamentoRepository.listarTodos();
 
     const futuros = allAgendamentos
         .filter((item) => item.clienteId === cliente.id)
         .filter((item) => item.status !== StatusAgendamento.CANCELADO)
-        .filter((item) => new Date(item.dataHoraInicio).getTime() > now)
+        .filter((item) =>
+            ehAgendamentoAtivoFuturo(new Date(item.dataHoraInicio)),
+        )
         .sort(
             (a, b) =>
                 new Date(a.dataHoraInicio).getTime() -
                 new Date(b.dataHoraInicio).getTime(),
         );
+
+    if (futuros.length === 0) {
+        return {
+            telefone: telefoneNormalizado,
+            agendamentos: [],
+            observacao: 'sem agendamento futuro ativo',
+        };
+    }
 
     return {
         telefone: telefoneNormalizado,
@@ -588,7 +847,178 @@ async function consultarAgendamentoTool(
     };
 }
 
-async function executeToolCall(call: FunctionCall): Promise<unknown> {
+async function consultarAgendamentoPorTelefoneContexto(
+    telefoneContexto: string,
+): Promise<{
+    telefone: string;
+    agendamentos: Array<{
+        id: string;
+        servico: string;
+        dataHoraInicio: string;
+        status: string;
+    }>;
+    observacao?: string;
+}> {
+    return consultarAgendamentoTool(telefoneContexto);
+}
+
+async function buscarAgendamentoAtivoMaisProximoPorTelefone(telefone: string) {
+    const telefoneNormalizado = normalizePhone(telefone);
+    if (!telefoneNormalizado) {
+        return null;
+    }
+
+    const cliente =
+        await buscarClientePorTelefoneVariantes(telefoneNormalizado);
+
+    if (!cliente) {
+        return null;
+    }
+
+    const allAgendamentos = await agendamentoRepository.listarTodos();
+
+    const ativosFuturos = allAgendamentos
+        .filter((item) => item.clienteId === cliente.id)
+        .filter((item) => item.status !== StatusAgendamento.CANCELADO)
+        .filter((item) =>
+            ehAgendamentoAtivoFuturo(new Date(item.dataHoraInicio)),
+        )
+        .sort(
+            (a, b) =>
+                new Date(a.dataHoraInicio).getTime() -
+                new Date(b.dataHoraInicio).getTime(),
+        );
+
+    return ativosFuturos[0] ?? null;
+}
+
+async function atualizarAgendamentoTool(
+    telefoneContexto: string,
+    args: AtualizarAgendamentoArgs,
+): Promise<{
+    sucesso: boolean;
+    mensagem: string;
+    motivoRecusa?: string;
+    agendamento?: unknown;
+}> {
+    if (!args?.dataHoraInicio?.trim()) {
+        return {
+            sucesso: false,
+            mensagem: 'Nova data/hora não informada para reagendamento.',
+        };
+    }
+
+    const agendamentoAtivo =
+        await buscarAgendamentoAtivoMaisProximoPorTelefone(telefoneContexto);
+
+    if (!agendamentoAtivo) {
+        return {
+            sucesso: false,
+            mensagem: 'Nenhum agendamento ativo encontrado para este telefone.',
+        };
+    }
+
+    try {
+        const agendamento = await agendamentoService.atualizar(
+            agendamentoAtivo.id,
+            {
+                clienteId: agendamentoAtivo.clienteId,
+                servicoId: agendamentoAtivo.servicoId,
+                dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
+                status: StatusAgendamento.AGENDADO,
+            },
+        );
+
+        return {
+            sucesso: true,
+            mensagem: 'Agendamento reagendado com sucesso.',
+            agendamento: {
+                id: agendamento.id,
+                cliente: agendamento.cliente.nome,
+                servico: agendamento.servico.nome,
+                dataHoraInicio: formatInBrasilia(
+                    new Date(agendamento.dataHoraInicio),
+                ),
+                status: agendamento.status,
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : 'Não foi possível reagendar o agendamento.';
+
+        console.warn('[GEMINI TOOL] atualizarAgendamento recusado', {
+            telefone: normalizePhone(telefoneContexto),
+            dataHoraInicio: args.dataHoraInicio,
+            motivo: message,
+        });
+
+        return {
+            sucesso: false,
+            mensagem: message,
+            motivoRecusa: message,
+        };
+    }
+}
+
+async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
+    sucesso: boolean;
+    mensagem: string;
+    motivoRecusa?: string;
+    agendamento?: unknown;
+}> {
+    const agendamentoAtivo =
+        await buscarAgendamentoAtivoMaisProximoPorTelefone(telefoneContexto);
+
+    if (!agendamentoAtivo) {
+        return {
+            sucesso: false,
+            mensagem: 'Nenhum agendamento ativo encontrado para este telefone.',
+        };
+    }
+
+    try {
+        const agendamento = await agendamentoService.cancelar(
+            agendamentoAtivo.id,
+        );
+
+        return {
+            sucesso: true,
+            mensagem: 'Agendamento cancelado com sucesso.',
+            agendamento: {
+                id: agendamento.id,
+                cliente: agendamento.cliente.nome,
+                servico: agendamento.servico.nome,
+                dataHoraInicio: formatInBrasilia(
+                    new Date(agendamento.dataHoraInicio),
+                ),
+                status: agendamento.status,
+            },
+        };
+    } catch (error) {
+        const message =
+            error instanceof Error
+                ? error.message
+                : 'Não foi possível cancelar o agendamento.';
+
+        console.warn('[GEMINI TOOL] cancelarAgendamento recusado', {
+            telefone: normalizePhone(telefoneContexto),
+            motivo: message,
+        });
+
+        return {
+            sucesso: false,
+            mensagem: message,
+            motivoRecusa: message,
+        };
+    }
+}
+
+async function executeToolCall(
+    call: FunctionCall,
+    phone: string,
+): Promise<unknown> {
     switch (call.name) {
         case 'buscarServicos':
             return buscarServicosTool();
@@ -601,9 +1031,14 @@ async function executeToolCall(call: FunctionCall): Promise<unknown> {
                 (call.args ?? {}) as unknown as CriarAgendamentoArgs,
             );
         case 'consultarAgendamento':
-            return consultarAgendamentoTool(
-                (call.args ?? {}) as unknown as ConsultarAgendamentoArgs,
+            return consultarAgendamentoPorTelefoneContexto(phone);
+        case 'atualizarAgendamento':
+            return atualizarAgendamentoTool(
+                phone,
+                (call.args ?? {}) as unknown as AtualizarAgendamentoArgs,
             );
+        case 'cancelarAgendamento':
+            return cancelarAgendamentoTool(phone);
         default:
             return { erro: `Função desconhecida: ${call.name}` };
     }
@@ -622,19 +1057,21 @@ async function runGeminiFunctionCalling(
     let finalText = '';
 
     for (let i = 0; i < 6; i += 1) {
-        const result = await ai.models.generateContent({
-            model: GEMINI_MODEL,
-            contents,
-            config: {
-                systemInstruction: buildSystemPrompt(),
-                tools: [{ functionDeclarations }],
-                toolConfig: {
-                    functionCallingConfig: {
-                        mode: FunctionCallingConfigMode.AUTO,
+        const result = await executeWith429Retry(() =>
+            ai.models.generateContent({
+                model: GEMINI_MODEL,
+                contents,
+                config: {
+                    systemInstruction: buildSystemPrompt(),
+                    tools: [{ functionDeclarations }],
+                    toolConfig: {
+                        functionCallingConfig: {
+                            mode: FunctionCallingConfigMode.AUTO,
+                        },
                     },
                 },
-            },
-        });
+            }),
+        );
 
         const functionCalls = result.functionCalls ?? [];
 
@@ -653,7 +1090,7 @@ async function runGeminiFunctionCalling(
         }
 
         for (const call of functionCalls) {
-            const toolResponse = await executeToolCall(call);
+            const toolResponse = await executeToolCall(call, phone);
 
             contents.push({
                 role: 'user',
@@ -727,7 +1164,9 @@ export async function processarMensagemWhatsapp(
         await sendWhatsAppText(remoteJid, reply);
     } catch (error) {
         const fallback =
-            'Tive uma instabilidade para processar sua mensagem agora. Tente novamente em instantes.';
+            error instanceof GeminiRateLimitError
+                ? GEMINI_RATE_LIMIT_FALLBACK_MESSAGE
+                : 'Tive uma instabilidade para processar sua mensagem agora. Tente novamente em instantes.';
 
         addToHistory(remoteJid, 'user', texto);
         addToHistory(remoteJid, 'model', fallback);
@@ -737,3 +1176,13 @@ export async function processarMensagemWhatsapp(
         console.error('[GEMINI SERVICE] Erro ao processar mensagem', error);
     }
 }
+
+export const __testables = {
+    consultarAgendamentoTool,
+    atualizarAgendamentoTool,
+    cancelarAgendamentoTool,
+    executeToolCall,
+    executeWith429Retry,
+    isGeminiRateLimitError,
+    GeminiRateLimitError,
+};
