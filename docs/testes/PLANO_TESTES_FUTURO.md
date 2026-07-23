@@ -7,12 +7,13 @@ Referência: ESTRATEGIA_TESTES.md. Itens aqui só entram em execução quando o 
 - [ ] Teste de contrato: dado um input conhecido, a função correta é chamada com os parâmetros esperados (mock do Gemini, não chamada real).
 - [ ] Teste de fallback: comportamento quando a API do Gemini falha ou tem timeout.
 - [ ] Teste de quota: comportamento ao atingir limite de RPD/RPM (fila, erro tratado, mensagem ao usuário).
+- [ ] Teste de integração do loop completo de function calling com múltiplas chamadas encadeadas no mesmo turno (mock de SDK).
 
 ## 2. E2E — Fluxo WhatsApp (Playwright ou script de integração)
 
 - [ ] Simular mensagem de cliente → resposta do bot → criação de agendamento → confirmação.
 - [ ] Simular tentativa de agendamento em horário indisponível → resposta correta do bot.
-- [ ] Simular cancelamento via WhatsApp (se/quando essa função existir).
+- [ ] Simular cancelamento via WhatsApp garantindo isolamento de sessão por `remoteJid` entre clientes diferentes.
 
 ## 3. Painel React (Vitest + Testing Library)
 
@@ -42,5 +43,6 @@ Referência: ESTRATEGIA_TESTES.md. Itens aqui só entram em execução quando o 
 ## Gatilho de revisão
 
 Revisitar este documento quando:
+
 - Deploy em produção estiver estável há pelo menos 2-4 semanas.
 - Uma das features futuras entrar em desenvolvimento ativo.

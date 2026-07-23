@@ -31,9 +31,17 @@ Referência: ESTRATEGIA_TESTES.md. Este documento lista o que deve ser testado a
 - [ ] Data salva em UTC é convertida corretamente para horário de Brasília na exibição.
 - [ ] Data recebida em horário de Brasília é convertida corretamente para UTC no armazenamento.
 
+## 5. gemini.service (Vitest — unitário)
+
+- [x] consultarAgendamento usa somente telefone de sessão (contexto WhatsApp), ignorando telefone vindo em args/texto.
+- [x] consultarAgendamento retorna agendamentos do próprio cliente quando existem.
+- [x] consultarAgendamento não expõe dados de outro cliente via telefone informado pelo modelo.
+- [x] atualizarAgendamento e cancelarAgendamento atuam apenas sobre agendamento ativo do telefone da sessão.
+- [x] Retry 429 aplica backoff e erro tratado após esgotar tentativas.
+
 ## Fora de escopo por ora
 
-- Function Calling do Gemini (buscarServicos, buscarHorariosDisponiveis, criarAgendamento, consultarAgendamento): testar via mock de contrato apenas se houver tempo, não é prioridade.
+- Chamada real da API Gemini: fora de escopo; manter validação local com mocks.
 - Componentes React (DateTimePicker, SkeletonCard, CalendarGrid): sem teste automatizado enquanto o visual estiver em iteração.
 - E2E completo do fluxo WhatsApp: fora de escopo atual.
 
