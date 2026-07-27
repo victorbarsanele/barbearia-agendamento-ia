@@ -41,16 +41,30 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Prevenção de conflito de horário no agendamento.
 - Notificação em caso de reagendamento.
 
-### 4. Decisões de arquitetura relevantes
+### 4. Demonstração
+
+**Agendamento via WhatsApp (IA)**
+
+![Fluxo de agendamento via WhatsApp](docs/media/whatsapp-agendamento.gif)
+
+**Painel administrativo**
+
+![Painel administrativo](docs/media/painel-admin.gif)
+
+**Seleção de data e horário**
+
+![DateTimePicker customizado](docs/media/datetime-picker.gif)
+
+### 5. Decisões de arquitetura relevantes
 
 - Organização em camadas: `routes` / `controllers` / `services` / `repositories`.
 - Datas armazenadas em UTC, com conversão de timezone na entrada/saída.
 - Cancelamento lógico de agendamento (status `CANCELADO`) em vez de exclusão física.
 - Filtro anti-jailbreak no webhook do WhatsApp para bloquear entradas suspeitas.
 
-### 5. Como rodar localmente
+### 6. Como rodar localmente
 
-#### 5.1 Variáveis de ambiente
+#### 6.1 Variáveis de ambiente
 
 Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem versionar valores):
 
@@ -65,7 +79,7 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
 
-#### 5.2 Backend (raiz)
+#### 6.2 Backend (raiz)
 
 ```bash
 npm install
@@ -79,7 +93,7 @@ npm run build
 npm start
 ```
 
-#### 5.3 Frontend (`painel/`)
+#### 6.3 Frontend (`painel/`)
 
 ```bash
 cd painel
@@ -94,7 +108,7 @@ cd painel
 npm run build
 ```
 
-#### 5.4 Dependência Evolution API (Docker)
+#### 6.4 Dependência Evolution API (Docker)
 
 A integração de WhatsApp depende da Evolution API rodando via Docker. Em ambiente local, execute a Evolution API em container (normalmente em projeto/stack separado) antes de testar fluxo de webhook e envio de mensagens.
 
@@ -104,7 +118,7 @@ Exemplo comum:
 docker-compose up -d
 ```
 
-### 6. Testes
+### 7. Testes
 
 Executar testes do backend na raiz:
 
@@ -117,11 +131,11 @@ Cobertura atual:
 - Regras de negócio de `agendamento.service` (conflitos, janela de atendimento, antecedência, cancelamento lógico, notificação de reagendamento).
 - Filtro anti-jailbreak no webhook (`webhook.controller`) para mensagens suspeitas, URLs, tamanho e origem de grupo.
 
-### 7. Status do projeto
+### 8. Status do projeto
 
 MVP validado com um cliente real, em preparação para deploy.
 
-### 8. Autor
+### 9. Autor
 
 - Nome: Víctor Barsanele
 - LinkedIn: https://linkedin.com/in/victorbarsanele
@@ -167,16 +181,30 @@ During appointments, the barber was losing time by manually answering scheduling
 - Schedule conflict prevention during booking.
 - Rescheduling notification flow.
 
-### 4. Relevant architecture decisions
+### 4. Demo
+
+**WhatsApp scheduling flow (AI)**
+
+![WhatsApp scheduling flow](docs/media/whatsapp-agendamento.gif)
+
+**Admin dashboard**
+
+![Admin dashboard](docs/media/painel-admin.gif)
+
+**Custom date/time picker**
+
+![Custom DateTimePicker](docs/media/datetime-picker.gif)
+
+### 5. Relevant architecture decisions
 
 - Layered architecture: `routes` / `controllers` / `services` / `repositories`.
 - Datetimes stored in UTC, with timezone conversion on input/output.
 - Logical cancellation for appointments (`CANCELADO` status) instead of physical deletion.
 - Anti-jailbreak filter in WhatsApp webhook to block suspicious input.
 
-### 5. Local setup
+### 6. Local setup
 
-#### 5.1 Environment variables
+#### 6.1 Environment variables
 
 Copy and fill variables from `.env.example` into a local `.env` file (do not commit values):
 
@@ -191,7 +219,7 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
 
-#### 5.2 Backend (root)
+#### 6.2 Backend (root)
 
 ```bash
 npm install
@@ -205,7 +233,7 @@ npm run build
 npm start
 ```
 
-#### 5.3 Frontend (`painel/`)
+#### 6.3 Frontend (`painel/`)
 
 ```bash
 cd painel
@@ -220,7 +248,7 @@ cd painel
 npm run build
 ```
 
-#### 5.4 Evolution API dependency (Docker)
+#### 6.4 Evolution API dependency (Docker)
 
 WhatsApp integration depends on Evolution API running through Docker. In local environment, run Evolution API in a container (usually in a separate project/stack) before testing webhook and outbound message flows.
 
@@ -230,7 +258,7 @@ Common example:
 docker-compose up -d
 ```
 
-### 6. Tests
+### 7. Tests
 
 Run backend tests from repository root:
 
@@ -243,11 +271,11 @@ Current coverage:
 - `agendamento.service` business rules (conflicts, business hours, lead time, logical cancellation, rescheduling notification).
 - Anti-jailbreak webhook filter (`webhook.controller`) for suspicious content, URLs, message length, and group-origin filtering.
 
-### 7. Project status
+### 8. Project status
 
 MVP validated with a real client, currently being prepared for deployment.
 
-### 8. Author
+### 9. Author
 
 - Name: Víctor Barsanele
 - LinkedIn: https://linkedin.com/in/victorbarsanele
