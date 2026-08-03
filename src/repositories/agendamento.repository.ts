@@ -1,4 +1,5 @@
 import { Prisma, StatusAgendamento } from '@prisma/client';
+import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
 
 export type AgendamentoComRelacoes = Prisma.AgendamentoGetPayload<{
@@ -27,6 +28,84 @@ const includeRelacoes = {
     servico: true,
 } satisfies Prisma.AgendamentoInclude;
 
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function hasConstraintName(texto: string): boolean {
+    const normalizado = texto.toLowerCase();
+    return (
+        normalizado.includes('sem_sobreposicao_horario') ||
+        (normalizado.includes('exclusion constraint') &&
+            normalizado.includes('agendamento'))
+    );
+}
+
+export function isViolacaoDeSobreposicao(error: unknown): boolean {
+    const visitados = new Set<unknown>();
+    const fila: unknown[] = [error];
+
+    while (fila.length > 0) {
+        const atual = fila.shift();
+
+        if (!isObject(atual) || visitados.has(atual)) {
+            continue;
+        }
+
+        visitados.add(atual);
+
+        const codigo =
+            typeof atual.code === 'string'
+                ? atual.code
+                : typeof atual['sqlState'] === 'string'
+                  ? (atual['sqlState'] as string)
+                  : undefined;
+
+        if (codigo === '23P01') {
+            return true;
+        }
+
+        if (typeof atual.message === 'string') {
+            const mensagem = atual.message.toLowerCase();
+            if (mensagem.includes('23p01') || hasConstraintName(mensagem)) {
+                return true;
+            }
+        }
+
+        if (isObject(atual.meta)) {
+            const meta = atual.meta;
+
+            if (
+                (typeof meta.code === 'string' && meta.code === '23P01') ||
+                (typeof meta['sqlState'] === 'string' &&
+                    meta['sqlState'] === '23P01')
+            ) {
+                return true;
+            }
+
+            for (const valor of Object.values(meta)) {
+                if (
+                    typeof valor === 'string' &&
+                    (valor.toLowerCase().includes('23p01') ||
+                        hasConstraintName(valor))
+                ) {
+                    return true;
+                }
+
+                if (isObject(valor)) {
+                    fila.push(valor);
+                }
+            }
+        }
+
+        if (isObject(atual.cause)) {
+            fila.push(atual.cause);
+        }
+    }
+
+    return false;
+}
+
 export async function criar(
     data: SalvarAgendamentoData,
 ): Promise<AgendamentoComRelacoes> {
@@ -36,6 +115,10 @@ export async function criar(
             include: includeRelacoes,
         });
     } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
         throw error;
     }
 }
@@ -95,6 +178,10 @@ export async function atualizar(
             include: includeRelacoes,
         });
     } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
         throw error;
     }
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StatusAgendamento } from '@prisma/client';
 
 // --- Mocks dos repositórios: nenhuma chamada real ao banco neste teste. ---
@@ -79,6 +79,8 @@ const AGENDAMENTO_DO_ALVO = {
 
 describe('Regressão de segurança: consultarAgendamento não deve confiar em telefone informado no chat', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(AGORA);
         vi.clearAllMocks();
 
         // Repositório de clientes: só resolve pelo telefone real de sessão.
@@ -99,6 +101,10 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
         (
             agendamentoRepository.listarTodos as ReturnType<typeof vi.fn>
         ).mockResolvedValue([AGENDAMENTO_DO_ALVO]);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('NÃO deve retornar agendamento de outro cliente mesmo se o Gemini enviar um telefone diferente no argumento da tool', async () => {
