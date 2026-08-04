@@ -1,5 +1,6 @@
 import { compare } from 'bcryptjs';
 import { FastifyReply, FastifyRequest } from 'fastify';
+import { revokeAuthToken } from '../plugins/auth.plugin';
 
 type UserRole = 'admin' | 'barber';
 
@@ -14,7 +15,16 @@ interface FixedUser {
     role: UserRole;
 }
 
+interface AuthenticatedUser {
+    username: string;
+    role: UserRole;
+}
+
 const INVALID_CREDENTIALS_MESSAGE = 'Usuario ou senha incorretos';
+
+function isCookieSecureEnabled(): boolean {
+    return process.env.COOKIE_SECURE === 'true';
+}
 
 function getFixedUsers(): FixedUser[] {
     const users: FixedUser[] = [
@@ -68,5 +78,42 @@ export async function login(
         },
     );
 
-    void reply.send({ token });
+    const cookieSecure = isCookieSecureEnabled();
+
+    void reply
+        .setCookie('token', token, {
+            httpOnly: true,
+            secure: cookieSecure,
+            sameSite: cookieSecure ? 'none' : 'lax',
+            path: '/',
+            maxAge: 8 * 60 * 60,
+        })
+        .send({ message: 'Login realizado com sucesso.' });
+}
+
+export async function logout(
+    request: FastifyRequest,
+    reply: FastifyReply,
+): Promise<void> {
+    const token = request.cookies.token;
+
+    if (token) {
+        revokeAuthToken(token);
+    }
+
+    void reply.clearCookie('token', { path: '/' }).send({
+        message: 'Logout realizado.',
+    });
+}
+
+export async function me(
+    request: FastifyRequest,
+    reply: FastifyReply,
+): Promise<void> {
+    const user = request.user as AuthenticatedUser;
+
+    void reply.send({
+        username: user.username,
+        role: user.role,
+    });
 }

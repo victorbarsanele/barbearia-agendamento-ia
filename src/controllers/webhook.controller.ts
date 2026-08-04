@@ -1,5 +1,6 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import {
+    escalarParaHumano,
     processarMensagemWhatsapp,
     sendWhatsAppText,
 } from '../services/gemini.service';
@@ -8,6 +9,8 @@ const MAX_MESSAGE_LENGTH = 500;
 const URL_PATTERN = /(https?:\/\/|www\.)/i;
 const JAILBREAK_PATTERN =
     /\b(ignore|system\s*prompt|instru[çc][aã]o|dan|jailbreak|bypass|prompt|base64)\b/i;
+const ESCALATION_KEYWORDS_PATTERN =
+    /\b(atendente|humano|pessoa real|falar com o barbeiro|falar com alguem)\b/i;
 
 interface BlockDecision {
     blocked: boolean;
@@ -113,6 +116,15 @@ export async function receberWhatsappWebhook(
     }
 
     if (!remoteJid || !conversation) {
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (ESCALATION_KEYWORDS_PATTERN.test(conversation)) {
+        console.log(
+            `[WEBHOOK] Escalonamento por palavra-chave | numero: ${remoteJid}`,
+        );
+        await escalarParaHumano(remoteJid, 'palavra_chave');
         void reply.status(200).send({ ok: true });
         return;
     }

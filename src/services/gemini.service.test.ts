@@ -10,15 +10,21 @@ vi.mock('../repositories/cliente.repository', () => ({
     listarTodos: vi.fn(),
 }));
 
+vi.mock('../repositories/servico.repository', () => ({
+    listarTodos: vi.fn(),
+}));
+
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
+    criar: vi.fn(),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
 }));
 
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import * as servicoRepository from '../repositories/servico.repository';
 import * as agendamentoService from './agendamento.service';
 import { __testables } from './gemini.service';
 
@@ -57,9 +63,107 @@ beforeEach(() => {
         clienteBase,
     );
     vi.mocked(clienteRepository.listarTodos).mockResolvedValue([clienteBase]);
+    vi.mocked(servicoRepository.listarTodos).mockResolvedValue([servicoBase]);
 });
 
 describe('gemini.service tools de reagendamento e cancelamento', () => {
+    it('recupera agendamento quando Gemini envia nome do serviço em vez do id', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'corte-simples-id-real',
+                nome: 'Corte Simples',
+                duracaoMinutos: 30,
+                preco: null,
+            },
+            {
+                id: 'corte-e-barba-id-real',
+                nome: 'Corte e Barba',
+                duracaoMinutos: 60,
+                preco: null,
+            },
+            {
+                id: 'barba-id-real',
+                nome: 'Barba',
+                duracaoMinutos: 30,
+                preco: null,
+            },
+        ]);
+
+        vi.mocked(agendamentoService.criar).mockResolvedValue({
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-criado-1',
+            servicoId: 'corte-simples-id-real',
+            servico: {
+                ...servicoBase,
+                id: 'corte-simples-id-real',
+                nome: 'Corte Simples',
+            },
+        });
+
+        const resultado = await __testables.criarAgendamentoTool({
+            nomeCliente: 'João Silva',
+            telefone: '5511999999999',
+            servicoId: 'corte simples',
+            dataHoraInicio: '2026-07-22T11:00:00',
+        });
+
+        expect(resultado).toMatchObject({
+            sucesso: true,
+            mensagem: 'Agendamento criado com sucesso.',
+        });
+
+        expect(agendamentoService.criar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                servicoId: 'corte-simples-id-real',
+            }),
+        );
+
+        expect(agendamentoService.criar).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                servicoId: 'corte simples',
+            }),
+        );
+    });
+
+    it('recusa educadamente sem expor id técnico quando serviço não existe de verdade', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'corte-simples-id-real',
+                nome: 'Corte Simples',
+                duracaoMinutos: 30,
+                preco: null,
+            },
+            {
+                id: 'corte-e-barba-id-real',
+                nome: 'Corte e Barba',
+                duracaoMinutos: 60,
+                preco: null,
+            },
+            {
+                id: 'barba-id-real',
+                nome: 'Barba',
+                duracaoMinutos: 30,
+                preco: null,
+            },
+        ]);
+
+        const resultado = await __testables.criarAgendamentoTool({
+            nomeCliente: 'João Silva',
+            telefone: '5511999999999',
+            servicoId: 'Serviço Que Não Existe',
+            dataHoraInicio: '2026-07-22T11:00:00',
+        });
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            mensagem:
+                'Não encontrei esse serviço. Pode confirmar o nome exato?',
+        });
+
+        expect(resultado.mensagem).not.toMatch(/c[a-z0-9]{20,}/i);
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+    });
+
     it('consulta prioriza telefone do contexto quando contexto já possui agendamento', async () => {
         vi.mocked(clienteRepository.buscarPorTelefone).mockImplementation(
             async (telefone: string) =>
@@ -255,6 +359,124 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             sucesso: true,
             mensagem: 'Agendamento reagendado com sucesso.',
         });
+    });
+
+    it('reagendamento mantém o serviço original quando servicoId não é informado', async () => {
+        const agendamentoComServicoOriginal = {
+            ...agendamentoAtivoProximo,
+            servicoId: 'servico-1',
+            servico: {
+                ...servicoBase,
+                id: 'servico-1',
+                nome: 'Corte Simples',
+            },
+        };
+
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoComServicoOriginal,
+        ]);
+
+        vi.mocked(agendamentoService.atualizar).mockResolvedValue({
+            ...agendamentoComServicoOriginal,
+            dataHoraInicio: new Date('2026-07-22T12:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-22T12:30:00-03:00'),
+        });
+
+        await __testables.atualizarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T12:00:00' },
+        );
+
+        expect(agendamentoService.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                servicoId: 'servico-1',
+            }),
+        );
+
+        expect(agendamentoService.atualizar).not.toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                servicoId: undefined,
+            }),
+        );
+    });
+
+    it('reagendamento troca o serviço quando cliente pede por nome', async () => {
+        const agendamentoComServicoOriginal = {
+            ...agendamentoAtivoProximo,
+            servicoId: 'servico-1',
+            servico: {
+                ...servicoBase,
+                id: 'servico-1',
+                nome: 'Corte Simples',
+            },
+        };
+
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'servico-1',
+                nome: 'Corte Simples',
+                duracaoMinutos: 30,
+                preco: null,
+            },
+            {
+                id: 'servico-2',
+                nome: 'Corte e Barba',
+                duracaoMinutos: 60,
+                preco: null,
+            },
+        ]);
+
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoComServicoOriginal,
+        ]);
+
+        vi.mocked(agendamentoService.atualizar).mockResolvedValue({
+            ...agendamentoComServicoOriginal,
+            servicoId: 'servico-2',
+            servico: {
+                ...servicoBase,
+                id: 'servico-2',
+                nome: 'Corte e Barba',
+            },
+            dataHoraInicio: new Date('2026-07-22T13:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-22T14:00:00-03:00'),
+        });
+
+        const resultado = await __testables.atualizarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            {
+                dataHoraInicio: '2026-07-22T13:00:00',
+                servicoId: 'Corte e Barba',
+            },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: true,
+            mensagem: 'Agendamento reagendado com sucesso.',
+        });
+
+        expect(agendamentoService.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                servicoId: 'servico-2',
+            }),
+        );
+
+        expect(agendamentoService.atualizar).not.toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                servicoId: 'servico-1',
+            }),
+        );
+
+        expect(agendamentoService.atualizar).not.toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                servicoId: 'Corte e Barba',
+            }),
+        );
     });
 
     it('falha reagendamento quando serviço detecta conflito de horário', async () => {

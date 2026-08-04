@@ -3,10 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../contexts/AuthContext';
 
-interface LoginResponse {
-    token: string;
-}
-
 function validateUsername(value: string): string | null {
     if (!value.trim()) {
         return 'Usuario e obrigatorio.';
@@ -41,7 +37,7 @@ function validatePassword(value: string): string | null {
 
 export function LoginPage() {
     const navigate = useNavigate();
-    const { isAuthenticated, login } = useAuth();
+    const { isAuthenticated, isLoading, login } = useAuth();
 
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -52,10 +48,10 @@ export function LoginPage() {
     const passwordError = useMemo(() => validatePassword(password), [password]);
 
     useEffect(() => {
-        if (isAuthenticated) {
+        if (!isLoading && isAuthenticated) {
             navigate('/', { replace: true });
         }
-    }, [isAuthenticated, navigate]);
+    }, [isAuthenticated, isLoading, navigate]);
 
     const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -69,23 +65,7 @@ export function LoginPage() {
         setIsSubmitting(true);
 
         try {
-            const response = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    username: username.trim(),
-                    password,
-                }),
-            });
-
-            if (!response.ok) {
-                throw new Error('INVALID_CREDENTIALS');
-            }
-
-            const data = (await response.json()) as LoginResponse;
-            login(data.token);
+            await login(username.trim(), password);
             navigate('/', { replace: true });
         } catch {
             setErrorMessage('Usuario ou senha incorretos');

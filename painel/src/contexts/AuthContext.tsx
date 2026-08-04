@@ -3,15 +3,25 @@ import {
     type ReactNode,
     useCallback,
     useContext,
+    useEffect,
     useMemo,
     useState,
 } from 'react';
+import { apiFetch } from '../services/api';
+
+type UserRole = 'admin' | 'barber';
+
+interface AuthUser {
+    username: string;
+    role: UserRole;
+}
 
 interface AuthContextValue {
-    token: string | null;
+    user: AuthUser | null;
     isAuthenticated: boolean;
-    login: (nextToken: string) => void;
-    logout: () => void;
+    isLoading: boolean;
+    login: (username: string, password: string) => Promise<void>;
+    logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -21,29 +31,86 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-    const [token, setToken] = useState<string | null>(() =>
-        localStorage.getItem('token'),
+    const [user, setUser] = useState<AuthUser | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    const refreshSession = useCallback(async (): Promise<void> => {
+        const response = await apiFetch('/api/auth/me');
+
+        if (!response.ok) {
+            throw new Error('UNAUTHORIZED');
+        }
+
+        const data = (await response.json()) as AuthUser;
+        setUser(data);
+    }, []);
+
+    const login = useCallback(
+        async (username: string, password: string) => {
+            const response = await apiFetch('/api/auth/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    username,
+                    password,
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error('INVALID_CREDENTIALS');
+            }
+
+            await refreshSession();
+        },
+        [refreshSession],
     );
 
-    const login = useCallback((nextToken: string) => {
-        localStorage.setItem('token', nextToken);
-        setToken(nextToken);
+    const logout = useCallback(async () => {
+        try {
+            await apiFetch('/api/auth/logout', {
+                method: 'POST',
+            });
+        } finally {
+            setUser(null);
+            window.location.assign('/login');
+        }
     }, []);
 
-    const logout = useCallback(() => {
-        localStorage.removeItem('token');
-        setToken(null);
-        window.location.assign('/login');
-    }, []);
+    useEffect(() => {
+        let isMounted = true;
+
+        const initializeSession = async () => {
+            try {
+                await refreshSession();
+            } catch {
+                if (isMounted) {
+                    setUser(null);
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        void initializeSession();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [refreshSession]);
 
     const contextValue = useMemo<AuthContextValue>(
         () => ({
-            token,
-            isAuthenticated: Boolean(token),
+            user,
+            isAuthenticated: Boolean(user),
+            isLoading,
             login,
             logout,
         }),
-        [login, logout, token],
+        [isLoading, login, logout, user],
     );
 
     return (

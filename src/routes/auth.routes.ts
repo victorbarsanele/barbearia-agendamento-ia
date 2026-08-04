@@ -5,6 +5,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     app.post(
         '/auth/login',
         {
+            config: {
+                rateLimit: {
+                    max: 5,
+                    timeWindow: '15 minutes',
+                },
+            },
             schema: {
                 body: {
                     type: 'object',
@@ -19,4 +25,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         },
         authController.login,
     );
+
+    app.post('/auth/logout', authController.logout);
+    app.get('/auth/me', authController.me);
 }

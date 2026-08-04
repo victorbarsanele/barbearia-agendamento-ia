@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { AppError } from './src/lib/app-error';
 import { agendamentoRoutes } from './src/routes/agendamento.routes';
@@ -11,6 +15,11 @@ import { registerAuthPlugin } from './src/plugins/auth.plugin';
 const app = Fastify({
     logger: true,
 });
+
+const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
 app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError) {
@@ -44,6 +53,16 @@ app.setErrorHandler((error, _request, reply) => {
     void reply.status(500).send({ message: 'Erro interno do servidor.' });
 });
 
+void app.register(cookie);
+void app.register(cors, {
+    origin: allowedOrigins,
+    credentials: true,
+});
+void app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+});
+void app.register(helmet);
 void app.register(registerAuthPlugin);
 void app.register(authRoutes);
 void app.register(clienteRoutes);

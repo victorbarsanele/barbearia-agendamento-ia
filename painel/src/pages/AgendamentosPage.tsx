@@ -228,7 +228,9 @@ export function AgendamentosPage() {
                             <Button
                                 variant="ghost"
                                 className="min-h-9 px-3 text-xs"
-                                onClick={logout}
+                                onClick={() => {
+                                    void logout();
+                                }}
                             >
                                 Sair
                             </Button>

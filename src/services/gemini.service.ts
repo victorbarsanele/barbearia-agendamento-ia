@@ -25,6 +25,18 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
+const ESCALATION_COOLDOWN_MS = Number(
+    process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000,
+);
+const CONFUSION_STREAK_LIMIT = 2;
+const NO_PROGRESS_SAFETY_LIMIT = 5;
+const CONFUSION_PATTERN =
+    /n[ãa]o (entendi|consegui entender)|pode (reformular|repetir)|n[ãa]o tenho certeza|desculpe.*n[ãa]o (consegui|entendi)/i;
+const ESCALATION_WAIT_MESSAGES = [
+    'Já avisei o barbeiro, ele já te responde por aqui em instantes.',
+    'Chamei o barbeiro para te atender, aguarde só um momento.',
+    'Encaminhei sua conversa para o barbeiro, ele já retorna.',
+];
 
 class GeminiRateLimitError extends AppError {
     constructor() {
@@ -51,11 +63,15 @@ interface CriarAgendamentoArgs {
 
 interface AtualizarAgendamentoArgs {
     dataHoraInicio: string;
+    servicoId?: string;
 }
 
 type HistoricoRole = 'user' | 'model';
 
 const conversationHistory = new Map<string, ConversaItem[]>();
+const escalationState = new Map<string, { since: number }>();
+const confusionStreak = new Map<string, number>();
+const noProgressStreak = new Map<string, number>();
 
 const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
@@ -81,6 +97,9 @@ const BASE_SYSTEM_PROMPT = [
     'Quando o cliente enviar perguntas curtas e vagas após sua mensagem (ex.: "por que?", "como assim?", "o que aconteceu?"), interprete sempre no contexto imediato da conversa antes de recusar por escopo.',
     'Só recuse quando a mensagem estiver claramente fora de agendamento mesmo considerando o histórico da conversa.',
     'Evite inventar horários ou serviços inexistentes.',
+    'Use sempre o campo "id" retornado por buscarServicos como servicoId, copiado exatamente como veio, sem abreviar, sem usar o nome do serviço como se fosse o id.',
+    'Se não tiver certeza absoluta do id do serviço no momento de chamar criarAgendamento ou atualizarAgendamento, chame buscarServicos novamente antes de prosseguir, mesmo que já tenha chamado antes na conversa.',
+    'Nunca revele ao cliente qualquer identificador interno do sistema (servicoId, clienteId, agendamentoId ou qualquer código técnico). Se um agendamento falhar, explique o motivo em linguagem natural e peça para o cliente confirmar novamente o nome do serviço desejado, sem mencionar nenhum código.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
     'Se criarAgendamento retornar sucesso=false, explique ao cliente exatamente o texto de mensagem retornado pela tool, sem trocar por "erro interno" genérico.',
     'Só chame atualizarAgendamento ou cancelarAgendamento depois de confirmação explícita do cliente em uma mensagem separada (ex.: "sim", "pode confirmar").',
@@ -195,6 +214,11 @@ const functionDeclarations: FunctionDeclaration[] = [
                     type: 'string',
                     description:
                         'Nova data/hora de início em formato ISO 8601.',
+                },
+                servicoId: {
+                    type: 'string',
+                    description:
+                        'ID do serviço selecionado para reagendamento, quando aplicável.',
                 },
             },
             required: ['dataHoraInicio'],
@@ -596,6 +620,56 @@ export function addToHistory(
     addToHistoryByPhone(phone, role, text);
 }
 
+function estaEmCooldownDeEscalonamento(phone: string): boolean {
+    const estado = escalationState.get(phone);
+    if (!estado) return false;
+
+    const expirado = Date.now() - estado.since > ESCALATION_COOLDOWN_MS;
+    if (expirado) {
+        escalationState.delete(phone);
+        confusionStreak.delete(phone);
+        noProgressStreak.delete(phone);
+        return false;
+    }
+
+    return true;
+}
+
+export async function escalarParaHumano(
+    remoteJid: string,
+    motivo: 'palavra_chave' | 'confusao_explicita' | 'sem_progresso',
+): Promise<void> {
+    const phone = normalizeConversationKey(remoteJid);
+    const jaEscalado = escalationState.has(phone);
+
+    if (!jaEscalado) {
+        escalationState.set(phone, { since: Date.now() });
+    }
+
+    const mensagem =
+        ESCALATION_WAIT_MESSAGES[
+            Math.floor(Math.random() * ESCALATION_WAIT_MESSAGES.length)
+        ];
+
+    await sendWhatsAppText(remoteJid, mensagem);
+    addToHistory(remoteJid, 'model', mensagem);
+
+    if (!jaEscalado) {
+        const barberPhone = process.env.BARBER_PHONE?.trim();
+        if (barberPhone) {
+            await sendWhatsAppText(
+                barberPhone,
+                `Cliente ${phone} precisa de atendimento manual (motivo: ${motivo}).`,
+            ).catch((error) =>
+                console.error(
+                    '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento',
+                    error,
+                ),
+            );
+        }
+    }
+}
+
 function buildConversationContents(
     phone: string,
     incomingText: string,
@@ -650,6 +724,22 @@ async function buscarServicosTool(): Promise<{
             preco: formatarPreco(servico.preco),
         })),
     };
+}
+
+async function resolverServicoId(
+    servicoIdOuNome: string,
+): Promise<string | null> {
+    const servicos = await servicoRepository.listarTodos();
+
+    const porId = servicos.find((s) => s.id === servicoIdOuNome);
+    if (porId) return porId.id;
+
+    const normalizado = servicoIdOuNome.trim().toLowerCase();
+    const porNome = servicos.find(
+        (s) => s.nome.trim().toLowerCase() === normalizado,
+    );
+
+    return porNome?.id ?? null;
 }
 
 async function buscarHorariosDisponiveisTool(
@@ -751,10 +841,20 @@ async function criarAgendamentoTool(args: CriarAgendamentoArgs): Promise<{
         });
     }
 
+    const servicoIdResolvido = await resolverServicoId(args.servicoId);
+
+    if (!servicoIdResolvido) {
+        return {
+            sucesso: false,
+            mensagem:
+                'Não encontrei esse serviço. Pode confirmar o nome exato?',
+        };
+    }
+
     try {
         const agendamento = await agendamentoService.criar({
             clienteId: cliente.id,
-            servicoId: args.servicoId,
+            servicoId: servicoIdResolvido,
             dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
         });
 
@@ -779,7 +879,8 @@ async function criarAgendamentoTool(args: CriarAgendamentoArgs): Promise<{
 
         console.warn('[GEMINI TOOL] criarAgendamento recusado', {
             telefone: telefoneNormalizado,
-            servicoId: args.servicoId,
+            servicoIdOriginal: args.servicoId,
+            servicoIdResolvido,
             dataHoraInicio: args.dataHoraInicio,
             motivo: message,
         });
@@ -918,12 +1019,28 @@ async function atualizarAgendamentoTool(
         };
     }
 
+    let servicoIdParaAtualizar = agendamentoAtivo.servicoId;
+
+    if (args?.servicoId?.trim()) {
+        const servicoIdResolvido = await resolverServicoId(args.servicoId);
+
+        if (!servicoIdResolvido) {
+            return {
+                sucesso: false,
+                mensagem:
+                    'Não encontrei esse serviço. Pode confirmar o nome exato?',
+            };
+        }
+
+        servicoIdParaAtualizar = servicoIdResolvido;
+    }
+
     try {
         const agendamento = await agendamentoService.atualizar(
             agendamentoAtivo.id,
             {
                 clienteId: agendamentoAtivo.clienteId,
-                servicoId: agendamentoAtivo.servicoId,
+                servicoId: servicoIdParaAtualizar,
                 dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
                 status: StatusAgendamento.AGENDADO,
             },
@@ -1047,7 +1164,7 @@ async function executeToolCall(
 async function runGeminiFunctionCalling(
     phone: string,
     userMessage: string,
-): Promise<string> {
+): Promise<{ text: string; usouTool: boolean }> {
     const ai = getGeminiClient();
     const contents: Array<Record<string, unknown>> = buildConversationContents(
         phone,
@@ -1055,6 +1172,7 @@ async function runGeminiFunctionCalling(
     );
 
     let finalText = '';
+    let usouTool = false;
 
     for (let i = 0; i < 6; i += 1) {
         const result = await executeWith429Retry(() =>
@@ -1090,6 +1208,7 @@ async function runGeminiFunctionCalling(
         }
 
         for (const call of functionCalls) {
+            usouTool = true;
             const toolResponse = await executeToolCall(call, phone);
 
             contents.push({
@@ -1110,10 +1229,13 @@ async function runGeminiFunctionCalling(
     }
 
     if (!finalText) {
-        return 'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?';
+        return {
+            text: 'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?',
+            usouTool,
+        };
     }
 
-    return finalText;
+    return { text: finalText, usouTool };
 }
 
 export async function sendWhatsAppText(
@@ -1156,9 +1278,47 @@ export async function processarMensagemWhatsapp(
 ): Promise<void> {
     try {
         const phone = normalizeConversationKey(remoteJid);
-        const reply = await runGeminiFunctionCalling(phone, texto);
+
+        if (estaEmCooldownDeEscalonamento(phone)) {
+            await escalarParaHumano(remoteJid, 'sem_progresso');
+            return;
+        }
+
+        const { text: reply, usouTool } = await runGeminiFunctionCalling(
+            phone,
+            texto,
+        );
 
         addToHistory(remoteJid, 'user', texto);
+
+        if (usouTool) {
+            confusionStreak.delete(phone);
+            noProgressStreak.delete(phone);
+        } else {
+            const pareceuConfuso = CONFUSION_PATTERN.test(reply);
+
+            if (pareceuConfuso) {
+                const streak = (confusionStreak.get(phone) ?? 0) + 1;
+                confusionStreak.set(phone, streak);
+                noProgressStreak.delete(phone);
+
+                if (streak >= CONFUSION_STREAK_LIMIT) {
+                    await escalarParaHumano(remoteJid, 'confusao_explicita');
+                    return;
+                }
+            } else {
+                confusionStreak.delete(phone);
+
+                const streakGeral = (noProgressStreak.get(phone) ?? 0) + 1;
+                noProgressStreak.set(phone, streakGeral);
+
+                if (streakGeral >= NO_PROGRESS_SAFETY_LIMIT) {
+                    await escalarParaHumano(remoteJid, 'sem_progresso');
+                    return;
+                }
+            }
+        }
+
         addToHistory(remoteJid, 'model', reply);
 
         await sendWhatsAppText(remoteJid, reply);
@@ -1178,6 +1338,7 @@ export async function processarMensagemWhatsapp(
 }
 
 export const __testables = {
+    criarAgendamentoTool,
     consultarAgendamentoTool,
     atualizarAgendamentoTool,
     cancelarAgendamentoTool,
@@ -1185,4 +1346,5 @@ export const __testables = {
     executeWith429Retry,
     isGeminiRateLimitError,
     GeminiRateLimitError,
+    escalarParaHumano,
 };
