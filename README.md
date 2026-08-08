@@ -3,6 +3,10 @@
 - [Português](#barbearia-ia---sistema-de-agendamento-inteligente)
 - [English](#barbershop-ai---smart-scheduling-system)
 
+## CI Status
+
+![CI](https://github.com/victorbarsanele/barbearia-agendamento-ia/actions/workflows/ci.yml/badge.svg)
+
 ## Barbearia IA - Sistema de Agendamento Inteligente
 
 Sistema de agendamento para barbearia com automação de conversas via WhatsApp e IA. Projeto monorepo com backend para regras de negócio e frontend para operação administrativa.
@@ -142,6 +146,10 @@ MVP validado com um cliente real, em preparação para deploy.
 - GitHub: https://github.com/victorbarsanele
 
 ---
+
+## CI Status
+
+![CI](https://github.com/victorbarsanele/barbearia-agendamento-ia/actions/workflows/ci.yml/badge.svg)
 
 ## Barbershop AI - Smart Scheduling System
 
