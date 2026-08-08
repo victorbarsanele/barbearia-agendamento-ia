@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: barbearia_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/barbearia_test
+      JWT_SECRET: ci-test-secret
+      GEMINI_API_KEY: ci-test-key
+      EVOLUTION_API_KEY: ci-test-key
+      ADMIN_USER: ci-admin
+      ADMIN_PASSWORD_HASH: ci-placeholder-hash
+      BARBER_USER: ci-barber
+      BARBER_PASSWORD_HASH: ci-placeholder-hash
+      BARBER_PHONE: '5511999999999'
+      CORS_ORIGINS: http://localhost:5173
+      COOKIE_SECURE: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar Prisma Client
+        run: npx prisma generate
+
+      - name: Aplicar migrations no banco de teste
+        run: npx prisma migrate deploy
+
+      - name: Rodar testes
+        run: npx vitest run
