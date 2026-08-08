@@ -18,6 +18,8 @@ const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const TIME_ZONE = agendamentoService.TIME_ZONE;
 const HORA_ABERTURA = 9;
 const HORA_FECHAMENTO = 19;
+const HORA_ALMOCO_INICIO = 11 * 60 + 30;
+const HORA_ALMOCO_FIM = 12 * 60;
 const DIAS_FUNCIONAMENTO = [1, 2, 3, 4, 5, 6] as const;
 const MAX_HISTORY_ITEMS = 20;
 const SLOT_MINUTOS = 30;
@@ -52,6 +54,7 @@ interface ConversaItem {
 
 interface BuscarHorariosDisponiveisArgs {
     data: string;
+    servicoId?: string;
 }
 
 interface CriarAgendamentoArgs {
@@ -156,6 +159,11 @@ const functionDeclarations: FunctionDeclaration[] = [
                     type: 'string',
                     description:
                         'Data desejada para consulta de disponibilidade.',
+                },
+                servicoId: {
+                    type: 'string',
+                    description:
+                        'ID do serviço para considerar a duração ao calcular disponibilidade.',
                 },
             },
             required: ['data'],
@@ -637,7 +645,11 @@ function estaEmCooldownDeEscalonamento(phone: string): boolean {
 
 export async function escalarParaHumano(
     remoteJid: string,
-    motivo: 'palavra_chave' | 'confusao_explicita' | 'sem_progresso',
+    motivo:
+        | 'palavra_chave'
+        | 'confusao_explicita'
+        | 'sem_progresso'
+        | 'limite_de_cota',
 ): Promise<void> {
     const phone = normalizeConversationKey(remoteJid);
     const jaEscalado = escalationState.has(phone);
@@ -657,9 +669,14 @@ export async function escalarParaHumano(
     if (!jaEscalado) {
         const barberPhone = process.env.BARBER_PHONE?.trim();
         if (barberPhone) {
+            const descricaoMotivo =
+                motivo === 'limite_de_cota'
+                    ? 'sistema atingiu limite de uso da API'
+                    : `motivo: ${motivo}`;
+
             await sendWhatsAppText(
                 barberPhone,
-                `Cliente ${phone} precisa de atendimento manual (motivo: ${motivo}).`,
+                `Cliente ${phone} precisa de atendimento manual (${descricaoMotivo}).`,
             ).catch((error) =>
                 console.error(
                     '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento',
@@ -766,7 +783,20 @@ async function buscarHorariosDisponiveisTool(
     }
 
     const allAgendamentos = await agendamentoRepository.listarTodos();
+    const servicos = await servicoRepository.listarTodos();
     const targetDateKey = getDateKeyInBrasilia(date);
+
+    const servicoNormalizado = args.servicoId?.trim().toLowerCase() ?? '';
+    const servicoSelecionado = servicos.find((servico) => {
+        const nomeNormalizado = servico.nome.trim().toLowerCase();
+
+        return (
+            servico.id === args.servicoId ||
+            (servicoNormalizado.length > 0 &&
+                nomeNormalizado === servicoNormalizado)
+        );
+    });
+    const duracaoConsulta = servicoSelecionado?.duracaoMinutos ?? SLOT_MINUTOS;
 
     const intervals = allAgendamentos
         .filter(
@@ -791,11 +821,11 @@ async function buscarHorariosDisponiveisTool(
 
     for (
         let minute = openMinutes;
-        minute + SLOT_MINUTOS <= closeMinutes;
+        minute + duracaoConsulta <= closeMinutes;
         minute += SLOT_MINUTOS
     ) {
         const slotStart = minute;
-        const slotEnd = minute + SLOT_MINUTOS;
+        const slotEnd = minute + duracaoConsulta;
         const slotStartDate = dateAtMinutesInBrasilia(args.data, slotStart);
 
         if (slotStartDate.getTime() < earliestAllowedStart.getTime()) {
@@ -806,7 +836,10 @@ async function buscarHorariosDisponiveisTool(
             (interval) => interval.start < slotEnd && interval.end > slotStart,
         );
 
-        if (!hasConflict) {
+        const sobrepoeAlmoco =
+            slotStart < HORA_ALMOCO_FIM && slotEnd > HORA_ALMOCO_INICIO;
+
+        if (!hasConflict && !sobrepoeAlmoco) {
             freeSlots.push(formatSlot(minute));
         }
     }
@@ -1323,10 +1356,18 @@ export async function processarMensagemWhatsapp(
 
         await sendWhatsAppText(remoteJid, reply);
     } catch (error) {
+        if (error instanceof GeminiRateLimitError) {
+            addToHistory(remoteJid, 'user', texto);
+            await escalarParaHumano(remoteJid, 'limite_de_cota');
+            console.error(
+                '[GEMINI SERVICE] Limite de cota da API Gemini atingido',
+                error,
+            );
+            return;
+        }
+
         const fallback =
-            error instanceof GeminiRateLimitError
-                ? GEMINI_RATE_LIMIT_FALLBACK_MESSAGE
-                : 'Tive uma instabilidade para processar sua mensagem agora. Tente novamente em instantes.';
+            'Tive uma instabilidade para processar sua mensagem agora. Tente novamente em instantes.';
 
         addToHistory(remoteJid, 'user', texto);
         addToHistory(remoteJid, 'model', fallback);

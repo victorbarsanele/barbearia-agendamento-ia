@@ -207,6 +207,107 @@ describe('agendamento.service.criar', () => {
         expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
         expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
     });
+
+    it('rejeita agendamento que começa exatamente às 11:30', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            statusCode: 422,
+        });
+    });
+
+    it('rejeita agendamento que começa às 11:00 com duração de 60 minutos', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 60,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            statusCode: 422,
+        });
+    });
+
+    it('rejeita agendamento que começa às 11:45', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:45:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            statusCode: 422,
+        });
+    });
+
+    it('aceita agendamento que termina exatamente às 11:30', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
+        });
+
+        const resultado = await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T11:00:00-03:00',
+        });
+
+        expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('aceita agendamento que começa exatamente às 12:00', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T12:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T12:30:00-03:00'),
+        });
+
+        const resultado = await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T12:00:00-03:00',
+        });
+
+        expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('aceita agendamento normal fora da janela de almoço', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T12:30:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T13:00:00-03:00'),
+        });
+
+        const resultado = await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T12:30:00-03:00',
+        });
+
+        expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
 });
 
 describe('agendamento.service.cancelar', () => {
@@ -269,5 +370,31 @@ describe('agendamento.service.atualizar', () => {
         expect(resultado.dataHoraInicio).toEqual(
             new Date('2026-07-20T11:00:00-03:00'),
         );
+    });
+
+    it('rejeita reagendamento que sobrepõe horário de almoço', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+        });
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 60,
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            statusCode: 422,
+        });
+
+        expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
     });
 });

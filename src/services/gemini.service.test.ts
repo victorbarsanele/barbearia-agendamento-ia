@@ -67,6 +67,39 @@ beforeEach(() => {
 });
 
 describe('gemini.service tools de reagendamento e cancelamento', () => {
+    it('buscarHorariosDisponiveis nunca retorna horário que invade 11h30-12h00', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'servico-60min',
+                nome: 'Corte e Barba',
+                duracaoMinutos: 60,
+                preco: null,
+            },
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = (await __testables.executeToolCall(
+            {
+                name: 'buscarHorariosDisponiveis',
+                args: {
+                    data: '2026-07-22',
+                    servicoId: 'servico-60min',
+                },
+            } as any,
+            '5511999999999@s.whatsapp.net',
+        )) as {
+            data: string;
+            horarios: string[];
+            observacao?: string;
+        };
+
+        expect(resultado.observacao).toBeUndefined();
+        expect(resultado.horarios).not.toContain('11:00');
+        expect(resultado.horarios).not.toContain('11:30');
+        expect(resultado.horarios).toContain('10:30');
+        expect(resultado.horarios).toContain('12:00');
+    });
+
     it('recupera agendamento quando Gemini envia nome do serviço em vez do id', async () => {
         vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
             {
