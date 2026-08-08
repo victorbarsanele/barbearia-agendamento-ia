@@ -9,6 +9,8 @@ export const TIME_ZONE = 'America/Sao_Paulo';
 export const MIN_ANTECEDENCIA_MS = 60 * 60 * 1000;
 const HORA_ABERTURA = 9;
 const HORA_FECHAMENTO = 19;
+const HORA_ALMOCO_INICIO = 11 * 60 + 30;
+const HORA_ALMOCO_FIM = 12 * 60;
 const DIAS_FUNCIONAMENTO = [1, 2, 3, 4, 5, 6] as const;
 
 function formatarAntecedenciaMinima(ms: number): string {
@@ -173,6 +175,29 @@ function validarHorarioFuncionamento(
     }
 }
 
+function validarNaoInterceptaAlmoco(
+    dataHoraInicio: Date,
+    dataHoraFim: Date,
+): void {
+    const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
+    const fimEmBrasilia = toZonedTime(dataHoraFim, TIME_ZONE);
+
+    const minutosInicio =
+        inicioEmBrasilia.getHours() * 60 + inicioEmBrasilia.getMinutes();
+    const minutosFim =
+        fimEmBrasilia.getHours() * 60 + fimEmBrasilia.getMinutes();
+
+    const sobrepoeAlmoco =
+        minutosInicio < HORA_ALMOCO_FIM && minutosFim > HORA_ALMOCO_INICIO;
+
+    if (sobrepoeAlmoco) {
+        throw new AppError(
+            'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            422,
+        );
+    }
+}
+
 async function carregarDependencias(clienteId: string, servicoId: string) {
     const cliente = await clienteRepository.buscarPorId(clienteId);
     if (!cliente) {
@@ -219,6 +244,7 @@ export async function criar(data: CriarAgendamentoData) {
 
         validarAntecedenciaMinima(dataHoraInicio);
         validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
+        validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
         await validarConflito(dataHoraInicio, dataHoraFim);
 
         return await agendamentoRepository.criar({
@@ -289,6 +315,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         validarAntecedenciaMinima(dataHoraInicio);
         validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
         if (data.status !== StatusAgendamento.CANCELADO) {
+            validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
             await validarConflito(dataHoraInicio, dataHoraFim, id);
         }
 

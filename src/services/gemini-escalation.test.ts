@@ -303,4 +303,28 @@ describe('gemini.service escalonamento humano', () => {
 
         expect(mocks.generateContent).toHaveBeenCalledTimes(1);
     });
+
+    it('escala imediatamente para humano quando Gemini atinge limite de cota', async () => {
+        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        mocks.generateContent.mockRejectedValue({ status: 429 });
+
+        const gemini = await importGeminiModule();
+
+        const pending = gemini.processarMensagemWhatsapp(
+            TELEFONE_CLIENTE,
+            'quero agendar',
+        );
+
+        await vi.advanceTimersByTimeAsync(14000);
+        await pending;
+
+        const messages = getSentMessages();
+        const barbeiroMessages = messages.filter(
+            (m) => m.number === NUMERO_BARBEIRO,
+        );
+
+        expect(barbeiroMessages).toHaveLength(1);
+        expect(barbeiroMessages[0].text).toContain('limite de uso da API');
+    });
 });
