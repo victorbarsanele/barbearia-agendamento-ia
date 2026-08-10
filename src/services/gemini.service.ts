@@ -27,9 +27,16 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
-const ESCALATION_COOLDOWN_MS = Number(
+const ESCALATION_DEFAULT_COOLDOWN_MS = Number(
     process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000,
 );
+const ESCALATION_COOLDOWN_MS_POR_MOTIVO = {
+    palavra_chave: ESCALATION_DEFAULT_COOLDOWN_MS,
+    confusao_explicita: ESCALATION_DEFAULT_COOLDOWN_MS,
+    sem_progresso: ESCALATION_DEFAULT_COOLDOWN_MS,
+    limite_de_cota: ESCALATION_DEFAULT_COOLDOWN_MS,
+    agendamento_recorrente: 2 * 60 * 60 * 1000,
+} as const;
 const CONFUSION_STREAK_LIMIT = 2;
 const NO_PROGRESS_SAFETY_LIMIT = 5;
 const CONFUSION_PATTERN =
@@ -69,10 +76,21 @@ interface AtualizarAgendamentoArgs {
     servicoId?: string;
 }
 
+interface SolicitarAgendamentoRecorrenteArgs {
+    duracaoMeses: number;
+}
+
+type EscalationMotivo =
+    | 'palavra_chave'
+    | 'confusao_explicita'
+    | 'sem_progresso'
+    | 'limite_de_cota'
+    | 'agendamento_recorrente';
+
 type HistoricoRole = 'user' | 'model';
 
 const conversationHistory = new Map<string, ConversaItem[]>();
-const escalationState = new Map<string, { since: number }>();
+const escalationState = new Map<string, { since: number; motivo: string }>();
 const confusionStreak = new Map<string, number>();
 const noProgressStreak = new Map<string, number>();
 
@@ -109,6 +127,9 @@ const BASE_SYSTEM_PROMPT = [
     'Nunca chame atualizarAgendamento ou cancelarAgendamento no mesmo turno em que você sugere novo horário ou ação.',
     'Se cliente já tiver agendamento ativo e mensagem puder significar tanto novo agendamento quanto reagendamento, pergunte explicitamente a intenção antes de chamar criarAgendamento ou atualizarAgendamento.',
     'Nunca presuma silenciosamente se deve criar ou reagendar quando houver ambiguidade.',
+    'Se o cliente pedir para agendar cortes semanais recorrentes por 1 ou 2 meses, confirme explicitamente a intenção antes de agir (ex.: "Confirmando, você gostaria de agendar 1 mês de corte semanal com antecedência, certo?").',
+    'Só chame solicitarAgendamentoRecorrente depois que o cliente confirmar explicitamente em uma mensagem separada.',
+    'Se o cliente negar o pedido de recorrência, volte ao fluxo normal de agendamento de um único horário.',
 ].join(' ');
 
 function getNowInBrasiliaIso(): string {
@@ -239,6 +260,21 @@ const functionDeclarations: FunctionDeclaration[] = [
         parametersJsonSchema: {
             type: 'object',
             properties: {},
+        },
+    },
+    {
+        name: 'solicitarAgendamentoRecorrente',
+        description:
+            'Chame quando o cliente pedir para agendar cortes semanais recorrentes por 1 ou 2 meses, DEPOIS que ele confirmar explicitamente que é isso que quer.',
+        parametersJsonSchema: {
+            type: 'object',
+            properties: {
+                duracaoMeses: {
+                    type: 'number',
+                    description: '1 ou 2, conforme pedido do cliente.',
+                },
+            },
+            required: ['duracaoMeses'],
         },
     },
 ];
@@ -632,7 +668,13 @@ function estaEmCooldownDeEscalonamento(phone: string): boolean {
     const estado = escalationState.get(phone);
     if (!estado) return false;
 
-    const expirado = Date.now() - estado.since > ESCALATION_COOLDOWN_MS;
+    const cooldownPadrao = ESCALATION_COOLDOWN_MS_POR_MOTIVO.palavra_chave;
+    const cooldownDoMotivo =
+        ESCALATION_COOLDOWN_MS_POR_MOTIVO[
+            estado.motivo as keyof typeof ESCALATION_COOLDOWN_MS_POR_MOTIVO
+        ] ?? cooldownPadrao;
+
+    const expirado = Date.now() - estado.since > cooldownDoMotivo;
     if (expirado) {
         escalationState.delete(phone);
         confusionStreak.delete(phone);
@@ -645,17 +687,13 @@ function estaEmCooldownDeEscalonamento(phone: string): boolean {
 
 export async function escalarParaHumano(
     remoteJid: string,
-    motivo:
-        | 'palavra_chave'
-        | 'confusao_explicita'
-        | 'sem_progresso'
-        | 'limite_de_cota',
+    motivo: EscalationMotivo,
 ): Promise<void> {
     const phone = normalizeConversationKey(remoteJid);
     const jaEscalado = escalationState.has(phone);
 
     if (!jaEscalado) {
-        escalationState.set(phone, { since: Date.now() });
+        escalationState.set(phone, { since: Date.now(), motivo });
     }
 
     const mensagem =
@@ -672,7 +710,9 @@ export async function escalarParaHumano(
             const descricaoMotivo =
                 motivo === 'limite_de_cota'
                     ? 'sistema atingiu limite de uso da API'
-                    : `motivo: ${motivo}`;
+                    : motivo === 'agendamento_recorrente'
+                      ? 'cliente quer pacote de cortes recorrentes'
+                      : `motivo: ${motivo}`;
 
             await sendWhatsAppText(
                 barberPhone,
@@ -1165,9 +1205,28 @@ async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
     }
 }
 
+async function solicitarAgendamentoRecorrenteTool(
+    remoteJid: string,
+    args: SolicitarAgendamentoRecorrenteArgs,
+): Promise<{ sucesso: true }> {
+    const duracaoMeses = Number(args.duracaoMeses);
+
+    if (duracaoMeses !== 1 && duracaoMeses !== 2) {
+        throw new AppError(
+            'Duração inválida para agendamento recorrente. Use 1 ou 2 meses.',
+            400,
+        );
+    }
+
+    await escalarParaHumano(remoteJid, 'agendamento_recorrente');
+
+    return { sucesso: true };
+}
+
 async function executeToolCall(
     call: FunctionCall,
     phone: string,
+    remoteJid: string,
 ): Promise<unknown> {
     switch (call.name) {
         case 'buscarServicos':
@@ -1189,6 +1248,36 @@ async function executeToolCall(
             );
         case 'cancelarAgendamento':
             return cancelarAgendamentoTool(phone);
+        case 'solicitarAgendamentoRecorrente':
+            try {
+                return await solicitarAgendamentoRecorrenteTool(
+                    remoteJid,
+                    (call.args ??
+                        {}) as unknown as SolicitarAgendamentoRecorrenteArgs,
+                );
+            } catch (error) {
+                const message =
+                    error instanceof AppError
+                        ? error.message
+                        : error instanceof Error
+                          ? error.message
+                          : 'Não foi possível escalar o atendimento recorrente.';
+
+                console.warn(
+                    '[GEMINI TOOL] solicitarAgendamentoRecorrente recusado',
+                    {
+                        remoteJid,
+                        args: call.args ?? {},
+                        motivo: message,
+                    },
+                );
+
+                return {
+                    sucesso: false,
+                    mensagem: message,
+                    motivoRecusa: message,
+                };
+            }
         default:
             return { erro: `Função desconhecida: ${call.name}` };
     }
@@ -1196,8 +1285,9 @@ async function executeToolCall(
 
 async function runGeminiFunctionCalling(
     phone: string,
+    remoteJid: string,
     userMessage: string,
-): Promise<{ text: string; usouTool: boolean }> {
+): Promise<{ text: string; usouTool: boolean; escalonado: boolean }> {
     const ai = getGeminiClient();
     const contents: Array<Record<string, unknown>> = buildConversationContents(
         phone,
@@ -1206,6 +1296,16 @@ async function runGeminiFunctionCalling(
 
     let finalText = '';
     let usouTool = false;
+    let escalonado = false;
+
+    const toolResponseIndicaSucesso = (toolResponse: unknown): boolean => {
+        if (!toolResponse || typeof toolResponse !== 'object') {
+            return false;
+        }
+
+        const response = toolResponse as { sucesso?: unknown };
+        return response.sucesso === true;
+    };
 
     for (let i = 0; i < 6; i += 1) {
         const result = await executeWith429Retry(() =>
@@ -1242,7 +1342,7 @@ async function runGeminiFunctionCalling(
 
         for (const call of functionCalls) {
             usouTool = true;
-            const toolResponse = await executeToolCall(call, phone);
+            const toolResponse = await executeToolCall(call, phone, remoteJid);
 
             contents.push({
                 role: 'user',
@@ -1258,17 +1358,38 @@ async function runGeminiFunctionCalling(
                     },
                 ],
             });
+
+            if (
+                call.name === 'solicitarAgendamentoRecorrente' &&
+                toolResponseIndicaSucesso(toolResponse)
+            ) {
+                escalonado = true;
+                break;
+            }
         }
+
+        if (escalonado) {
+            break;
+        }
+    }
+
+    if (escalonado) {
+        return {
+            text: '',
+            usouTool,
+            escalonado: true,
+        };
     }
 
     if (!finalText) {
         return {
             text: 'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?',
             usouTool,
+            escalonado: false,
         };
     }
 
-    return { text: finalText, usouTool };
+    return { text: finalText, usouTool, escalonado: false };
 }
 
 export async function sendWhatsAppText(
@@ -1317,10 +1438,11 @@ export async function processarMensagemWhatsapp(
             return;
         }
 
-        const { text: reply, usouTool } = await runGeminiFunctionCalling(
-            phone,
-            texto,
-        );
+        const {
+            text: reply,
+            usouTool,
+            escalonado,
+        } = await runGeminiFunctionCalling(phone, remoteJid, texto);
 
         addToHistory(remoteJid, 'user', texto);
 
@@ -1350,6 +1472,10 @@ export async function processarMensagemWhatsapp(
                     return;
                 }
             }
+        }
+
+        if (escalonado) {
+            return;
         }
 
         addToHistory(remoteJid, 'model', reply);
