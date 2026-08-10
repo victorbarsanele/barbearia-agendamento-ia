@@ -44,6 +44,7 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Autenticação JWT no painel.
 - Prevenção de conflito de horário no agendamento.
 - Notificação em caso de reagendamento.
+- Escalonamento automático para atendimento humano em casos de confusão, limite de uso da API ou solicitações fora do escopo automatizado (ex.: pacotes de agendamento recorrente).
 
 ### 4. Demonstração
 
@@ -64,7 +65,10 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Organização em camadas: `routes` / `controllers` / `services` / `repositories`.
 - Datas armazenadas em UTC, com conversão de timezone na entrada/saída.
 - Cancelamento lógico de agendamento (status `CANCELADO`) em vez de exclusão física.
+- Exclusion constraint no PostgreSQL (`btree_gist`) para prevenir condição de corrida na criação de agendamentos simultâneos.
 - Filtro anti-jailbreak no webhook do WhatsApp para bloquear entradas suspeitas.
+- Hardening de segurança da API: rate limiting (`@fastify/rate-limit`), CORS allowlist (`@fastify/cors`), cabeçalhos de segurança (`@fastify/helmet`) e JWT em cookie httpOnly.
+- Pipeline de CI via GitHub Actions executando a suíte Vitest contra um container real de PostgreSQL 16, garantindo que os testes rodem contra o mesmo motor de banco usado em produção.
 
 ### 6. Como rodar localmente
 
@@ -82,6 +86,9 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `BARBER_USER`
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
+- `COOKIE_SECURE`
+- `CORS_ORIGINS`
+- `ESCALATION_COOLDOWN_MS`
 
 #### 6.2 Backend (raiz)
 
@@ -147,10 +154,6 @@ MVP validado com um cliente real, em preparação para deploy.
 
 ---
 
-## CI Status
-
-![CI](https://github.com/victorbarsanele/barbearia-agendamento-ia/actions/workflows/ci.yml/badge.svg)
-
 ## Barbershop AI - Smart Scheduling System
 
 Scheduling system for a barbershop with automated WhatsApp conversations powered by AI. Monorepo project with backend business rules and frontend administrative operations.
@@ -188,6 +191,7 @@ During appointments, the barber was losing time by manually answering scheduling
 - JWT authentication in the dashboard.
 - Schedule conflict prevention during booking.
 - Rescheduling notification flow.
+- Automatic escalation to human support for confusion, API rate limits, or requests outside the automated scope (e.g., recurring booking packages).
 
 ### 4. Demo
 
@@ -208,7 +212,10 @@ During appointments, the barber was losing time by manually answering scheduling
 - Layered architecture: `routes` / `controllers` / `services` / `repositories`.
 - Datetimes stored in UTC, with timezone conversion on input/output.
 - Logical cancellation for appointments (`CANCELADO` status) instead of physical deletion.
+- PostgreSQL exclusion constraint (`btree_gist`) to prevent race conditions on concurrent appointment creation.
 - Anti-jailbreak filter in WhatsApp webhook to block suspicious input.
+- API security hardening: rate limiting (`@fastify/rate-limit`), CORS allowlist (`@fastify/cors`), security headers (`@fastify/helmet`), and httpOnly cookie JWT.
+- CI pipeline via GitHub Actions running the Vitest suite against a real PostgreSQL 16 container, ensuring tests run against the same database engine used in production.
 
 ### 6. Local setup
 
@@ -226,6 +233,9 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `BARBER_USER`
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
+- `COOKIE_SECURE`
+- `CORS_ORIGINS`
+- `ESCALATION_COOLDOWN_MS`
 
 #### 6.2 Backend (root)
 
