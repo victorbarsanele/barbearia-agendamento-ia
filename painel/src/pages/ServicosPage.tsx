@@ -61,7 +61,7 @@ export function ServicosPage() {
                 const message =
                     error instanceof Error
                         ? error.message
-                        : 'Nao foi possivel carregar os servicos.';
+                        : 'Não foi possível carregar os serviços.';
                 setErro(message);
             } finally {
                 if (ativo) {
@@ -97,12 +97,12 @@ export function ServicosPage() {
                     (item) => item.id !== servicoPendenteExclusao.id,
                 ),
             );
-            setSucesso('Servico excluido com sucesso.');
+            setSucesso('Serviço excluído com sucesso.');
         } catch (error) {
             const message =
                 error instanceof Error
                     ? error.message
-                    : 'Nao foi possivel excluir o servico.';
+                    : 'Não foi possível excluir o serviço.';
             setErro(message);
             setSucesso(null);
         } finally {
@@ -119,10 +119,10 @@ export function ServicosPage() {
                         className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
                         style={{ fontFamily: 'var(--font-title)' }}
                     >
-                        Servicos
+                        Serviços
                     </h1>
                     <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Gerencie os servicos cadastrados.
+                        Gerencie os serviços cadastrados.
                     </p>
                 </div>
 
@@ -131,7 +131,7 @@ export function ServicosPage() {
                     className="min-h-9 px-3 text-xs"
                     onClick={() => navigate('/servicos/novo')}
                 >
-                    Novo servico
+                    Novo serviço
                 </Button>
             </header>
 
@@ -154,7 +154,7 @@ export function ServicosPage() {
             {!loading && !erro && servicosOrdenados.length === 0 && (
                 <Card>
                     <p className="text-sm text-[var(--color-text-secondary)]">
-                        Nenhum servico cadastrado ainda.
+                        Nenhum serviço cadastrado ainda.
                     </p>
                 </Card>
             )}
@@ -171,10 +171,10 @@ export function ServicosPage() {
                                     {servico.nome}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Duracao: {servico.duracaoMinutos} min
+                                    Duração: {servico.duracaoMinutos} min
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Preco: {formatarPreco(servico.preco)}
+                                    Preço: {formatarPreco(servico.preco)}
                                 </p>
                             </div>
 
@@ -212,10 +212,10 @@ export function ServicosPage() {
 
             <ConfirmDialog
                 open={Boolean(servicoPendenteExclusao)}
-                title="Confirmar exclusao"
+                title="Confirmar exclusão"
                 description={
                     servicoPendenteExclusao
-                        ? `Deseja excluir o servico ${servicoPendenteExclusao.nome}?`
+                        ? `Deseja excluir o serviço ${servicoPendenteExclusao.nome}?`
                         : ''
                 }
                 confirmText="Excluir"
