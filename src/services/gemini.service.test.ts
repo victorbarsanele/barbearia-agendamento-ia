@@ -86,6 +86,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                     servicoId: 'servico-60min',
                 },
             } as any,
+            '5511999999999',
             '5511999999999@s.whatsapp.net',
         )) as {
             data: string;
@@ -222,6 +223,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 name: 'consultarAgendamento',
                 args: { telefone: '00000000000' },
             } as any,
+            '5519989364548',
             '5519989364548@s.whatsapp.net',
         );
 
@@ -281,6 +283,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 name: 'consultarAgendamento',
                 args: { telefone: '19999999999' },
             } as any,
+            '5519989364548',
             '5519989364548@s.whatsapp.net',
         );
 

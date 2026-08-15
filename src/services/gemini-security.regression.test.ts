@@ -51,6 +51,8 @@ const CLIENTE_ALVO = {
     createdAt: AGORA,
 };
 
+const REMOTE_JID_SESSAO_REAL = `${TELEFONE_SESSAO_REAL}@s.whatsapp.net`;
+
 const SERVICO_ALVO = {
     id: 'servico-corte-barba',
     nome: 'Corte e Barba',
@@ -115,6 +117,7 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
                 id: 'call-1',
             } as any,
             TELEFONE_SESSAO_REAL, // telefone real, vindo do remoteJid do WhatsApp
+            REMOTE_JID_SESSAO_REAL,
         )) as { agendamentos: unknown[] };
 
         expect(resultado.agendamentos).toHaveLength(0);
@@ -141,6 +144,7 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
                 id: 'call-2',
             } as any,
             TELEFONE_SESSAO_REAL,
+            REMOTE_JID_SESSAO_REAL,
         )) as { agendamentos: Array<{ id: string }> };
 
         expect(resultado.agendamentos).toHaveLength(1);
@@ -157,6 +161,7 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
         const resultadoCancelamento = (await executeToolCall(
             { name: 'cancelarAgendamento', args: {}, id: 'call-3' } as any,
             TELEFONE_SESSAO_REAL,
+            REMOTE_JID_SESSAO_REAL,
         )) as { sucesso: boolean; mensagem: string };
 
         expect(resultadoCancelamento.sucesso).toBe(false);
