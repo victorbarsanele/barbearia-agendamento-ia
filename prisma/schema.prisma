@@ -17,7 +17,6 @@ model Cliente {
   id           String        @id @default(cuid())
   nome         String
   telefone     String        @unique
-  email        String?
   createdAt    DateTime      @default(now()) @db.Timestamptz(3)
   agendamentos Agendamento[]
 
