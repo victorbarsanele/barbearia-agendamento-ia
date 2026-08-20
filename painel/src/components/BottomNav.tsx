@@ -62,10 +62,29 @@ function ScissorsIcon(active: boolean) {
     );
 }
 
+function LockIcon(active: boolean) {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className={`h-5 w-5 ${active ? 'text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)]'}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <rect x="4" y="10" width="16" height="11" rx="2" />
+            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+        </svg>
+    );
+}
+
 const navItems: NavItem[] = [
     { label: 'Agenda', to: '/', icon: CalendarIcon },
     { label: 'Clientes', to: '/clientes', icon: UserIcon },
     { label: 'Serviços', to: '/servicos', icon: ScissorsIcon },
+    { label: 'Bloqueios', to: '/bloqueios', icon: LockIcon },
 ];
 
 export function BottomNav() {

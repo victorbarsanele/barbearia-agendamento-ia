@@ -2,16 +2,20 @@ import { StatusAgendamento } from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import {
+    ehDiaDeFuncionamento,
+    HORA_ABERTURA,
+    HORA_FECHAMENTO,
+    TIME_ZONE as HORARIO_TIME_ZONE,
+} from './horario-funcionamento';
 
-export const TIME_ZONE = 'America/Sao_Paulo';
+export const TIME_ZONE = HORARIO_TIME_ZONE;
 export const MIN_ANTECEDENCIA_MS = 60 * 60 * 1000;
-const HORA_ABERTURA = 9;
-const HORA_FECHAMENTO = 19;
 const HORA_ALMOCO_INICIO = 11 * 60 + 30;
 const HORA_ALMOCO_FIM = 12 * 60;
-const DIAS_FUNCIONAMENTO = [1, 2, 3, 4, 5, 6] as const;
 
 function formatarAntecedenciaMinima(ms: number): string {
     const minutos = ms / (60 * 1000);
@@ -145,11 +149,7 @@ function validarHorarioFuncionamento(
     const diaInicio = inicioEmBrasilia.getDay();
     const diaFim = fimEmBrasilia.getDay();
 
-    if (
-        !DIAS_FUNCIONAMENTO.includes(
-            diaInicio as (typeof DIAS_FUNCIONAMENTO)[number],
-        )
-    ) {
+    if (!ehDiaDeFuncionamento(dataHoraInicio)) {
         throw new AppError(
             'Barbearia funciona de segunda a sábado, das 9h às 19h (horário de Brasília).',
             422,
@@ -230,6 +230,23 @@ async function validarConflito(
     }
 }
 
+async function validarNaoInterceptaBloqueio(
+    dataHoraInicio: Date,
+    dataHoraFim: Date,
+): Promise<void> {
+    const bloqueio = await bloqueioRepository.buscarConflito(
+        dataHoraInicio,
+        dataHoraFim,
+    );
+
+    if (bloqueio) {
+        throw new AppError(
+            `Horário bloqueado pelo barbeiro: ${bloqueio.motivo}.`,
+            409,
+        );
+    }
+}
+
 export async function criar(data: CriarAgendamentoData) {
     try {
         const { servico } = await carregarDependencias(
@@ -245,6 +262,7 @@ export async function criar(data: CriarAgendamentoData) {
         validarAntecedenciaMinima(dataHoraInicio);
         validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
         validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
+        await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
         await validarConflito(dataHoraInicio, dataHoraFim);
 
         return await agendamentoRepository.criar({
@@ -316,6 +334,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
         if (data.status !== StatusAgendamento.CANCELADO) {
             validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
+            await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
             await validarConflito(dataHoraInicio, dataHoraFim, id);
         }
 
