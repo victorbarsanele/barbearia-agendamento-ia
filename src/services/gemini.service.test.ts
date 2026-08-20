@@ -5,6 +5,10 @@ vi.mock('../repositories/agendamento.repository', () => ({
     listarTodos: vi.fn(),
 }));
 
+vi.mock('../repositories/bloqueio.repository', () => ({
+    listarTodos: vi.fn(),
+}));
+
 vi.mock('../repositories/cliente.repository', () => ({
     buscarPorTelefone: vi.fn(),
     listarTodos: vi.fn(),
@@ -23,6 +27,7 @@ vi.mock('./agendamento.service', () => ({
 }));
 
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as agendamentoService from './agendamento.service';
@@ -77,6 +82,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             },
         ]);
         vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
 
         const resultado = (await __testables.executeToolCall(
             {
@@ -99,6 +105,65 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('11:30');
         expect(resultado.horarios).toContain('10:30');
         expect(resultado.horarios).toContain('12:00');
+    });
+
+    it('remove horários dentro de bloqueio e retorna motivo', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'bloqueio-1',
+                dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
+                dataHoraFim: new Date('2026-07-22T11:00:00-03:00'),
+                motivo: 'Natal',
+                createdAt: new Date('2026-07-20T00:00:00Z'),
+            },
+        ]);
+
+        const resultado = (await __testables.executeToolCall(
+            {
+                name: 'buscarHorariosDisponiveis',
+                args: { data: '2026-07-22', servicoId: 'servico-1' },
+            } as any,
+            '5511999999999',
+            '5511999999999@s.whatsapp.net',
+        )) as { horarios: string[]; bloqueios: Array<{ motivo: string }> };
+
+        expect(resultado.horarios).not.toContain('10:00');
+        expect(resultado.horarios).not.toContain('10:30');
+        expect(resultado.horarios).toContain('09:00');
+        expect(resultado.horarios).toContain('11:00');
+        expect(resultado.bloqueios).toEqual([
+            {
+                inicio: '22/07/2026, 10:00',
+                fim: '22/07/2026, 11:00',
+                motivo: 'Natal',
+            },
+        ]);
+    });
+
+    it('mantém horário fora de bloqueio disponível', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'bloqueio-1',
+                dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
+                dataHoraFim: new Date('2026-07-22T11:00:00-03:00'),
+                motivo: 'Compromisso pessoal',
+                createdAt: new Date('2026-07-20T00:00:00Z'),
+            },
+        ]);
+
+        const resultado = (await __testables.executeToolCall(
+            {
+                name: 'buscarHorariosDisponiveis',
+                args: { data: '2026-07-22', servicoId: 'servico-1' },
+            } as any,
+            '5511999999999',
+            '5511999999999@s.whatsapp.net',
+        )) as { horarios: string[] };
+
+        expect(resultado.horarios).toContain('09:00');
+        expect(resultado.horarios).toContain('11:00');
     });
 
     it('recupera agendamento quando Gemini envia nome do serviço em vez do id', async () => {

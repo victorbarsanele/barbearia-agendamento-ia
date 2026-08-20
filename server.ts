@@ -7,6 +7,7 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { AppError } from './src/lib/app-error';
 import { agendamentoRoutes } from './src/routes/agendamento.routes';
+import { bloqueioRoutes } from './src/routes/bloqueio.routes';
 import { authRoutes } from './src/routes/auth.routes';
 import { clienteRoutes } from './src/routes/cliente.routes';
 import { servicoRoutes } from './src/routes/servico.routes';
@@ -69,6 +70,7 @@ void app.register(authRoutes);
 void app.register(clienteRoutes);
 void app.register(servicoRoutes);
 void app.register(agendamentoRoutes);
+void app.register(bloqueioRoutes);
 void app.register(webhookRoutes);
 
 app.get('/health', async () => {

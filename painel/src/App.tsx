@@ -4,6 +4,7 @@ import { BottomNav } from './components/BottomNav';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AgendamentosPage } from './pages/AgendamentosPage';
 import { LoginPage } from './pages/LoginPage';
+import { BloqueiosPage } from './pages/BloqueiosPage';
 
 const NovoAgendamentoPage = lazy(() =>
     import('./pages/NovoAgendamentoPage').then((module) => ({
@@ -98,6 +99,14 @@ function App() {
                     element={
                         <ProtectedRoute>
                             <EditarAgendamentoPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/bloqueios"
+                    element={
+                        <ProtectedRoute>
+                            <BloqueiosPage />
                         </ProtectedRoute>
                     }
                 />

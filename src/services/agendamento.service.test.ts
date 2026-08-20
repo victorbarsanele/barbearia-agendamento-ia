@@ -14,6 +14,10 @@ vi.mock('../repositories/agendamento.repository', () => ({
     excluirCanceladosPorServicoId: vi.fn(),
 }));
 
+vi.mock('../repositories/bloqueio.repository', () => ({
+    buscarConflito: vi.fn(),
+}));
+
 vi.mock('../repositories/cliente.repository', () => ({
     buscarPorId: vi.fn(),
 }));
@@ -28,6 +32,7 @@ vi.mock('./gemini.service', () => ({
 }));
 
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as geminiService from './gemini.service';
@@ -64,6 +69,7 @@ function mockarDependenciasPadrao() {
     vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(clienteBase);
     vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(servicoBase);
     vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue(null);
+    vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue(null);
 }
 
 beforeEach(() => {
@@ -119,6 +125,29 @@ describe('agendamento.service.criar', () => {
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
         });
+    });
+
+    it('rejeita criação quando horário colide com bloqueio', async () => {
+        vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
+            id: 'bloqueio-1',
+            dataHoraInicio: new Date('2026-07-20T10:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:00:00-03:00'),
+            motivo: 'Consulta médica',
+            createdAt: new Date('2026-07-19T00:00:00Z'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T10:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            message: 'Horário bloqueado pelo barbeiro: Consulta médica.',
+        });
+
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
     });
 
     it('rejeita agendamento antes das 9h', async () => {

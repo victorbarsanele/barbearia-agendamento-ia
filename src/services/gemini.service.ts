@@ -7,20 +7,24 @@ import {
 import { StatusAgendamento } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as agendamentoService from './agendamento.service';
+import {
+    DIAS_FUNCIONAMENTO,
+    ehDiaDeFuncionamento,
+    HORA_ABERTURA,
+    HORA_FECHAMENTO,
+} from './horario-funcionamento';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const EVOLUTION_SEND_TEXT_URL =
     'http://localhost:8080/message/sendText/barbearia';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const TIME_ZONE = agendamentoService.TIME_ZONE;
-const HORA_ABERTURA = 9;
-const HORA_FECHAMENTO = 19;
 const HORA_ALMOCO_INICIO = 11 * 60 + 30;
 const HORA_ALMOCO_FIM = 12 * 60;
-const DIAS_FUNCIONAMENTO = [1, 2, 3, 4, 5, 6] as const;
 const MAX_HISTORY_ITEMS = 20;
 const SLOT_MINUTOS = 30;
 const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
@@ -590,10 +594,7 @@ function parseDateOnly(date: string): Date | null {
 }
 
 function isWorkingDay(date: Date): boolean {
-    const day = date.getDay();
-    return DIAS_FUNCIONAMENTO.includes(
-        day as (typeof DIAS_FUNCIONAMENTO)[number],
-    );
+    return ehDiaDeFuncionamento(date);
 }
 
 function getDateKeyInBrasilia(date: Date): string {
@@ -801,13 +802,19 @@ async function resolverServicoId(
 
 async function buscarHorariosDisponiveisTool(
     args: BuscarHorariosDisponiveisArgs,
-): Promise<{ data: string; horarios: string[]; observacao?: string }> {
+): Promise<{
+    data: string;
+    horarios: string[];
+    bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
+    observacao?: string;
+}> {
     const date = parseDateOnly(args.data);
 
     if (!date) {
         return {
             data: args.data,
             horarios: [],
+            bloqueios: [],
             observacao:
                 'Data inválida. Informe dia, mês e ano para eu verificar horários.',
         };
@@ -817,12 +824,17 @@ async function buscarHorariosDisponiveisTool(
         return {
             data: args.data,
             horarios: [],
+            bloqueios: [],
             observacao:
                 'A barbearia funciona de segunda a sábado, das 09h às 19h.',
         };
     }
 
     const allAgendamentos = await agendamentoRepository.listarTodos();
+    const bloqueios = await bloqueioRepository.listarTodos({
+        dataHoraInicio: dateAtMinutesInBrasilia(args.data, 0),
+        dataHoraFim: dateAtMinutesInBrasilia(args.data, 24 * 60),
+    });
     const servicos = await servicoRepository.listarTodos();
     const targetDateKey = getDateKeyInBrasilia(date);
 
@@ -852,6 +864,11 @@ async function buscarHorariosDisponiveisTool(
             end: getMinutesInBrasilia(new Date(agendamento.dataHoraFim)),
         }));
 
+    const bloqueioIntervals = bloqueios.map((bloqueio) => ({
+        start: getMinutesInBrasilia(new Date(bloqueio.dataHoraInicio)),
+        end: getMinutesInBrasilia(new Date(bloqueio.dataHoraFim)),
+    }));
+
     const openMinutes = HORA_ABERTURA * 60;
     const closeMinutes = HORA_FECHAMENTO * 60;
     const freeSlots: string[] = [];
@@ -876,10 +893,14 @@ async function buscarHorariosDisponiveisTool(
             (interval) => interval.start < slotEnd && interval.end > slotStart,
         );
 
+        const hasBlockedTime = bloqueioIntervals.some(
+            (interval) => interval.start < slotEnd && interval.end > slotStart,
+        );
+
         const sobrepoeAlmoco =
             slotStart < HORA_ALMOCO_FIM && slotEnd > HORA_ALMOCO_INICIO;
 
-        if (!hasConflict && !sobrepoeAlmoco) {
+        if (!hasConflict && !hasBlockedTime && !sobrepoeAlmoco) {
             freeSlots.push(formatSlot(minute));
         }
     }
@@ -887,6 +908,11 @@ async function buscarHorariosDisponiveisTool(
     return {
         data: args.data,
         horarios: freeSlots,
+        bloqueios: bloqueios.map((bloqueio) => ({
+            inicio: formatInBrasilia(new Date(bloqueio.dataHoraInicio)),
+            fim: formatInBrasilia(new Date(bloqueio.dataHoraFim)),
+            motivo: bloqueio.motivo,
+        })),
     };
 }
 
