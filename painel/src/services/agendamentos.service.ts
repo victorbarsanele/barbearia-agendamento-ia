@@ -35,6 +35,11 @@ export interface AtualizarAgendamentoPayload {
     servicoId: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
+    notificarCliente?: boolean;
+}
+
+export interface CancelarAgendamentoPayload {
+    notificarCliente?: boolean;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -58,9 +63,16 @@ export async function buscarAgendamentoPorId(id: string): Promise<Agendamento> {
     return handleResponse<Agendamento>(response);
 }
 
-export async function cancelarAgendamento(id: string): Promise<Agendamento> {
+export async function cancelarAgendamento(
+    id: string,
+    payload: CancelarAgendamentoPayload = {},
+): Promise<Agendamento> {
     const response = await apiFetch(`/api/agendamentos/${id}`, {
         method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
     });
 
     return handleResponse<Agendamento>(response);

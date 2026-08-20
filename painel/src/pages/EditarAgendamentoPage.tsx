@@ -81,6 +81,7 @@ export function EditarAgendamentoPage() {
     const [data, setData] = useState('');
     const [horaSelecionada, setHoraSelecionada] = useState('');
     const [minutoSelecionado, setMinutoSelecionado] = useState('');
+    const [notificarCliente, setNotificarCliente] = useState(false);
 
     const [loading, setLoading] = useState(true);
     const [submetendo, setSubmetendo] = useState(false);
@@ -207,6 +208,7 @@ export function EditarAgendamentoPage() {
                 servicoId,
                 dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
                 status: agendamento.status,
+                notificarCliente,
             });
             setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -327,6 +329,20 @@ export function EditarAgendamentoPage() {
                                 }}
                             />
                         </div>
+
+                        <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
+                            <input
+                                type="checkbox"
+                                checked={notificarCliente}
+                                onChange={(event) =>
+                                    setNotificarCliente(event.target.checked)
+                                }
+                                className="mt-0.5 h-4 w-4 accent-[var(--color-gold)]"
+                            />
+                            <span>
+                                Notificar cliente sobre a mudança via WhatsApp
+                            </span>
+                        </label>
 
                         {erro && (
                             <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
