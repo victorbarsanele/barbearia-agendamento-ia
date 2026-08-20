@@ -7,7 +7,7 @@ import { Card } from './ui/Card';
 interface AgendamentoItemProps {
     agendamento: Agendamento;
     onEditar: (id: string) => void;
-    onCancelar: (id: string) => Promise<void>;
+    onCancelar: (id: string, notificarCliente: boolean) => Promise<void>;
     cancelando: boolean;
 }
 
@@ -34,6 +34,7 @@ export function AgendamentoItem({
     cancelando,
 }: AgendamentoItemProps) {
     const [confirmacaoAberta, setConfirmacaoAberta] = useState(false);
+    const [notificarCliente, setNotificarCliente] = useState(false);
 
     const podeCancelar = agendamento.status !== 'CANCELADO';
     const podeEditar = agendamento.status !== 'CANCELADO';
@@ -51,7 +52,7 @@ export function AgendamentoItem({
     };
 
     const confirmarCancelamento = async () => {
-        await onCancelar(agendamento.id);
+        await onCancelar(agendamento.id, notificarCliente);
         setConfirmacaoAberta(false);
     };
 
@@ -132,6 +133,21 @@ export function AgendamentoItem({
                             </span>
                             ?
                         </p>
+
+                        <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
+                            <input
+                                type="checkbox"
+                                checked={notificarCliente}
+                                onChange={(event) =>
+                                    setNotificarCliente(event.target.checked)
+                                }
+                                className="mt-0.5 h-4 w-4 accent-[var(--color-gold)]"
+                            />
+                            <span>
+                                Notificar cliente sobre o cancelamento via
+                                WhatsApp
+                            </span>
+                        </label>
 
                         <div className="flex flex-col gap-2 sm:flex-row">
                             <Button

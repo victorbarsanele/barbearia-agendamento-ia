@@ -75,6 +75,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                                 StatusAgendamento.CONCLUIDO,
                             ],
                         },
+                        notificarCliente: { type: 'boolean' },
                     },
                 },
             },
@@ -92,6 +93,13 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                     additionalProperties: false,
                     properties: {
                         id: { type: 'string', minLength: 1 },
+                    },
+                },
+                body: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        notificarCliente: { type: 'boolean' },
                     },
                 },
             },

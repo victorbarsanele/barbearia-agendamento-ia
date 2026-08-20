@@ -153,29 +153,34 @@ export function AgendamentosPage() {
             );
     }, [agendamentos, dataSelecionadaKey]);
 
-    const handleCancelar = useCallback(async (id: string) => {
-        setCancelandoId(id);
-        setErro(null);
+    const handleCancelar = useCallback(
+        async (id: string, notificarCliente: boolean) => {
+            setCancelandoId(id);
+            setErro(null);
 
-        try {
-            const agendamentoCancelado = await cancelarAgendamento(id);
-            setAgendamentos((current) =>
-                current.map((agendamento) =>
-                    agendamento.id === agendamentoCancelado.id
-                        ? agendamentoCancelado
-                        : agendamento,
-                ),
-            );
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível cancelar o agendamento.';
-            setErro(message);
-        } finally {
-            setCancelandoId(null);
-        }
-    }, []);
+            try {
+                const agendamentoCancelado = await cancelarAgendamento(id, {
+                    notificarCliente,
+                });
+                setAgendamentos((current) =>
+                    current.map((agendamento) =>
+                        agendamento.id === agendamentoCancelado.id
+                            ? agendamentoCancelado
+                            : agendamento,
+                    ),
+                );
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'Não foi possível cancelar o agendamento.';
+                setErro(message);
+            } finally {
+                setCancelandoId(null);
+            }
+        },
+        [],
+    );
 
     const handleDiaAnterior = useCallback(() => {
         setDataSelecionadaKey((current) => addDaysToDateKey(current, -1));

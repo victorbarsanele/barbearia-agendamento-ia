@@ -39,6 +39,7 @@ interface AtualizarAgendamentoData {
     servicoId: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
+    notificarCliente?: boolean;
 }
 
 function converterParaData(valor: string): Date {
@@ -111,6 +112,32 @@ async function enviarMensagemRemarcacao(
         `Olá ${nomeCliente}! Seu agendamento foi remarcado pelo barbeiro.`,
         `Nova data: ${formatarDataBrasilia(dataHoraInicio)}`,
         `Novo horário: ${formatarHorarioBrasilia(dataHoraInicio)} (horário de Brasília)`,
+        `Serviço: ${nomeServico}`,
+        `Dúvidas? Entre em contato com o barbeiro: ${barberPhone}`,
+    ].join('\n');
+
+    const { addToHistory, sendWhatsAppText } = await import('./gemini.service');
+    await sendWhatsAppText(telefone, mensagem);
+    addToHistory(telefone, 'model', mensagem);
+}
+
+async function enviarMensagemCancelamento(
+    telefone: string | null,
+    nomeCliente: string,
+    nomeServico: string,
+    dataHoraInicio: Date,
+): Promise<void> {
+    if (!telefone) {
+        return;
+    }
+
+    const barberPhone =
+        process.env.BARBER_PHONE?.trim() || 'o barbeiro diretamente';
+
+    const mensagem = [
+        `Olá ${nomeCliente}! Seu agendamento foi cancelado pelo barbeiro.`,
+        `Data: ${formatarDataBrasilia(dataHoraInicio)}`,
+        `Horário: ${formatarHorarioBrasilia(dataHoraInicio)} (horário de Brasília)`,
         `Serviço: ${nomeServico}`,
         `Dúvidas? Entre em contato com o barbeiro: ${barberPhone}`,
     ].join('\n');
@@ -354,7 +381,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             },
         );
 
-        if (dataHoraMudou || servicoMudou) {
+        if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
             try {
                 await enviarMensagemRemarcacao(
                     agendamentoAtualizado.cliente.telefone,
@@ -380,7 +407,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
     }
 }
 
-export async function cancelar(id: string) {
+export async function cancelar(id: string, notificarCliente = false) {
     try {
         const agendamento = await agendamentoRepository.buscarPorId(id);
 
@@ -388,7 +415,25 @@ export async function cancelar(id: string) {
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
-        return await agendamentoRepository.cancelar(id);
+        const agendamentoCancelado = await agendamentoRepository.cancelar(id);
+
+        if (notificarCliente) {
+            try {
+                await enviarMensagemCancelamento(
+                    agendamentoCancelado.cliente.telefone,
+                    agendamentoCancelado.cliente.nome,
+                    agendamentoCancelado.servico.nome,
+                    agendamentoCancelado.dataHoraInicio,
+                );
+            } catch (error) {
+                console.error(
+                    '[AGENDAMENTO SERVICE] Falha ao enviar mensagem de cancelamento no WhatsApp',
+                    error,
+                );
+            }
+        }
+
+        return agendamentoCancelado;
     } catch (error) {
         if (error instanceof AppError) {
             throw error;

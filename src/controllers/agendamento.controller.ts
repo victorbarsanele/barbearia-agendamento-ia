@@ -14,6 +14,11 @@ interface AtualizarAgendamentoBody {
     servicoId: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
+    notificarCliente?: boolean;
+}
+
+interface CancelarAgendamentoBody {
+    notificarCliente?: boolean;
 }
 
 interface AgendamentoParams {
@@ -85,12 +90,16 @@ export async function atualizar(
 }
 
 export async function cancelar(
-    request: FastifyRequest<{ Params: AgendamentoParams }>,
+    request: FastifyRequest<{
+        Params: AgendamentoParams;
+        Body: CancelarAgendamentoBody;
+    }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
         const agendamento = await agendamentoService.cancelar(
             request.params.id,
+            request.body?.notificarCliente === true,
         );
         void reply.send(agendamento);
     } catch (error) {
