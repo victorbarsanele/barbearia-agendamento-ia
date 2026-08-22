@@ -79,6 +79,7 @@ describe('gemini.service escalonamento humano', () => {
 
         process.env.GEMINI_API_KEY = 'gemini-test-key';
         process.env.EVOLUTION_API_KEY = 'evolution-test-key';
+        delete process.env.EVOLUTION_API_URL;
         delete process.env.ESCALATION_COOLDOWN_MS;
         delete process.env.BARBER_PHONE;
 
@@ -107,6 +108,7 @@ describe('gemini.service escalonamento humano', () => {
         delete process.env.ESCALATION_COOLDOWN_MS;
         delete process.env.GEMINI_API_KEY;
         delete process.env.EVOLUTION_API_KEY;
+        delete process.env.EVOLUTION_API_URL;
     });
 
     it('envia mensagem de espera ao cliente e notifica barbeiro na primeira escalada', async () => {

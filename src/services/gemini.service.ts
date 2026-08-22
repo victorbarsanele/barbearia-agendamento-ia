@@ -19,8 +19,9 @@ import {
 } from './horario-funcionamento';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
-const EVOLUTION_SEND_TEXT_URL =
-    'http://localhost:8080/message/sendText/barbearia';
+const EVOLUTION_API_URL =
+    process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+const EVOLUTION_SEND_TEXT_URL = `${EVOLUTION_API_URL}/message/sendText/barbearia`;
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const TIME_ZONE = agendamentoService.TIME_ZONE;
 const HORA_ALMOCO_INICIO = 11 * 60 + 30;

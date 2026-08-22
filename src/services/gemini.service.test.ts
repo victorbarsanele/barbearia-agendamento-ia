@@ -1,5 +1,5 @@
 import { StatusAgendamento } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../repositories/agendamento.repository', () => ({
     listarTodos: vi.fn(),
@@ -71,7 +71,36 @@ beforeEach(() => {
     vi.mocked(servicoRepository.listarTodos).mockResolvedValue([servicoBase]);
 });
 
+afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+});
+
 describe('gemini.service tools de reagendamento e cancelamento', () => {
+    it('usa EVOLUTION_API_URL para o endpoint da Evolution API', async () => {
+        vi.stubEnv('EVOLUTION_API_KEY', 'evolution-test-key');
+        vi.stubEnv('EVOLUTION_API_URL', 'https://evolution.example.com');
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                text: vi.fn().mockResolvedValue(''),
+            }),
+        );
+
+        vi.resetModules();
+        const { sendWhatsAppText } = await import('./gemini.service');
+
+        await sendWhatsAppText('5511999999999', 'Olá do teste');
+
+        expect(global.fetch).toHaveBeenCalledWith(
+            'https://evolution.example.com/message/sendText/barbearia',
+            expect.objectContaining({
+                method: 'POST',
+            }),
+        );
+    });
+
     it('buscarHorariosDisponiveis nunca retorna horário que invade 11h30-12h00', async () => {
         vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
             {
