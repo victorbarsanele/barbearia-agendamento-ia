@@ -1,5 +1,14 @@
 import { config } from 'dotenv';
-config({ override: true });
+
+const globalWithDotenvFlag = globalThis as typeof globalThis & {
+    __dotenvConfigLoaded?: boolean;
+};
+
+if (!globalWithDotenvFlag.__dotenvConfigLoaded && !process.env.VITEST) {
+    config({ override: true });
+    globalWithDotenvFlag.__dotenvConfigLoaded = true;
+}
+
 import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';

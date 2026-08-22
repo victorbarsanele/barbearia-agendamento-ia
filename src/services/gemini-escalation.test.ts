@@ -112,7 +112,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('envia mensagem de espera ao cliente e notifica barbeiro na primeira escalada', async () => {
-        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
         const gemini = await importGeminiModule();
@@ -135,7 +135,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('não notifica barbeiro na segunda escalada seguida dentro do cooldown', async () => {
-        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
         const gemini = await importGeminiModule();
@@ -160,7 +160,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('escala após 2 respostas consecutivas de confusão explícita', async () => {
-        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
         vi.spyOn(Math, 'random').mockReturnValue(0);
         mocks.generateContent.mockResolvedValue({
             functionCalls: [],
@@ -200,7 +200,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('não escala com 4 turnos normais sem tool call', async () => {
-        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
 
         const gemini = await importGeminiModule();
 
@@ -225,7 +225,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('não escala com 3 turnos normais sem tool call', async () => {
-        process.env.BARBER_PHONE = NUMERO_BARBEIRO;
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
 
         const gemini = await importGeminiModule();
 
@@ -249,7 +249,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('após cooldown expirar volta a chamar Gemini normalmente e reseta contadores', async () => {
-        process.env.ESCALATION_COOLDOWN_MS = '60000';
+        vi.stubEnv('ESCALATION_COOLDOWN_MS', '60000');
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
         const gemini = await importGeminiModule();
@@ -283,7 +283,7 @@ describe('gemini.service escalonamento humano', () => {
     });
 
     it('cooldown não é reiniciado por novas mensagens do cliente durante a espera', async () => {
-        process.env.ESCALATION_COOLDOWN_MS = '60000';
+        vi.stubEnv('ESCALATION_COOLDOWN_MS', '60000');
         vi.spyOn(Math, 'random').mockReturnValue(0);
 
         const gemini = await importGeminiModule();

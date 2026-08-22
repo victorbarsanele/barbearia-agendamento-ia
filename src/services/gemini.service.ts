@@ -19,10 +19,6 @@ import {
 } from './horario-funcionamento';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
-const EVOLUTION_API_URL =
-    process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const EVOLUTION_SEND_TEXT_URL = `${EVOLUTION_API_URL}/message/sendText/barbearia`;
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
 const TIME_ZONE = agendamentoService.TIME_ZONE;
 const HORA_ALMOCO_INICIO = 11 * 60 + 30;
 const HORA_ALMOCO_FIM = 12 * 60;
@@ -32,16 +28,36 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
-const ESCALATION_DEFAULT_COOLDOWN_MS = Number(
-    process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000,
-);
-const ESCALATION_COOLDOWN_MS_POR_MOTIVO = {
-    palavra_chave: ESCALATION_DEFAULT_COOLDOWN_MS,
-    confusao_explicita: ESCALATION_DEFAULT_COOLDOWN_MS,
-    sem_progresso: ESCALATION_DEFAULT_COOLDOWN_MS,
-    limite_de_cota: ESCALATION_DEFAULT_COOLDOWN_MS,
-    agendamento_recorrente: 2 * 60 * 60 * 1000,
-} as const;
+
+function getEvolutionApiKey(): string | undefined {
+    return process.env.EVOLUTION_API_KEY;
+}
+
+function getEvolutionApiUrl(): string {
+    return process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+}
+
+function getEvolutionInstanceName(): string {
+    return process.env.EVOLUTION_INSTANCE_NAME || 'barbearia';
+}
+
+function getEvolutionSendTextUrl(): string {
+    return `${getEvolutionApiUrl()}/message/sendText/${getEvolutionInstanceName()}`;
+}
+
+function getEscalationDefaultCooldownMs(): number {
+    return Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
+}
+
+function getEscalationCooldownMsPorMotivo(): Record<EscalationMotivo, number> {
+    return {
+        palavra_chave: getEscalationDefaultCooldownMs(),
+        confusao_explicita: getEscalationDefaultCooldownMs(),
+        sem_progresso: getEscalationDefaultCooldownMs(),
+        limite_de_cota: getEscalationDefaultCooldownMs(),
+        agendamento_recorrente: 2 * 60 * 60 * 1000,
+    };
+}
 const CONFUSION_STREAK_LIMIT = 2;
 const NO_PROGRESS_SAFETY_LIMIT = 5;
 const CONFUSION_PATTERN =
@@ -671,11 +687,11 @@ function estaEmCooldownDeEscalonamento(phone: string): boolean {
     const estado = escalationState.get(phone);
     if (!estado) return false;
 
-    const cooldownPadrao = ESCALATION_COOLDOWN_MS_POR_MOTIVO.palavra_chave;
+    const cooldownsPorMotivo = getEscalationCooldownMsPorMotivo();
+    const cooldownPadrao = cooldownsPorMotivo.palavra_chave;
     const cooldownDoMotivo =
-        ESCALATION_COOLDOWN_MS_POR_MOTIVO[
-            estado.motivo as keyof typeof ESCALATION_COOLDOWN_MS_POR_MOTIVO
-        ] ?? cooldownPadrao;
+        cooldownsPorMotivo[estado.motivo as keyof typeof cooldownsPorMotivo] ??
+        cooldownPadrao;
 
     const expirado = Date.now() - estado.since > cooldownDoMotivo;
     if (expirado) {
@@ -1430,15 +1446,17 @@ export async function sendWhatsAppText(
         return;
     }
 
-    if (!EVOLUTION_API_KEY) {
+    const evolutionApiKey = getEvolutionApiKey();
+
+    if (!evolutionApiKey) {
         throw new Error('EVOLUTION_API_KEY não definido no ambiente.');
     }
 
-    const response = await fetch(EVOLUTION_SEND_TEXT_URL, {
+    const response = await fetch(getEvolutionSendTextUrl(), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            apikey: EVOLUTION_API_KEY,
+            apikey: evolutionApiKey,
         },
         body: JSON.stringify({
             number,

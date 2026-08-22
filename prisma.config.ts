@@ -1,5 +1,14 @@
 import { config } from 'dotenv';
-config({ override: true });
+
+const globalWithDotenvFlag = globalThis as typeof globalThis & {
+    __dotenvConfigLoaded?: boolean;
+};
+
+if (!globalWithDotenvFlag.__dotenvConfigLoaded && !process.env.VITEST) {
+    config({ override: true });
+    globalWithDotenvFlag.__dotenvConfigLoaded = true;
+}
+
 import { defineConfig, env } from 'prisma/config';
 
 export default defineConfig({

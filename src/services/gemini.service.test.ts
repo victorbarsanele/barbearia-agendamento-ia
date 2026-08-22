@@ -101,6 +101,36 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         );
     });
 
+    it('releitura do ambiente em runtime para BARBER_PHONE e EVOLUTION_API_URL', async () => {
+        vi.stubEnv('EVOLUTION_API_KEY', 'evolution-test-key');
+        vi.stubEnv(
+            'EVOLUTION_API_URL',
+            'https://evolution.runtime.example.com',
+        );
+        vi.stubEnv('BARBER_PHONE', '5511888888888');
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                text: vi.fn().mockResolvedValue(''),
+            }),
+        );
+
+        const { __testables } = await import('./gemini.service');
+
+        await __testables.escalarParaHumano(
+            '5511999999999@s.whatsapp.net',
+            'palavra_chave',
+        );
+
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            'https://evolution.runtime.example.com/message/sendText/barbearia',
+            expect.objectContaining({
+                body: expect.stringContaining('5511888888888'),
+            }),
+        );
+    });
+
     it('buscarHorariosDisponiveis nunca retorna horário que invade 11h30-12h00', async () => {
         vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
             {
