@@ -57,9 +57,16 @@ function extractMessagePayload(body: unknown): {
     const key = asRecord(data?.key ?? root?.key);
     const message = asRecord(data?.message ?? root?.message);
 
-    const remoteJid = readString(key, 'remoteJid');
+    const remoteJidRaw = readString(key, 'remoteJid');
+    const remoteJidAlt = readString(key, 'remoteJidAlt');
+    const addressingMode = readString(key, 'addressingMode');
     const conversation = readString(message, 'conversation');
     const fromMe = readBoolean(key, 'fromMe') ?? false;
+
+    // When WhatsApp uses 'lid' (new addressing mode), remoteJid is an internal ID
+    // not a phone number. Real phone is in remoteJidAlt.
+    const remoteJid =
+        addressingMode === 'lid' && remoteJidAlt ? remoteJidAlt : remoteJidRaw;
 
     return {
         remoteJid,

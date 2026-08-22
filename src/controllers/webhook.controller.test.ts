@@ -148,4 +148,80 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
         expect(reply.status).toHaveBeenCalledWith(200);
         expect(reply.send).toHaveBeenCalledWith({ ok: true });
     });
+
+    it('usa remoteJidAlt quando addressingMode é "lid"', async () => {
+        const reply = criarReplyMock();
+        const request = criarRequestMock({
+            data: {
+                key: {
+                    remoteJid: '48220470251628@lid',
+                    remoteJidAlt: '5519998374350@s.whatsapp.net',
+                    addressingMode: 'lid',
+                    fromMe: false,
+                },
+                message: {
+                    conversation: 'Quero agendar um corte',
+                },
+            },
+        });
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
+            '5519998374350@s.whatsapp.net',
+            'Quero agendar um corte',
+        );
+        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('mantém comportamento antigo quando addressingMode não está presente', async () => {
+        const reply = criarReplyMock();
+        const request = criarRequestMock({
+            data: {
+                key: {
+                    remoteJid: '5511999999999@s.whatsapp.net',
+                    fromMe: false,
+                },
+                message: {
+                    conversation: 'Quero agendar um corte',
+                },
+            },
+        });
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
+            '5511999999999@s.whatsapp.net',
+            'Quero agendar um corte',
+        );
+        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('faz fallback para remoteJid quando addressingMode é "lid" mas remoteJidAlt ausente', async () => {
+        const reply = criarReplyMock();
+        const request = criarRequestMock({
+            data: {
+                key: {
+                    remoteJid: '48220470251628@lid',
+                    addressingMode: 'lid',
+                    fromMe: false,
+                },
+                message: {
+                    conversation: 'Quero agendar um corte',
+                },
+            },
+        });
+
+        await receberWhatsappWebhook(request, reply);
+
+        // Fallback: usa remoteJid como recebido, deixa camadas seguintes tratarem
+        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
+            '48220470251628@lid',
+            'Quero agendar um corte',
+        );
+        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+    });
 });
