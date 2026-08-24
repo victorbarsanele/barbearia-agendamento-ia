@@ -509,6 +509,19 @@ interface Retry429Options {
     randomFn?: () => number;
     sleepFn?: (ms: number) => Promise<void>;
     warnFn?: (message: string, context: Record<string, unknown>) => void;
+    url?: string;
+}
+
+function logNetworkError(label: string, url: string, error: unknown): void {
+    const errorRecord =
+        error instanceof Error ? (error as Error & { cause?: unknown }) : null;
+
+    console.error(`[${label}] Falha de rede`, {
+        url,
+        message: errorRecord?.message ?? String(error),
+        cause: errorRecord?.cause,
+        stack: errorRecord?.stack,
+    });
 }
 
 async function executeWith429Retry<T>(
@@ -527,6 +540,10 @@ async function executeWith429Retry<T>(
         try {
             return await operation();
         } catch (error) {
+            if (options.url) {
+                logNetworkError('GEMINI API', options.url, error);
+            }
+
             const isRateLimit = isGeminiRateLimitError(error);
             const canRetry =
                 isRateLimit && attempt < GEMINI_RETRY_DELAYS_MS.length;
@@ -1352,20 +1369,24 @@ async function runGeminiFunctionCalling(
     };
 
     for (let i = 0; i < 6; i += 1) {
-        const result = await executeWith429Retry(() =>
-            ai.models.generateContent({
-                model: GEMINI_MODEL,
-                contents,
-                config: {
-                    systemInstruction: buildSystemPrompt(),
-                    tools: [{ functionDeclarations }],
-                    toolConfig: {
-                        functionCallingConfig: {
-                            mode: FunctionCallingConfigMode.AUTO,
+        const result = await executeWith429Retry(
+            () =>
+                ai.models.generateContent({
+                    model: GEMINI_MODEL,
+                    contents,
+                    config: {
+                        systemInstruction: buildSystemPrompt(),
+                        tools: [{ functionDeclarations }],
+                        toolConfig: {
+                            functionCallingConfig: {
+                                mode: FunctionCallingConfigMode.AUTO,
+                            },
                         },
                     },
-                },
-            }),
+                }),
+            {
+                url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+            },
         );
 
         const functionCalls = result.functionCalls ?? [];
@@ -1452,23 +1473,30 @@ export async function sendWhatsAppText(
         throw new Error('EVOLUTION_API_KEY não definido no ambiente.');
     }
 
-    const response = await fetch(getEvolutionSendTextUrl(), {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-            number,
-            text,
-        }),
-    });
+    const url = getEvolutionSendTextUrl();
 
-    if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(
-            `Falha ao enviar mensagem pela Evolution API (${response.status}): ${body}`,
-        );
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: evolutionApiKey,
+            },
+            body: JSON.stringify({
+                number,
+                text,
+            }),
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(
+                `Falha ao enviar mensagem pela Evolution API (${response.status}): ${body}`,
+            );
+        }
+    } catch (error) {
+        logNetworkError('EVOLUTION API', url, error);
+        throw error;
     }
 }
 
