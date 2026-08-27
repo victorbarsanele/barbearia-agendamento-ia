@@ -11,6 +11,12 @@ vi.mock('../services/gemini.service', () => ({
     sendWhatsAppText: vi.fn(),
 }));
 
+const TEST_WEBHOOK_SECRET = vi.hoisted(() => {
+    const secret = 'webhook-secret-teste';
+    vi.stubEnv('WEBHOOK_SECRET', secret);
+    return secret;
+});
+
 const processarMensagemWhatsappMock = vi.mocked(processarMensagemWhatsapp);
 const sendWhatsAppTextMock = vi.mocked(sendWhatsAppText);
 
@@ -26,7 +32,10 @@ function criarReplyMock() {
 function criarRequestMock(body: unknown) {
     return {
         body,
-    } as FastifyRequest;
+        headers: {
+            'x-webhook-secret': TEST_WEBHOOK_SECRET,
+        },
+    } as unknown as FastifyRequest;
 }
 
 beforeEach(() => {

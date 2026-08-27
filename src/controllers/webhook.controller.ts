@@ -5,6 +5,7 @@ import {
     sendWhatsAppText,
 } from '../services/gemini.service';
 
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const MAX_MESSAGE_LENGTH = 500;
 const URL_PATTERN = /(https?:\/\/|www\.)/i;
 const JAILBREAK_PATTERN =
@@ -108,6 +109,15 @@ export async function receberWhatsappWebhook(
     request: FastifyRequest,
     reply: FastifyReply,
 ): Promise<void> {
+    if (
+        !WEBHOOK_SECRET ||
+        request.headers['x-webhook-secret'] !== WEBHOOK_SECRET
+    ) {
+        console.log('[WEBHOOK] Requisição bloqueada por autenticação');
+        void reply.status(401).send({ ok: false });
+        return;
+    }
+
     const { remoteJid, conversation, fromMe } = extractMessagePayload(
         request.body,
     );
