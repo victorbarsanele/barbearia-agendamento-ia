@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -320,8 +321,14 @@ export function BloqueiosPage() {
                             onChange={(event) =>
                                 handleAtravessaDiasChange(event.target.checked)
                             }
-                            className="h-4 w-4 accent-[var(--color-gold)]"
+                            className="peer sr-only"
                         />
+                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-[var(--color-gold)]/30 bg-[var(--color-surface)] peer-checked:border-[var(--color-gold)] peer-checked:bg-[var(--color-gold)] peer-checked:[&>svg]:opacity-100">
+                            <Check
+                                className="h-3 w-3 text-black opacity-0"
+                                strokeWidth={3}
+                            />
+                        </span>
                         Bloqueio atravessa mais de um dia?
                     </label>
 
