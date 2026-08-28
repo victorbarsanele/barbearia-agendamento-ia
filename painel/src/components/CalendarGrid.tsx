@@ -15,7 +15,7 @@ type CalendarGridProps = {
 };
 
 const TIME_ZONE = 'America/Sao_Paulo';
-const WEEKDAY_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const WEEKDAY_LABELS = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SAB', 'DOM'];
 
 function getMonthLabel(date: Date): string {
     const label = new Intl.DateTimeFormat('pt-BR', {

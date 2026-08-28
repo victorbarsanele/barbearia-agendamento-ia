@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -141,8 +142,14 @@ export function AgendamentoItem({
                                 onChange={(event) =>
                                     setNotificarCliente(event.target.checked)
                                 }
-                                className="mt-0.5 h-4 w-4 accent-[var(--color-gold)]"
+                                className="peer sr-only"
                             />
+                            <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-[var(--color-gold)]/30 bg-[var(--color-surface)] peer-checked:border-[var(--color-gold)] peer-checked:bg-[var(--color-gold)] peer-checked:[&>svg]:opacity-100">
+                                <Check
+                                    className="h-3 w-3 text-black opacity-0"
+                                    strokeWidth={3}
+                                />
+                            </span>
                             <span>
                                 Notificar cliente sobre o cancelamento via
                                 WhatsApp
