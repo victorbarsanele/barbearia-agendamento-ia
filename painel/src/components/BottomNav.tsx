@@ -80,10 +80,29 @@ function LockIcon(active: boolean) {
     );
 }
 
+function PackageIcon(active: boolean) {
+    return (
+        <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className={`h-5 w-5 ${active ? 'text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)]'}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <path d="M21 8 12 3 3 8v8l9 5 9-5V8Z" />
+            <path d="M3 8l9 5 9-5M12 13v8" />
+        </svg>
+    );
+}
+
 const navItems: NavItem[] = [
     { label: 'Agenda', to: '/', icon: CalendarIcon },
     { label: 'Clientes', to: '/clientes', icon: UserIcon },
     { label: 'Serviços', to: '/servicos', icon: ScissorsIcon },
+    { label: 'Pacotes', to: '/pacotes', icon: PackageIcon },
     { label: 'Bloqueios', to: '/bloqueios', icon: LockIcon },
 ];
 

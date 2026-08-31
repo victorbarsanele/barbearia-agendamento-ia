@@ -8,6 +8,10 @@ import {
     buscarClientesPorNome,
     type Cliente,
 } from '../services/clientes.service';
+import {
+    buscarPacoteAtivoDoCliente,
+    type PacoteClienteAtivo,
+} from '../services/pacoteCliente.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -74,6 +78,12 @@ export function NovoAgendamentoPage() {
 
     const [servicos, setServicos] = useState<Servico[]>([]);
     const [servicoId, setServicoId] = useState('');
+
+    const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
+        null,
+    );
+    const [carregandoPacoteAtivo, setCarregandoPacoteAtivo] = useState(false);
+    const [usarPacoteAtivo, setUsarPacoteAtivo] = useState(false);
 
     const [data, setData] = useState('');
     const [horaSelecionada, setHoraSelecionada] = useState('');
@@ -203,6 +213,78 @@ export function NovoAgendamentoPage() {
         };
     }, []);
 
+    useEffect(() => {
+        setPacoteAtivo(null);
+        setUsarPacoteAtivo(false);
+
+        if (!clienteSelecionado?.id) {
+            return;
+        }
+
+        let ativo = true;
+
+        const carregarPacoteAtivo = async () => {
+            setCarregandoPacoteAtivo(true);
+
+            try {
+                const ativoAtual = await buscarPacoteAtivoDoCliente(
+                    clienteSelecionado.id,
+                );
+                if (ativo) {
+                    setPacoteAtivo(ativoAtual);
+                }
+            } catch {
+                if (ativo) {
+                    setPacoteAtivo(null);
+                }
+            } finally {
+                if (ativo) {
+                    setCarregandoPacoteAtivo(false);
+                }
+            }
+        };
+
+        void carregarPacoteAtivo();
+
+        return () => {
+            ativo = false;
+        };
+    }, [clienteSelecionado?.id]);
+
+    const servicosDoPacoteAtivo = useMemo(() => {
+        if (!pacoteAtivo) {
+            return null;
+        }
+
+        const idsInclusos = new Set(
+            pacoteAtivo.pacote.servicos.map((item) => item.servicoId),
+        );
+        return servicos.filter((servico) => idsInclusos.has(servico.id));
+    }, [pacoteAtivo, servicos]);
+
+    const servicosDisponiveis = useMemo(() => {
+        if (usarPacoteAtivo && servicosDoPacoteAtivo) {
+            return servicosDoPacoteAtivo;
+        }
+
+        return servicos;
+    }, [servicos, servicosDoPacoteAtivo, usarPacoteAtivo]);
+
+    useEffect(() => {
+        if (servicosDisponiveis.length === 0) {
+            setServicoId('');
+            return;
+        }
+
+        const servicoAindaValido = servicosDisponiveis.some(
+            (servico) => servico.id === servicoId,
+        );
+
+        if (!servicoAindaValido) {
+            setServicoId(servicosDisponiveis[0].id);
+        }
+    }, [servicoId, servicosDisponiveis]);
+
     const podeEnviar = useMemo(() => {
         return (
             !!clienteSelecionado?.id &&
@@ -299,6 +381,9 @@ export function NovoAgendamentoPage() {
             clienteId: clienteSelecionado.id,
             servicoId,
             dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
+            ...(usarPacoteAtivo && pacoteAtivo
+                ? { pacoteClienteId: pacoteAtivo.id }
+                : {}),
         };
 
         try {
@@ -389,6 +474,32 @@ export function NovoAgendamentoPage() {
                             </div>
                         )}
 
+                        {!carregandoPacoteAtivo &&
+                            pacoteAtivo &&
+                            pacoteAtivo.quantidadeRestante > 0 && (
+                                <label className="mt-3 flex items-start gap-3 rounded-[8px] border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] p-3 text-sm text-[var(--color-text-primary)]">
+                                    <input
+                                        type="checkbox"
+                                        checked={usarPacoteAtivo}
+                                        onChange={(event) =>
+                                            setUsarPacoteAtivo(
+                                                event.target.checked,
+                                            )
+                                        }
+                                        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-gold)]"
+                                    />
+                                    <span>
+                                        Usar pacote ativo (
+                                        {pacoteAtivo.quantidadeRestante} de{' '}
+                                        {pacoteAtivo.quantidadeTotal} usos
+                                        restantes) —{' '}
+                                        <span className="font-semibold text-[var(--color-gold)]">
+                                            {pacoteAtivo.pacote.nome}
+                                        </span>
+                                    </span>
+                                </label>
+                            )}
+
                         {!buscandoClientes &&
                             queryCliente.trim() &&
                             !clienteSelecionado && (
@@ -436,15 +547,18 @@ export function NovoAgendamentoPage() {
                             onChange={(event) =>
                                 setServicoId(event.target.value)
                             }
-                            disabled={loadingServicos || servicos.length === 0}
+                            disabled={
+                                loadingServicos ||
+                                servicosDisponiveis.length === 0
+                            }
                             className={`${fieldClassName} disabled:cursor-not-allowed disabled:opacity-60`}
                         >
-                            {servicos.length === 0 ? (
+                            {servicosDisponiveis.length === 0 ? (
                                 <option value="">
                                     Sem serviços disponíveis
                                 </option>
                             ) : (
-                                servicos.map((servico) => (
+                                servicosDisponiveis.map((servico) => (
                                     <option key={servico.id} value={servico.id}>
                                         {servico.nome} ({servico.duracaoMinutos}{' '}
                                         min) — {formatarPreco(servico.preco)}

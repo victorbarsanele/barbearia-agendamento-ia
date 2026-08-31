@@ -4,6 +4,7 @@ import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import {
     ehDiaDeFuncionamento,
@@ -31,6 +32,7 @@ function formatarAntecedenciaMinima(ms: number): string {
 interface CriarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    pacoteClienteId?: string;
     dataHoraInicio: string;
 }
 
@@ -274,6 +276,40 @@ async function validarNaoInterceptaBloqueio(
     }
 }
 
+async function validarPacoteCliente(
+    pacoteClienteId: string | undefined,
+    servicoId: string,
+): Promise<void> {
+    if (!pacoteClienteId) {
+        return;
+    }
+
+    const pacoteCliente =
+        await pacoteClienteRepository.buscarPorId(pacoteClienteId);
+
+    if (!pacoteCliente) {
+        throw new AppError('Pacote do cliente não encontrado.', 404);
+    }
+
+    if (pacoteCliente.status !== 'ATIVO') {
+        throw new AppError('Pacote do cliente não está ativo.', 400);
+    }
+
+    if (pacoteCliente.quantidadeRestante <= 0) {
+        throw new AppError('Pacote do cliente está esgotado.', 400);
+    }
+
+    const servicoIncluso = pacoteCliente.pacote?.servicos?.some(
+        (item) => item.servicoId === servicoId,
+    );
+    if (!servicoIncluso) {
+        throw new AppError(
+            'Este serviço não está incluso no pacote selecionado.',
+            400,
+        );
+    }
+}
+
 export async function criar(data: CriarAgendamentoData) {
     try {
         const { servico } = await carregarDependencias(
@@ -291,10 +327,12 @@ export async function criar(data: CriarAgendamentoData) {
         validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
         await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
         await validarConflito(dataHoraInicio, dataHoraFim);
+        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
 
         return await agendamentoRepository.criar({
             clienteId: data.clienteId,
             servicoId: data.servicoId,
+            pacoteClienteId: data.pacoteClienteId ?? null,
             dataHoraInicio,
             dataHoraFim,
             status: StatusAgendamento.AGENDADO,
@@ -440,5 +478,46 @@ export async function cancelar(id: string, notificarCliente = false) {
         }
 
         throw new AppError('Erro ao cancelar agendamento.', 500);
+    }
+}
+
+export async function concluir(id: string) {
+    try {
+        const agendamento = await agendamentoRepository.buscarPorId(id);
+
+        if (!agendamento) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+        if (agendamento.concluido) {
+            throw new AppError('Agendamento já está concluído.', 409);
+        }
+
+        if (!agendamento.pacoteClienteId) {
+            throw new AppError('Agendamento não vinculado a pacote.', 400);
+        }
+
+        const pacoteCliente = await pacoteClienteRepository.buscarPorId(
+            agendamento.pacoteClienteId,
+        );
+        if (!pacoteCliente || pacoteCliente.status !== 'ATIVO') {
+            throw new AppError(
+                'Não é possível concluir: pacote do cliente não está ativo.',
+                409,
+            );
+        }
+
+        const resultado = await agendamentoRepository.concluirComPacote(
+            id,
+            agendamento.pacoteClienteId,
+        );
+
+        return resultado.agendamento;
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao concluir agendamento.', 500);
     }
 }

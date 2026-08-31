@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/Button';
 import {
     cancelarAgendamento,
+    concluirAgendamento,
     listarAgendamentos,
     type Agendamento,
 } from '../services/agendamentos.service';
@@ -96,6 +97,7 @@ export function AgendamentosPage() {
     const [loading, setLoading] = useState<boolean>(true);
     const [erro, setErro] = useState<string | null>(null);
     const [cancelandoId, setCancelandoId] = useState<string | null>(null);
+    const [concluindoId, setConcluindoId] = useState<string | null>(null);
     const [dataSelecionadaKey, setDataSelecionadaKey] =
         useState<string>(dataInicial);
     const [calendarioAberto, setCalendarioAberto] = useState(false);
@@ -181,6 +183,30 @@ export function AgendamentosPage() {
         },
         [],
     );
+
+    const handleConcluir = useCallback(async (id: string) => {
+        setConcluindoId(id);
+        setErro(null);
+
+        try {
+            const agendamentoConcluido = await concluirAgendamento(id);
+            setAgendamentos((current) =>
+                current.map((agendamento) =>
+                    agendamento.id === agendamentoConcluido.id
+                        ? agendamentoConcluido
+                        : agendamento,
+                ),
+            );
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível concluir o agendamento.';
+            setErro(message);
+        } finally {
+            setConcluindoId(null);
+        }
+    }, []);
 
     const handleDiaAnterior = useCallback(() => {
         setDataSelecionadaKey((current) => addDaysToDateKey(current, -1));
@@ -349,6 +375,8 @@ export function AgendamentosPage() {
                             onEditar={handleEditar}
                             onCancelar={handleCancelar}
                             cancelando={cancelandoId === agendamento.id}
+                            onConcluir={handleConcluir}
+                            concluindo={concluindoId === agendamento.id}
                         />
                     ))}
                 </ul>

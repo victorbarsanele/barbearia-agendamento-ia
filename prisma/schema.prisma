@@ -13,43 +13,101 @@ enum StatusAgendamento {
   CONCLUIDO
 }
 
+enum StatusPacoteCliente {
+  ATIVO
+  FINALIZADO
+  CANCELADO
+}
+
 model Cliente {
   id           String        @id @default(cuid())
   nome         String
   telefone     String        @unique
   createdAt    DateTime      @default(now()) @db.Timestamptz(3)
   agendamentos Agendamento[]
+  pacotes      PacoteCliente[]
 
   @@map("clientes")
 }
 
 model Servico {
-  id            String        @id @default(cuid())
-  nome          String
+  id             String          @id @default(cuid())
+  nome           String
   duracaoMinutos Int
-  preco         Decimal?      @db.Decimal(10, 2)
-  agendamentos  Agendamento[]
+  preco          Decimal?        @db.Decimal(10, 2)
+  agendamentos   Agendamento[]
+  pacotes        PacoteServico[]
 
   @@map("servicos")
 }
 
 model Agendamento {
-  id             String            @id @default(cuid())
-  clienteId      String
-  servicoId      String
-  dataHoraInicio DateTime          @db.Timestamptz(3)
-  dataHoraFim    DateTime          @db.Timestamptz(3)
-  status         StatusAgendamento @default(AGENDADO)
-  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+  id              String            @id @default(cuid())
+  clienteId       String
+  servicoId       String
+  pacoteClienteId String?
+  dataHoraInicio  DateTime          @db.Timestamptz(3)
+  dataHoraFim     DateTime          @db.Timestamptz(3)
+  status          StatusAgendamento @default(AGENDADO)
+  concluido       Boolean           @default(false)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
 
-  cliente        Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
-  servico        Servico           @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+  cliente         Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  servico         Servico           @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+  pacoteCliente   PacoteCliente?    @relation(fields: [pacoteClienteId], references: [id], onDelete: Restrict)
 
   @@index([clienteId])
   @@index([servicoId])
+  @@index([pacoteClienteId])
   @@index([dataHoraInicio, dataHoraFim, status])
   @@map("agendamentos")
+}
+
+model Pacote {
+  id          String          @id @default(cuid())
+  nome        String
+  duracaoDias Int
+  quantidade  Int
+  createdAt   DateTime        @default(now()) @db.Timestamptz(3)
+  servicos    PacoteServico[]
+  clientes    PacoteCliente[]
+
+  @@map("pacotes")
+}
+
+model PacoteServico {
+  pacoteId  String
+  servicoId String
+
+  pacote    Pacote  @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
+  servico   Servico @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+
+  @@id([pacoteId, servicoId])
+  @@index([servicoId])
+  @@map("pacotes_servicos")
+}
+
+// Regra de negocio (validar em service/controller, nao no banco):
+// um Cliente so pode ter um PacoteCliente com status ATIVO por vez.
+model PacoteCliente {
+  id                 String              @id @default(cuid())
+  clienteId          String
+  pacoteId           String
+  quantidadeTotal    Int
+  quantidadeRestante Int
+  dataInicio         DateTime            @db.Timestamptz(3)
+  status             StatusPacoteCliente @default(ATIVO)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+
+  cliente            Cliente             @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  pacote             Pacote              @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
+  agendamentos       Agendamento[]
+
+  @@index([clienteId])
+  @@index([pacoteId])
+  @@index([clienteId, status])
+  @@map("pacotes_clientes")
 }
 
 model BloqueioHorario {

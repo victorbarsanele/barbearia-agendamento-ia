@@ -10,6 +10,8 @@ interface AgendamentoItemProps {
     onEditar: (id: string) => void;
     onCancelar: (id: string, notificarCliente: boolean) => Promise<void>;
     cancelando: boolean;
+    onConcluir: (id: string) => Promise<void>;
+    concluindo: boolean;
 }
 
 const STATUS_LABEL: Record<Agendamento['status'], string> = {
@@ -33,12 +35,16 @@ export function AgendamentoItem({
     onEditar,
     onCancelar,
     cancelando,
+    onConcluir,
+    concluindo,
 }: AgendamentoItemProps) {
     const [confirmacaoAberta, setConfirmacaoAberta] = useState(false);
     const [notificarCliente, setNotificarCliente] = useState(false);
 
     const podeCancelar = agendamento.status !== 'CANCELADO';
     const podeEditar = agendamento.status !== 'CANCELADO';
+    const ehAgendamentoDePacote = Boolean(agendamento.pacoteClienteId);
+    const podeConcluir = ehAgendamentoDePacote && !agendamento.concluido;
 
     const abrirConfirmacao = () => {
         setConfirmacaoAberta(true);
@@ -81,6 +87,19 @@ export function AgendamentoItem({
                     </Badge>
                 </div>
 
+                {ehAgendamentoDePacote && (
+                    <div className="flex items-center gap-2">
+                        <span className="inline-flex min-h-6 items-center rounded-full border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-gold)]">
+                            Pacote
+                        </span>
+                        {agendamento.concluido && (
+                            <span className="inline-flex min-h-6 items-center rounded-full border border-[var(--color-success)]/35 bg-[color:rgba(22,163,74,0.16)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#86efac]">
+                                Concluído
+                            </span>
+                        )}
+                    </div>
+                )}
+
                 {(podeEditar || podeCancelar) && (
                     <div className="flex gap-2 border-t border-[var(--color-border)] pt-3">
                         {podeEditar && (
@@ -91,6 +110,21 @@ export function AgendamentoItem({
                                 onClick={() => onEditar(agendamento.id)}
                             >
                                 Editar
+                            </Button>
+                        )}
+
+                        {podeConcluir && (
+                            <Button
+                                variant="ghost"
+                                fullWidth
+                                className="min-h-9 px-3 text-xs"
+                                type="button"
+                                onClick={() => void onConcluir(agendamento.id)}
+                                disabled={concluindo}
+                            >
+                                {concluindo
+                                    ? 'Concluindo...'
+                                    : 'Marcar como concluído'}
                             </Button>
                         )}
 

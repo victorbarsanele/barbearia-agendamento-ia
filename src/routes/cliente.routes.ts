@@ -20,7 +20,23 @@ export async function clienteRoutes(app: FastifyInstance): Promise<void> {
         clienteController.criar,
     );
 
-    app.get('/clientes', clienteController.listarTodos);
+    app.get(
+        '/clientes',
+        {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        search: { type: 'string', maxLength: 100 },
+                        page: { type: 'integer', minimum: 1 },
+                        limit: { type: 'integer', minimum: 1, maximum: 100 },
+                    },
+                },
+            },
+        },
+        clienteController.listarTodos,
+    );
 
     app.get(
         '/clientes/:id',

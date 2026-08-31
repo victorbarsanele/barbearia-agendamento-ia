@@ -20,6 +20,12 @@ interface BuscarPorTelefoneParams {
     telefone: string;
 }
 
+interface ListarClientesQuery {
+    search?: string;
+    page?: number;
+    limit?: number;
+}
+
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
         void reply.status(error.statusCode).send({ message: error.message });
@@ -41,12 +47,30 @@ export async function criar(
 }
 
 export async function listarTodos(
-    _request: FastifyRequest,
+    request: FastifyRequest<{ Querystring: ListarClientesQuery }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        const clientes = await clienteService.listarTodos();
-        void reply.send(clientes);
+        const { search, page, limit } = request.query;
+
+        if (search === undefined && page === undefined && limit === undefined) {
+            const clientes = await clienteService.listarTodos();
+            void reply.send(clientes);
+            return;
+        }
+
+        const resultado = await clienteService.listarPaginado({
+            search,
+            page: page ?? 1,
+            limit: limit ?? 10,
+        });
+
+        void reply.send({
+            data: resultado.clientes,
+            total: resultado.total,
+            page: resultado.page,
+            totalPages: resultado.totalPages,
+        });
     } catch (error) {
         handleError(error, reply);
     }

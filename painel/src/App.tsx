@@ -54,6 +54,24 @@ const EditarServicoPage = lazy(() =>
     })),
 );
 
+const PacotesPage = lazy(() =>
+    import('./pages/PacotesPage').then((module) => ({
+        default: module.PacotesPage,
+    })),
+);
+
+const NovoPacotePage = lazy(() =>
+    import('./pages/NovoPacotePage').then((module) => ({
+        default: module.NovoPacotePage,
+    })),
+);
+
+const EditarPacotePage = lazy(() =>
+    import('./pages/EditarPacotePage').then((module) => ({
+        default: module.EditarPacotePage,
+    })),
+);
+
 function MainRouteLayout({ children }: { children: React.ReactNode }) {
     return (
         <>
@@ -159,6 +177,32 @@ function App() {
                     element={
                         <ProtectedRoute>
                             <EditarServicoPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/pacotes"
+                    element={
+                        <ProtectedRoute>
+                            <MainRouteLayout>
+                                <PacotesPage />
+                            </MainRouteLayout>
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/pacotes/novo"
+                    element={
+                        <ProtectedRoute>
+                            <NovoPacotePage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/pacotes/editar/:id"
+                    element={
+                        <ProtectedRoute>
+                            <EditarPacotePage />
                         </ProtectedRoute>
                     }
                 />

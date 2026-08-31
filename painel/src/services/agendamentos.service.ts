@@ -11,6 +11,8 @@ export interface Agendamento {
     dataHoraInicio: string;
     dataHoraFim: string;
     status: StatusAgendamento;
+    pacoteClienteId: string | null;
+    concluido: boolean;
     cliente: {
         id: string;
         nome: string;
@@ -27,6 +29,7 @@ export interface Agendamento {
 export interface CriarAgendamentoPayload {
     clienteId: string;
     servicoId: string;
+    pacoteClienteId?: string;
     dataHoraInicio: string;
 }
 
@@ -81,6 +84,10 @@ export async function cancelarAgendamento(
 export async function excluirAgendamento(id: string): Promise<Agendamento> {
     const response = await apiFetch(`/api/agendamentos/${id}`, {
         method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
     });
 
     return handleResponse<Agendamento>(response);
@@ -110,6 +117,14 @@ export async function atualizarAgendamento(
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
+    });
+
+    return handleResponse<Agendamento>(response);
+}
+
+export async function concluirAgendamento(id: string): Promise<Agendamento> {
+    const response = await apiFetch(`/api/agendamentos/${id}/concluir`, {
+        method: 'PATCH',
     });
 
     return handleResponse<Agendamento>(response);
