@@ -6,6 +6,7 @@ import * as agendamentoService from '../services/agendamento.service';
 interface CriarAgendamentoBody {
     clienteId: string;
     servicoId: string;
+    pacoteClienteId?: string;
     dataHoraInicio: string;
 }
 
@@ -100,6 +101,20 @@ export async function cancelar(
         const agendamento = await agendamentoService.cancelar(
             request.params.id,
             request.body?.notificarCliente === true,
+        );
+        void reply.send(agendamento);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function concluir(
+    request: FastifyRequest<{ Params: AgendamentoParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const agendamento = await agendamentoService.concluir(
+            request.params.id,
         );
         void reply.send(agendamento);
     } catch (error) {

@@ -27,6 +27,29 @@ export async function listarClientes(): Promise<Cliente[]> {
     return handleResponse<Cliente[]>(response);
 }
 
+export interface ListarClientesPaginadoResultado {
+    data: Cliente[];
+    total: number;
+    page: number;
+    totalPages: number;
+}
+
+export async function listarClientesPaginado(params: {
+    search?: string;
+    page: number;
+    limit: number;
+}): Promise<ListarClientesPaginadoResultado> {
+    const query = new URLSearchParams();
+    if (params.search) {
+        query.set('search', params.search);
+    }
+    query.set('page', String(params.page));
+    query.set('limit', String(params.limit));
+
+    const response = await apiFetch(`/api/clientes?${query.toString()}`);
+    return handleResponse<ListarClientesPaginadoResultado>(response);
+}
+
 export async function buscarClientesPorNome(nome: string): Promise<Cliente[]> {
     const termo = nome.trim().toLowerCase();
     const clientes = await listarClientes();

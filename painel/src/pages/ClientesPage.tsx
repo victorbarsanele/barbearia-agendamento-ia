@@ -2,15 +2,20 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AgendamentosClienteModal } from '../components/AgendamentosClienteModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { PacoteClienteModal } from '../components/PacoteClienteModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { listarAgendamentos } from '../services/agendamentos.service';
 import {
     excluirCliente,
-    listarClientes,
+    listarClientesPaginado,
     type Cliente,
 } from '../services/clientes.service';
+
+const CLIENTES_POR_PAGINA = 10;
+const DEBOUNCE_BUSCA_MS = 350;
+
 
 function getMensagemErroExclusaoCliente(error: unknown): string {
     const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -43,6 +48,23 @@ export function ClientesPage() {
     >({});
     const [clienteModalAgendamentos, setClienteModalAgendamentos] =
         useState<Cliente | null>(null);
+    const [clienteModalPacote, setClienteModalPacote] =
+        useState<Cliente | null>(null);
+    const [busca, setBusca] = useState('');
+    const [buscaDebounced, setBuscaDebounced] = useState('');
+    const [pagina, setPagina] = useState(1);
+    const [totalPaginas, setTotalPaginas] = useState(1);
+    const [totalClientes, setTotalClientes] = useState(0);
+    const [refreshToken, setRefreshToken] = useState(0);
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setBuscaDebounced(busca.trim());
+            setPagina(1);
+        }, DEBOUNCE_BUSCA_MS);
+
+        return () => window.clearTimeout(timer);
+    }, [busca]);
 
     useEffect(() => {
         let ativo = true;
@@ -54,7 +76,14 @@ export function ClientesPage() {
 
             try {
                 const [clientesResponse, agendamentosResponse] =
-                    await Promise.all([listarClientes(), listarAgendamentos()]);
+                    await Promise.all([
+                        listarClientesPaginado({
+                            search: buscaDebounced || undefined,
+                            page: pagina,
+                            limit: CLIENTES_POR_PAGINA,
+                        }),
+                        listarAgendamentos(),
+                    ]);
                 if (!ativo) {
                     return;
                 }
@@ -67,7 +96,9 @@ export function ClientesPage() {
                     return acc;
                 }, {});
 
-                setClientes(clientesResponse);
+                setClientes(clientesResponse.data);
+                setTotalPaginas(clientesResponse.totalPages);
+                setTotalClientes(clientesResponse.total);
                 setAgendamentosPorCliente(quantidadePorCliente);
             } catch (error) {
                 if (!ativo) {
@@ -91,7 +122,7 @@ export function ClientesPage() {
         return () => {
             ativo = false;
         };
-    }, []);
+    }, [buscaDebounced, pagina, refreshToken]);
 
     const handleConfirmarExclusao = async () => {
         if (!clientePendenteExclusao) {
@@ -104,11 +135,12 @@ export function ClientesPage() {
 
         try {
             await excluirCliente(clientePendenteExclusao.id);
-            setClientes((current) =>
-                current.filter(
-                    (item) => item.id !== clientePendenteExclusao.id,
-                ),
-            );
+            const eraUltimoDaPagina = clientes.length === 1 && pagina > 1;
+            if (eraUltimoDaPagina) {
+                setPagina((atual) => atual - 1);
+            } else {
+                setRefreshToken((atual) => atual + 1);
+            }
             setSucesso('Cliente excluido com sucesso.');
         } catch (error) {
             const message = getMensagemErroExclusaoCliente(error);
@@ -156,6 +188,17 @@ export function ClientesPage() {
                 </Button>
             </header>
 
+            <div className="mb-4">
+                <input
+                    type="text"
+                    value={busca}
+                    onChange={(event) => setBusca(event.target.value)}
+                    placeholder="Buscar por nome ou telefone..."
+                    aria-label="Buscar clientes"
+                    className="h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]"
+                />
+            </div>
+
             {loading && (
                 <SkeletonCard count={4} heightClassName="min-h-[132px]" />
             )}
@@ -175,7 +218,9 @@ export function ClientesPage() {
             {!loading && !erro && clientes.length === 0 && (
                 <Card>
                     <p className="text-sm text-[var(--color-text-secondary)]">
-                        Nenhum cliente cadastrado ainda.
+                        {buscaDebounced
+                            ? 'Nenhum cliente encontrado para essa busca.'
+                            : 'Nenhum cliente cadastrado ainda.'}
                     </p>
                 </Card>
             )}
@@ -212,6 +257,16 @@ export function ClientesPage() {
                                     type="button"
                                     variant="ghost"
                                     onClick={() =>
+                                        setClienteModalPacote(cliente)
+                                    }
+                                    className="min-h-8 px-3 text-xs"
+                                >
+                                    Pacote
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() =>
                                         navigate(
                                             `/clientes/editar/${cliente.id}`,
                                         )
@@ -236,6 +291,41 @@ export function ClientesPage() {
                             </div>
                         </Card>
                     ))}
+                </div>
+            )}
+
+            {!loading && !erro && totalClientes > 0 && (
+                <div className="mt-4 flex items-center justify-between gap-3">
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-9 px-3 text-xs"
+                        disabled={pagina <= 1}
+                        onClick={() =>
+                            setPagina((atual) => Math.max(1, atual - 1))
+                        }
+                    >
+                        Anterior
+                    </Button>
+
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                        Pagina {pagina} de {totalPaginas} ({totalClientes}{' '}
+                        {totalClientes === 1 ? 'cliente' : 'clientes'})
+                    </p>
+
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-9 px-3 text-xs"
+                        disabled={pagina >= totalPaginas}
+                        onClick={() =>
+                            setPagina((atual) =>
+                                Math.min(totalPaginas, atual + 1),
+                            )
+                        }
+                    >
+                        Proximo
+                    </Button>
                 </div>
             )}
 
@@ -265,6 +355,12 @@ export function ClientesPage() {
                 cliente={clienteModalAgendamentos}
                 onClose={() => setClienteModalAgendamentos(null)}
                 onRemoverAgendamento={handleRemocaoAgendamentoNoModal}
+            />
+
+            <PacoteClienteModal
+                open={Boolean(clienteModalPacote)}
+                cliente={clienteModalPacote}
+                onClose={() => setClienteModalPacote(null)}
             />
         </main>
     );

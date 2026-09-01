@@ -8,6 +8,7 @@ vi.mock('../repositories/agendamento.repository', () => ({
     buscarConflito: vi.fn(),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
+    concluirComPacote: vi.fn(),
     contarAtivosPorClienteId: vi.fn(),
     contarAtivosPorServicoId: vi.fn(),
     excluirCanceladosPorClienteId: vi.fn(),
@@ -26,6 +27,10 @@ vi.mock('../repositories/servico.repository', () => ({
     buscarPorId: vi.fn(),
 }));
 
+vi.mock('../repositories/pacoteCliente.repository', () => ({
+    buscarPorId: vi.fn(),
+}));
+
 vi.mock('./gemini.service', () => ({
     sendWhatsAppText: vi.fn(),
     addToHistory: vi.fn(),
@@ -35,6 +40,7 @@ import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as geminiService from './gemini.service';
 import * as agendamentoService from './agendamento.service';
 
@@ -56,9 +62,11 @@ const agendamentoAtual = {
     id: 'agendamento-1',
     clienteId: clienteBase.id,
     servicoId: servicoBase.id,
+    pacoteClienteId: null,
     dataHoraInicio: new Date('2026-07-20T09:00:00-03:00'),
     dataHoraFim: new Date('2026-07-20T09:30:00-03:00'),
     status: StatusAgendamento.AGENDADO,
+    concluido: false,
     createdAt: new Date('2026-07-20T00:00:00Z'),
     updatedAt: new Date('2026-07-20T00:00:00Z'),
     cliente: clienteBase,
@@ -116,6 +124,7 @@ describe('agendamento.service.criar', () => {
         expect(agendamentoRepository.criar).toHaveBeenCalledWith({
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
+            pacoteClienteId: null,
             dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
             dataHoraFim: new Date('2026-07-20T13:30:00Z'),
             status: StatusAgendamento.AGENDADO,
@@ -559,5 +568,228 @@ describe('agendamento.service.atualizar', () => {
         });
 
         expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.criar com pacoteClienteId', () => {
+    it('rejeita quando pacoteCliente informado não existe', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue(null);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pacote-cliente-1',
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote do cliente não encontrado.',
+            statusCode: 404,
+        });
+
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando pacoteCliente não está ativo', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'FINALIZADO',
+            quantidadeRestante: 3,
+        } as never);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pacote-cliente-1',
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote do cliente não está ativo.',
+            statusCode: 400,
+        });
+
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando pacoteCliente está esgotado', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            quantidadeRestante: 0,
+        } as never);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pacote-cliente-1',
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote do cliente está esgotado.',
+            statusCode: 400,
+        });
+
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('aceita quando pacoteCliente está ativo e com saldo', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            quantidadeRestante: 2,
+            pacote: {
+                servicos: [{ servicoId: servicoBase.id }],
+            },
+        } as never);
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteClienteId: 'pacote-cliente-1',
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
+        );
+    });
+
+    it('rejeita quando serviço não está incluso no pacote selecionado', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            quantidadeRestante: 2,
+            pacote: {
+                servicos: [{ servicoId: 'outro-servico' }],
+            },
+        } as never);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pacote-cliente-1',
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Este serviço não está incluso no pacote selecionado.',
+            statusCode: 400,
+        });
+
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.concluir', () => {
+    it('rejeita quando agendamento não existe', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(null);
+
+        await expect(
+            agendamentoService.concluir('agendamento-inexistente'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento não encontrado.',
+            statusCode: 404,
+        });
+    });
+
+    it('rejeita quando agendamento não está vinculado a pacote', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: null,
+        });
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento não vinculado a pacote.',
+            statusCode: 400,
+        });
+
+        expect(agendamentoRepository.concluirComPacote).not.toHaveBeenCalled();
+    });
+
+    it('rejeita idempotentemente quando agendamento já está concluído (não decrementa de novo)', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: true,
+        });
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento já está concluído.',
+            statusCode: 409,
+        });
+
+        expect(agendamentoRepository.concluirComPacote).not.toHaveBeenCalled();
+    });
+
+    it('conclui agendamento vinculado a pacote e decrementa quantidadeRestante', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: false,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: {
+                id: 'pacote-cliente-1',
+                quantidadeRestante: 1,
+                status: 'ATIVO',
+            } as never,
+        });
+
+        const resultado = await agendamentoService.concluir('agendamento-1');
+
+        expect(agendamentoRepository.concluirComPacote).toHaveBeenCalledWith(
+            'agendamento-1',
+            'pacote-cliente-1',
+        );
+        expect(resultado).toMatchObject({ concluido: true });
+    });
+
+    it('rejeita conclusão quando o pacote do cliente não está ativo (ex: cancelado)', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: false,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'CANCELADO',
+        } as never);
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Não é possível concluir: pacote do cliente não está ativo.',
+            statusCode: 409,
+        });
+
+        expect(agendamentoRepository.concluirComPacote).not.toHaveBeenCalled();
     });
 });

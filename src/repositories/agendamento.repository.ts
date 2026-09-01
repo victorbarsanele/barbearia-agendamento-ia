@@ -1,4 +1,9 @@
-import { Prisma, StatusAgendamento } from '@prisma/client';
+import {
+    PacoteCliente,
+    Prisma,
+    StatusAgendamento,
+    StatusPacoteCliente,
+} from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
 
@@ -12,6 +17,7 @@ export type AgendamentoComRelacoes = Prisma.AgendamentoGetPayload<{
 interface SalvarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    pacoteClienteId?: string | null;
     dataHoraInicio: Date;
     dataHoraFim: Date;
     status?: StatusAgendamento;
@@ -248,4 +254,64 @@ export async function excluirCanceladosPorServicoId(id: string): Promise<void> {
     } catch (error) {
         throw error;
     }
+}
+
+export async function contarPendentesPorPacoteClienteId(
+    pacoteClienteId: string,
+    apartirDe: Date,
+): Promise<number> {
+    try {
+        return await prisma.agendamento.count({
+            where: {
+                pacoteClienteId,
+                concluido: false,
+                status: { not: StatusAgendamento.CANCELADO },
+                dataHoraInicio: { gte: apartirDe },
+            },
+        });
+    } catch (error) {
+        throw error;
+    }
+}
+
+export async function concluirComPacote(
+    agendamentoId: string,
+    pacoteClienteId: string,
+): Promise<{
+    agendamento: AgendamentoComRelacoes;
+    pacoteCliente: PacoteCliente;
+}> {
+    return prisma.$transaction(async (tx) => {
+        const pacoteCliente = await tx.pacoteCliente.findUnique({
+            where: { id: pacoteClienteId },
+        });
+
+        if (!pacoteCliente) {
+            throw new AppError('Pacote do cliente não encontrado.', 404);
+        }
+
+        const quantidadeRestante = Math.max(
+            0,
+            pacoteCliente.quantidadeRestante - 1,
+        );
+
+        const pacoteClienteAtualizado = await tx.pacoteCliente.update({
+            where: { id: pacoteClienteId },
+            data: {
+                quantidadeRestante,
+                status:
+                    quantidadeRestante === 0
+                        ? StatusPacoteCliente.FINALIZADO
+                        : pacoteCliente.status,
+            },
+        });
+
+        const agendamento = await tx.agendamento.update({
+            where: { id: agendamentoId },
+            data: { concluido: true },
+            include: includeRelacoes,
+        });
+
+        return { agendamento, pacoteCliente: pacoteClienteAtualizado };
+    });
 }

@@ -128,3 +128,29 @@ export async function excluirPorId(id: string): Promise<void> {
 export async function listarTodos(): Promise<Cliente[]> {
     return clienteRepository.listarTodos();
 }
+
+export async function listarPaginado(params: {
+    search?: string;
+    page: number;
+    limit: number;
+}): Promise<{
+    clientes: Cliente[];
+    total: number;
+    page: number;
+    totalPages: number;
+}> {
+    const { search, page, limit } = params;
+    const skip = (page - 1) * limit;
+
+    const [clientes, total] = await Promise.all([
+        clienteRepository.listarPaginado({ search, skip, take: limit }),
+        clienteRepository.contar({ search }),
+    ]);
+
+    return {
+        clientes,
+        total,
+        page,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+}

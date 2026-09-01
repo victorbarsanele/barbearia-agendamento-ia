@@ -14,6 +14,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                     properties: {
                         clienteId: { type: 'string', minLength: 1 },
                         servicoId: { type: 'string', minLength: 1 },
+                        pacoteClienteId: { type: 'string', minLength: 1 },
                         dataHoraInicio: { type: 'string', format: 'date-time' },
                     },
                 },
@@ -105,5 +106,22 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         agendamentoController.cancelar,
+    );
+
+    app.patch(
+        '/agendamentos/:id/concluir',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: {
+                        id: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        agendamentoController.concluir,
     );
 }
