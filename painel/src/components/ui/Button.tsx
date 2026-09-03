@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-type ButtonVariant = 'primary' | 'danger' | 'ghost';
+type ButtonVariant = 'primary' | 'danger' | 'ghost' | 'outline';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: ButtonVariant;
@@ -11,12 +11,14 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 function getVariantClasses(variant: ButtonVariant): string {
     switch (variant) {
         case 'danger':
-            return 'bg-[var(--color-danger)] text-white hover:brightness-110';
+            return 'bg-[var(--color-danger)] text-white hover:brightness-110 active:scale-95';
+        case 'outline':
+            return 'border border-[var(--color-gold)]/80 bg-transparent text-[var(--color-gold)] hover:border-[var(--color-gold)] hover:bg-[var(--color-gold-muted)] hover:text-[var(--color-gold-light)] active:scale-95';
         case 'ghost':
-            return 'border border-[var(--color-border)] bg-transparent text-[var(--color-text-primary)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)]';
+            return 'border border-[var(--color-border)] bg-transparent text-[var(--color-text-primary)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] active:scale-95';
         case 'primary':
         default:
-            return 'bg-[var(--color-gold)] text-[#0a0a0a] hover:bg-[var(--color-gold-light)]';
+            return 'bg-[var(--color-gold)] text-[#0a0a0a] hover:bg-[var(--color-gold-light)] hover:brightness-105 active:scale-95';
     }
 }
 
@@ -29,7 +31,7 @@ export function Button({
     ...props
 }: ButtonProps) {
     const baseClasses =
-        'inline-flex min-h-10 touch-manipulation items-center justify-center rounded-[8px] px-3.5 text-sm font-semibold transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-60';
+        'inline-flex min-h-10 touch-manipulation items-center justify-center rounded-[8px] px-3.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100 disabled:hover:brightness-100';
 
     const widthClass = fullWidth ? 'w-full' : 'w-fit';
 

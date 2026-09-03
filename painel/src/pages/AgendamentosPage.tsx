@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, Calendar } from 'lucide-react';
 import { AgendamentoItem } from '../components/AgendamentoItem';
 import { CalendarGrid } from '../components/CalendarGrid.tsx';
 import { SkeletonCard } from '../components/SkeletonCard';
@@ -236,29 +237,25 @@ export function AgendamentosPage() {
         <main className="mx-auto min-h-screen w-full max-w-[600px] px-4 py-5 pb-20 sm:px-6 sm:py-6 sm:pb-24">
             <header className="mb-5 space-y-4">
                 <div className="relative">
-                    <div className="flex items-start justify-between gap-3">
-                        <div>
-                            <h1
-                                className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                                style={{ fontFamily: 'var(--font-title)' }}
-                            >
-                                Agenda
-                            </h1>
-                            <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                                Horário de Brasília
-                            </p>
-                        </div>
+                    <div className="flex items-center justify-between gap-3">
+                        <h1
+                            className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
+                            style={{ fontFamily: 'var(--font-title)' }}
+                        >
+                            Agenda
+                        </h1>
 
                         <div className="flex items-center gap-2">
                             <Button
-                                className="min-h-9 px-3 text-xs"
+                                variant="outline"
+                                className="min-h-8 rounded-lg px-4 text-xs font-semibold"
                                 onClick={() => navigate('/novo')}
                             >
-                                Novo agendamento
+                                Novo
                             </Button>
                             <Button
                                 variant="ghost"
-                                className="min-h-9 px-3 text-xs"
+                                className="min-h-8 rounded-lg px-4 text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                                 onClick={() => {
                                     void logout();
                                 }}
@@ -282,66 +279,45 @@ export function AgendamentosPage() {
                     )}
                 </div>
 
-                <div className="rounded-[12px] bg-[var(--color-surface-elevated)] p-3 shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
-                    <div className="flex items-center justify-between gap-3">
+                <div className="rounded-[16px] border border-[var(--color-border)]/50 bg-[var(--color-surface-elevated)] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.28)]">
+                    <button
+                        type="button"
+                        onClick={() =>
+                            setCalendarioAberto((current) => !current)
+                        }
+                        aria-label="Abrir calendário"
+                        className="flex w-full items-center gap-2.5 rounded-[8px] text-left text-sm font-semibold text-[var(--color-text-primary)] transition hover:text-[var(--color-gold)] focus:outline-none"
+                    >
+                        <Calendar className="h-5 w-5 shrink-0 text-[var(--color-gold)] transition-transform hover:scale-110" />
+                        <span className="min-w-0 flex-1 truncate">
+                            {dataSelecionadaLabel}
+                        </span>
+                    </button>
+
+                    <div className="mt-3 grid grid-cols-[1fr_1.4fr_1fr] gap-2">
                         <button
                             type="button"
-                            onClick={() =>
-                                setCalendarioAberto((current) => !current)
-                            }
-                            aria-label="Abrir calendário"
-                            className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-gold)] transition hover:border-[var(--color-gold)]"
-                        >
-                            <svg
-                                aria-hidden="true"
-                                viewBox="0 0 24 24"
-                                className="h-5 w-5"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="1.8"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                            >
-                                <rect
-                                    x="3.5"
-                                    y="5.5"
-                                    width="17"
-                                    height="15"
-                                    rx="2"
-                                />
-                                <path d="M8 3.5v4" />
-                                <path d="M16 3.5v4" />
-                                <path d="M3.5 9.5h17" />
-                            </svg>
-                        </button>
-
-                        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-[var(--color-text-primary)]">
-                            {dataSelecionadaLabel}
-                        </p>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                        <Button
-                            variant="ghost"
-                            className="min-h-8 px-2.5 text-xs"
+                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleDiaAnterior}
+                            aria-label="Dia anterior"
                         >
-                            Anterior
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            className="min-h-8 px-2.5 text-xs"
+                            <ArrowLeft className="h-4 w-4 transition-transform hover:-translate-x-0.5" />
+                        </button>
+                        <button
+                            type="button"
+                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleIrParaHoje}
                         >
                             Hoje
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            className="min-h-8 px-2.5 text-xs"
+                        </button>
+                        <button
+                            type="button"
+                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleProximoDia}
+                            aria-label="Próximo dia"
                         >
-                            Próximo
-                        </Button>
+                            <ArrowRight className="h-4 w-4 transition-transform hover:translate-x-0.5" />
+                        </button>
                     </div>
                 </div>
             </header>
