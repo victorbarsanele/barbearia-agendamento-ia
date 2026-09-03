@@ -204,6 +204,21 @@ export async function cancelar(id: string): Promise<AgendamentoComRelacoes> {
     }
 }
 
+export async function atualizarPacoteClienteId(
+    id: string,
+    pacoteClienteId: string | null,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await prisma.agendamento.update({
+            where: { id },
+            data: { pacoteClienteId },
+            include: includeRelacoes,
+        });
+    } catch (error) {
+        throw error;
+    }
+}
+
 export async function contarAtivosPorClienteId(id: string): Promise<number> {
     try {
         return await prisma.agendamento.count({

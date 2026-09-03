@@ -279,9 +279,9 @@ async function validarNaoInterceptaBloqueio(
 async function validarPacoteCliente(
     pacoteClienteId: string | undefined,
     servicoId: string,
-): Promise<void> {
+): Promise<pacoteClienteRepository.PacoteClienteComPacote | null> {
     if (!pacoteClienteId) {
-        return;
+        return null;
     }
 
     const pacoteCliente =
@@ -306,6 +306,24 @@ async function validarPacoteCliente(
         throw new AppError(
             'Este serviço não está incluso no pacote selecionado.',
             400,
+        );
+    }
+
+    return pacoteCliente;
+}
+
+function validarStatusPermiteVinculo(agendamento: {
+    status: StatusAgendamento;
+    concluido: boolean;
+}): void {
+    if (
+        agendamento.concluido ||
+        agendamento.status === StatusAgendamento.CONCLUIDO ||
+        agendamento.status === StatusAgendamento.CANCELADO
+    ) {
+        throw new AppError(
+            'Não é possível alterar vínculo de pacote em agendamento concluído ou cancelado.',
+            409,
         );
     }
 }
@@ -519,5 +537,64 @@ export async function concluir(id: string) {
         }
 
         throw new AppError('Erro ao concluir agendamento.', 500);
+    }
+}
+
+export async function vincularPacote(id: string, pacoteClienteId: string) {
+    try {
+        const agendamento = await agendamentoRepository.buscarPorId(id);
+
+        if (!agendamento) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+        validarStatusPermiteVinculo(agendamento);
+
+        const pacoteCliente = await validarPacoteCliente(
+            pacoteClienteId,
+            agendamento.servicoId,
+        );
+
+        if (pacoteCliente?.clienteId !== agendamento.clienteId) {
+            throw new AppError(
+                'Pacote não pertence ao cliente do agendamento.',
+                400,
+            );
+        }
+
+        return await agendamentoRepository.atualizarPacoteClienteId(
+            id,
+            pacoteClienteId,
+        );
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao vincular pacote ao agendamento.', 500);
+    }
+}
+
+export async function desvincularPacote(id: string) {
+    try {
+        const agendamento = await agendamentoRepository.buscarPorId(id);
+
+        if (!agendamento) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+        validarStatusPermiteVinculo(agendamento);
+
+        if (!agendamento.pacoteClienteId) {
+            throw new AppError('Agendamento não está vinculado a pacote.', 400);
+        }
+
+        return await agendamentoRepository.atualizarPacoteClienteId(id, null);
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao desvincular pacote do agendamento.', 500);
     }
 }

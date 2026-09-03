@@ -129,3 +129,28 @@ export async function concluirAgendamento(id: string): Promise<Agendamento> {
 
     return handleResponse<Agendamento>(response);
 }
+
+export async function vincularPacoteAgendamento(
+    id: string,
+    pacoteClienteId: string,
+): Promise<Agendamento> {
+    const response = await apiFetch(`/api/agendamentos/${id}/pacote`, {
+        method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ pacoteClienteId }),
+    });
+
+    return handleResponse<Agendamento>(response);
+}
+
+export async function desvincularPacoteAgendamento(
+    id: string,
+): Promise<Agendamento> {
+    const response = await apiFetch(`/api/agendamentos/${id}/pacote`, {
+        method: 'DELETE',
+    });
+
+    return handleResponse<Agendamento>(response);
+}

@@ -78,18 +78,28 @@ export function DateTimePicker({
         const hourIndex = HOURS.indexOf(valueParts.hour);
         const minuteIndex = MINUTES.indexOf(valueParts.minute);
 
+        // Alinha apenas o scroll interno das colunas, sem mover o scroll da
+        // página (scrollIntoView com block:'center' rolava o documento todo).
         if (hourIndex >= 0) {
-            hourButtonRefs.current[hourIndex]?.scrollIntoView({
-                block: 'center',
-                behavior: 'auto',
-            });
+            const button = hourButtonRefs.current[hourIndex];
+            const column = hourColumnRef.current;
+            if (button && column) {
+                column.scrollTop =
+                    button.offsetTop -
+                    column.clientHeight / 2 +
+                    button.clientHeight / 2;
+            }
         }
 
         if (minuteIndex >= 0) {
-            minuteButtonRefs.current[minuteIndex]?.scrollIntoView({
-                block: 'center',
-                behavior: 'auto',
-            });
+            const button = minuteButtonRefs.current[minuteIndex];
+            const column = minuteColumnRef.current;
+            if (button && column) {
+                column.scrollTop =
+                    button.offsetTop -
+                    column.clientHeight / 2 +
+                    button.clientHeight / 2;
+            }
         }
     }, [valueParts?.hour, valueParts?.minute]);
 

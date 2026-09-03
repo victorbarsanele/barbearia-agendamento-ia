@@ -9,6 +9,7 @@ vi.mock('../repositories/agendamento.repository', () => ({
     atualizar: vi.fn(),
     cancelar: vi.fn(),
     concluirComPacote: vi.fn(),
+    atualizarPacoteClienteId: vi.fn(),
     contarAtivosPorClienteId: vi.fn(),
     contarAtivosPorServicoId: vi.fn(),
     excluirCanceladosPorClienteId: vi.fn(),
@@ -791,5 +792,280 @@ describe('agendamento.service.concluir', () => {
         });
 
         expect(agendamentoRepository.concluirComPacote).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.vincularPacote', () => {
+    const pacoteClienteAtivo = {
+        id: 'pacote-cliente-1',
+        clienteId: clienteBase.id,
+        status: 'ATIVO',
+        quantidadeRestante: 5,
+        pacote: {
+            servicos: [{ servicoId: servicoBase.id }],
+        },
+    };
+
+    it('vincula pacote a agendamento existente sem vínculo prévio', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: null,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue(
+            pacoteClienteAtivo as never,
+        );
+        vi.mocked(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+
+        const resultado = await agendamentoService.vincularPacote(
+            'agendamento-1',
+            'pacote-cliente-1',
+        );
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).toHaveBeenCalledWith('agendamento-1', 'pacote-cliente-1');
+        expect(resultado.pacoteClienteId).toBe('pacote-cliente-1');
+    });
+
+    it('troca vínculo existente diretamente, sem exigir desvincular antes', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-antigo',
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue(
+            pacoteClienteAtivo as never,
+        );
+        vi.mocked(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+
+        await agendamentoService.vincularPacote(
+            'agendamento-1',
+            'pacote-cliente-1',
+        );
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).toHaveBeenCalledWith('agendamento-1', 'pacote-cliente-1');
+    });
+
+    it('rejeita quando agendamento não existe', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(null);
+
+        await expect(
+            agendamentoService.vincularPacote(
+                'agendamento-inexistente',
+                'pacote-cliente-1',
+            ),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento não encontrado.',
+            statusCode: 404,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando agendamento está concluído', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CONCLUIDO,
+            concluido: true,
+        });
+
+        await expect(
+            agendamentoService.vincularPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+            ),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message:
+                'Não é possível alterar vínculo de pacote em agendamento concluído ou cancelado.',
+            statusCode: 409,
+        });
+
+        expect(pacoteClienteRepository.buscarPorId).not.toHaveBeenCalled();
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando agendamento está cancelado', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CANCELADO,
+        });
+
+        await expect(
+            agendamentoService.vincularPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+            ),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            statusCode: 409,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando serviço do agendamento não está incluso no pacote', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            ...pacoteClienteAtivo,
+            pacote: { servicos: [{ servicoId: 'outro-servico' }] },
+        } as never);
+
+        await expect(
+            agendamentoService.vincularPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+            ),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Este serviço não está incluso no pacote selecionado.',
+            statusCode: 400,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando pacote pertence a outro cliente', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            ...pacoteClienteAtivo,
+            clienteId: 'outro-cliente',
+        } as never);
+
+        await expect(
+            agendamentoService.vincularPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+            ),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote não pertence ao cliente do agendamento.',
+            statusCode: 400,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.desvincularPacote', () => {
+    it('desvincula pacote do agendamento sem afetar o pacote do cliente', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+        vi.mocked(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: null,
+        });
+
+        const resultado =
+            await agendamentoService.desvincularPacote('agendamento-1');
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).toHaveBeenCalledWith('agendamento-1', null);
+        expect(resultado.pacoteClienteId).toBeNull();
+    });
+
+    it('rejeita quando agendamento não existe', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(null);
+
+        await expect(
+            agendamentoService.desvincularPacote('agendamento-inexistente'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento não encontrado.',
+            statusCode: 404,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando agendamento não tem vínculo de pacote', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: null,
+        });
+
+        await expect(
+            agendamentoService.desvincularPacote('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Agendamento não está vinculado a pacote.',
+            statusCode: 400,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando agendamento está concluído', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            status: StatusAgendamento.CONCLUIDO,
+            concluido: true,
+        });
+
+        await expect(
+            agendamentoService.desvincularPacote('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            statusCode: 409,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita quando agendamento está cancelado', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            status: StatusAgendamento.CANCELADO,
+        });
+
+        await expect(
+            agendamentoService.desvincularPacote('agendamento-1'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            statusCode: 409,
+        });
+
+        expect(
+            agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
     });
 });

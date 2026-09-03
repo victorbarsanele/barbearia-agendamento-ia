@@ -4,8 +4,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
     atualizarAgendamento,
     buscarAgendamentoPorId,
+    desvincularPacoteAgendamento,
+    vincularPacoteAgendamento,
     type Agendamento,
 } from '../services/agendamentos.service';
+import {
+    buscarPacoteAtivoDoCliente,
+    type PacoteClienteAtivo,
+} from '../services/pacoteCliente.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -84,6 +90,12 @@ export function EditarAgendamentoPage() {
     const [minutoSelecionado, setMinutoSelecionado] = useState('');
     const [notificarCliente, setNotificarCliente] = useState(false);
 
+    const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
+        null,
+    );
+    const [processandoPacote, setProcessandoPacote] = useState(false);
+    const [erroPacote, setErroPacote] = useState<string | null>(null);
+
     const [loading, setLoading] = useState(true);
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
@@ -118,6 +130,10 @@ export function EditarAgendamentoPage() {
             }
         };
     }, []);
+
+    useEffect(() => {
+        window.scrollTo(0, 0);
+    }, [id]);
 
     useEffect(() => {
         let ativo = true;
@@ -158,6 +174,19 @@ export function EditarAgendamentoPage() {
                 const [horaOnly, minutoOnly] = horaInicial.split(':');
                 setHoraSelecionada(horaOnly ?? '');
                 setMinutoSelecionado(minutoOnly ?? '');
+
+                try {
+                    const pacoteResponse = await buscarPacoteAtivoDoCliente(
+                        agendamentoResponse.cliente.id,
+                    );
+                    if (ativo) {
+                        setPacoteAtivo(pacoteResponse);
+                    }
+                } catch {
+                    if (ativo) {
+                        setPacoteAtivo(null);
+                    }
+                }
             } catch (error) {
                 if (!ativo) {
                     return;
@@ -185,6 +214,72 @@ export function EditarAgendamentoPage() {
     const podeSalvar = useMemo(() => {
         return !!agendamento && !!servicoId && !!data && !!hora && !submetendo;
     }, [agendamento, servicoId, data, hora, submetendo]);
+
+    const statusPermiteVinculo =
+        !!agendamento &&
+        agendamento.status !== 'CONCLUIDO' &&
+        agendamento.status !== 'CANCELADO';
+
+    const pacoteCompativelComServico = useMemo(() => {
+        if (
+            !pacoteAtivo ||
+            pacoteAtivo.status !== 'ATIVO' ||
+            pacoteAtivo.quantidadeRestante <= 0
+        ) {
+            return false;
+        }
+
+        return pacoteAtivo.pacote.servicos.some(
+            (item) => item.servicoId === servicoId,
+        );
+    }, [pacoteAtivo, servicoId]);
+
+    const handleVincularPacote = async () => {
+        if (!id || !pacoteAtivo) {
+            return;
+        }
+
+        setProcessandoPacote(true);
+        setErroPacote(null);
+
+        try {
+            const atualizado = await vincularPacoteAgendamento(
+                id,
+                pacoteAtivo.id,
+            );
+            setAgendamento(atualizado);
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível vincular o pacote.';
+            setErroPacote(message);
+        } finally {
+            setProcessandoPacote(false);
+        }
+    };
+
+    const handleDesvincularPacote = async () => {
+        if (!id) {
+            return;
+        }
+
+        setProcessandoPacote(true);
+        setErroPacote(null);
+
+        try {
+            const atualizado = await desvincularPacoteAgendamento(id);
+            setAgendamento(atualizado);
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível desvincular o pacote.';
+            setErroPacote(message);
+        } finally {
+            setProcessandoPacote(false);
+        }
+    };
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -270,6 +365,81 @@ export function EditarAgendamentoPage() {
                                 </p>
                             </div>
                         )}
+
+                        {agendamento &&
+                            statusPermiteVinculo &&
+                            (agendamento.pacoteClienteId || pacoteAtivo) && (
+                                <div className="rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm">
+                                    {agendamento.pacoteClienteId ? (
+                                        <>
+                                            <p className="font-semibold text-[var(--color-gold)]">
+                                                Pacote vinculado a este
+                                                agendamento
+                                            </p>
+                                            <p className="mt-1 text-[var(--color-text-secondary)]">
+                                                {pacoteAtivo &&
+                                                pacoteAtivo.id ===
+                                                    agendamento.pacoteClienteId
+                                                    ? `${pacoteAtivo.pacote.nome} — ${pacoteAtivo.quantidadeRestante} de ${pacoteAtivo.quantidadeTotal} usos restantes`
+                                                    : 'O uso será debitado do pacote ao concluir o agendamento.'}
+                                            </p>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                className="mt-2"
+                                                disabled={processandoPacote}
+                                                onClick={() => {
+                                                    void handleDesvincularPacote();
+                                                }}
+                                            >
+                                                {processandoPacote
+                                                    ? 'Desvinculando...'
+                                                    : 'Desvincular pacote deste agendamento'}
+                                            </Button>
+                                        </>
+                                    ) : pacoteAtivo ? (
+                                        <>
+                                            <p className="font-semibold text-[var(--color-gold)]">
+                                                Pacote ativo do cliente
+                                            </p>
+                                            <p className="mt-1 text-[var(--color-text-secondary)]">
+                                                {pacoteAtivo.pacote.nome} —{' '}
+                                                {pacoteAtivo.quantidadeRestante}{' '}
+                                                de {pacoteAtivo.quantidadeTotal}{' '}
+                                                usos restantes
+                                            </p>
+                                            {pacoteCompativelComServico ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="primary"
+                                                    className="mt-2"
+                                                    disabled={processandoPacote}
+                                                    onClick={() => {
+                                                        void handleVincularPacote();
+                                                    }}
+                                                >
+                                                    {processandoPacote
+                                                        ? 'Vinculando...'
+                                                        : 'Vincular pacote a este agendamento'}
+                                                </Button>
+                                            ) : (
+                                                <p className="mt-2 text-[var(--color-text-secondary)]">
+                                                    {pacoteAtivo.quantidadeRestante <=
+                                                    0
+                                                        ? 'Pacote esgotado.'
+                                                        : 'O serviço selecionado não está incluso neste pacote.'}
+                                                </p>
+                                            )}
+                                        </>
+                                    ) : null}
+
+                                    {erroPacote && (
+                                        <p className="mt-2 text-[var(--color-danger)]">
+                                            {erroPacote}
+                                        </p>
+                                    )}
+                                </div>
+                            )}
 
                         <div>
                             <label

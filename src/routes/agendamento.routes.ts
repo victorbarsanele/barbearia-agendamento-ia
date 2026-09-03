@@ -124,4 +124,46 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
         },
         agendamentoController.concluir,
     );
+
+    app.patch(
+        '/agendamentos/:id/pacote',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: {
+                        id: { type: 'string', minLength: 1 },
+                    },
+                },
+                body: {
+                    type: 'object',
+                    required: ['pacoteClienteId'],
+                    additionalProperties: false,
+                    properties: {
+                        pacoteClienteId: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        agendamentoController.vincularPacote,
+    );
+
+    app.delete(
+        '/agendamentos/:id/pacote',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: {
+                        id: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        agendamentoController.desvincularPacote,
+    );
 }

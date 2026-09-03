@@ -22,6 +22,10 @@ interface CancelarAgendamentoBody {
     notificarCliente?: boolean;
 }
 
+interface VincularPacoteBody {
+    pacoteClienteId: string;
+}
+
 interface AgendamentoParams {
     id: string;
 }
@@ -114,6 +118,38 @@ export async function concluir(
 ): Promise<void> {
     try {
         const agendamento = await agendamentoService.concluir(
+            request.params.id,
+        );
+        void reply.send(agendamento);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function vincularPacote(
+    request: FastifyRequest<{
+        Params: AgendamentoParams;
+        Body: VincularPacoteBody;
+    }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const agendamento = await agendamentoService.vincularPacote(
+            request.params.id,
+            request.body.pacoteClienteId,
+        );
+        void reply.send(agendamento);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function desvincularPacote(
+    request: FastifyRequest<{ Params: AgendamentoParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const agendamento = await agendamentoService.desvincularPacote(
             request.params.id,
         );
         void reply.send(agendamento);
