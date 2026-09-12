@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CalendarGrid } from './CalendarGrid';
+import { useScrollTimePicker } from '../hooks/useScrollTimePicker';
 import {
     createBrazilDate,
     getBrazilDateKey,
@@ -35,14 +36,6 @@ export function DateTimePicker({
         () => value ?? minDate ?? new Date(),
     );
 
-    const hourColumnRef = useRef<HTMLDivElement | null>(null);
-    const minuteColumnRef = useRef<HTMLDivElement | null>(null);
-    const hourButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-    const minuteButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-    const hourScrollTimerRef = useRef<number | null>(null);
-    const minuteScrollTimerRef = useRef<number | null>(null);
-    const skipNextAutoAlignRef = useRef(false);
-
     useEffect(() => {
         if (value) {
             setViewDate(value);
@@ -53,59 +46,8 @@ export function DateTimePicker({
     const selectedHour = valueParts?.hour ?? '';
     const selectedMinute = valueParts?.minute ?? '';
 
-    useEffect(() => {
-        return () => {
-            if (hourScrollTimerRef.current !== null) {
-                window.clearTimeout(hourScrollTimerRef.current);
-            }
-
-            if (minuteScrollTimerRef.current !== null) {
-                window.clearTimeout(minuteScrollTimerRef.current);
-            }
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!valueParts) {
-            return;
-        }
-
-        if (skipNextAutoAlignRef.current) {
-            skipNextAutoAlignRef.current = false;
-            return;
-        }
-
-        const hourIndex = HOURS.indexOf(valueParts.hour);
-        const minuteIndex = MINUTES.indexOf(valueParts.minute);
-
-        // Alinha apenas o scroll interno das colunas, sem mover o scroll da
-        // página (scrollIntoView com block:'center' rolava o documento todo).
-        if (hourIndex >= 0) {
-            const button = hourButtonRefs.current[hourIndex];
-            const column = hourColumnRef.current;
-            if (button && column) {
-                column.scrollTop =
-                    button.offsetTop -
-                    column.clientHeight / 2 +
-                    button.clientHeight / 2;
-            }
-        }
-
-        if (minuteIndex >= 0) {
-            const button = minuteButtonRefs.current[minuteIndex];
-            const column = minuteColumnRef.current;
-            if (button && column) {
-                column.scrollTop =
-                    button.offsetTop -
-                    column.clientHeight / 2 +
-                    button.clientHeight / 2;
-            }
-        }
-    }, [valueParts?.hour, valueParts?.minute]);
-
     const emitDate = (date: Date) => {
         // Evita realinhar scroll quando mudança veio da própria interação interna.
-        skipNextAutoAlignRef.current = true;
         setViewDate(date);
         onChange(date);
     };
@@ -155,81 +97,20 @@ export function DateTimePicker({
         );
     };
 
-    const handleHourScroll = () => {
-        if (hourScrollTimerRef.current !== null) {
-            window.clearTimeout(hourScrollTimerRef.current);
-        }
-
-        hourScrollTimerRef.current = window.setTimeout(() => {
-            const column = hourColumnRef.current;
-            if (!column) {
-                return;
-            }
-
-            const columnRect = column.getBoundingClientRect();
-            const columnCenter = columnRect.top + columnRect.height / 2;
-
-            let closestHour = selectedHour;
-            let closestDistance = Number.POSITIVE_INFINITY;
-
-            hourButtonRefs.current.forEach((button, index) => {
-                if (!button) {
-                    return;
-                }
-
-                const rect = button.getBoundingClientRect();
-                const center = rect.top + rect.height / 2;
-                const distance = Math.abs(center - columnCenter);
-
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestHour = HOURS[index] ?? selectedHour;
-                }
-            });
-
-            if (closestHour && closestHour !== selectedHour) {
-                handleHourSelect(closestHour);
-            }
-        }, 120);
-    };
-
-    const handleMinuteScroll = () => {
-        if (minuteScrollTimerRef.current !== null) {
-            window.clearTimeout(minuteScrollTimerRef.current);
-        }
-
-        minuteScrollTimerRef.current = window.setTimeout(() => {
-            const column = minuteColumnRef.current;
-            if (!column) {
-                return;
-            }
-
-            const columnRect = column.getBoundingClientRect();
-            const columnCenter = columnRect.top + columnRect.height / 2;
-
-            let closestMinute = selectedMinute;
-            let closestDistance = Number.POSITIVE_INFINITY;
-
-            minuteButtonRefs.current.forEach((button, index) => {
-                if (!button) {
-                    return;
-                }
-
-                const rect = button.getBoundingClientRect();
-                const center = rect.top + rect.height / 2;
-                const distance = Math.abs(center - columnCenter);
-
-                if (distance < closestDistance) {
-                    closestDistance = distance;
-                    closestMinute = MINUTES[index] ?? selectedMinute;
-                }
-            });
-
-            if (closestMinute && closestMinute !== selectedMinute) {
-                handleMinuteSelect(closestMinute);
-            }
-        }, 120);
-    };
+    const {
+        hourColumnRef,
+        minuteColumnRef,
+        hourButtonRefs,
+        minuteButtonRefs,
+        handleHourScroll,
+        handleMinuteScroll,
+    } = useScrollTimePicker({
+        value: `${selectedHour}:${selectedMinute}`,
+        hours: HOURS,
+        minutes: MINUTES,
+        onHourChange: handleHourSelect,
+        onMinuteChange: handleMinuteSelect,
+    });
 
     return (
         <div
@@ -239,7 +120,6 @@ export function DateTimePicker({
                 key={value ? getBrazilDateKey(value) : 'calendar-empty'}
                 valueKey={value ? getBrazilDateKey(value) : null}
                 onChange={(dateKey) => {
-                    skipNextAutoAlignRef.current = true;
                     const nextDate = new Date(
                         `${dateKey}T${selectedHour || '06'}:${selectedMinute || '00'}:00-03:00`,
                     );
@@ -263,7 +143,7 @@ export function DateTimePicker({
                         <div
                             ref={hourColumnRef}
                             onScroll={handleHourScroll}
-                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16 snap-y snap-mandatory"
+                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16"
                         >
                             <div className="space-y-1">
                                 {HOURS.map((hour, index) => {
@@ -280,7 +160,7 @@ export function DateTimePicker({
                                             onClick={() =>
                                                 handleHourSelect(hour)
                                             }
-                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition snap-center ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
+                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
                                             {hour}
                                         </button>
@@ -298,7 +178,7 @@ export function DateTimePicker({
                         <div
                             ref={minuteColumnRef}
                             onScroll={handleMinuteScroll}
-                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16 snap-y snap-mandatory"
+                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16"
                         >
                             <div className="space-y-1">
                                 {MINUTES.map((minute, index) => {
@@ -317,7 +197,7 @@ export function DateTimePicker({
                                             onClick={() =>
                                                 handleMinuteSelect(minute)
                                             }
-                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition snap-center ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
+                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
                                             {minute}
                                         </button>

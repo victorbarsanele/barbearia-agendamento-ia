@@ -12,6 +12,7 @@ export interface Agendamento {
     dataHoraFim: string;
     status: StatusAgendamento;
     pacoteClienteId: string | null;
+    loteId: string | null;
     concluido: boolean;
     cliente: {
         id: string;
@@ -43,6 +44,30 @@ export interface AtualizarAgendamentoPayload {
 
 export interface CancelarAgendamentoPayload {
     notificarCliente?: boolean;
+    aplicarParaLote?: boolean;
+}
+
+export interface SlotLote {
+    data: string;
+    horario: string;
+}
+
+export interface SimularLotePayload {
+    clienteId: string;
+    servicoId: string;
+    pacoteClienteId?: string;
+    slots: SlotLote[];
+}
+
+export interface SimularLoteResultado {
+    disponiveis: SlotLote[];
+    conflitos: (SlotLote & { motivo: string })[];
+}
+
+export interface CriarLoteResultado {
+    loteId: string;
+    criados: { agendamentoId: string; data: string; horario: string }[];
+    falhados: (SlotLote & { motivo: string })[];
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -122,9 +147,16 @@ export async function atualizarAgendamento(
     return handleResponse<Agendamento>(response);
 }
 
-export async function concluirAgendamento(id: string): Promise<Agendamento> {
+export async function concluirAgendamento(
+    id: string,
+    aplicarParaLote = false,
+): Promise<Agendamento> {
     const response = await apiFetch(`/api/agendamentos/${id}/concluir`, {
         method: 'PATCH',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ aplicarParaLote }),
     });
 
     return handleResponse<Agendamento>(response);
@@ -153,4 +185,32 @@ export async function desvincularPacoteAgendamento(
     });
 
     return handleResponse<Agendamento>(response);
+}
+
+export async function simularLoteAgendamentos(
+    payload: SimularLotePayload,
+): Promise<SimularLoteResultado> {
+    const response = await apiFetch('/api/agendamentos/lote/simular', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    return handleResponse<SimularLoteResultado>(response);
+}
+
+export async function criarLoteAgendamentos(
+    payload: SimularLotePayload,
+): Promise<CriarLoteResultado> {
+    const response = await apiFetch('/api/agendamentos/lote', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    return handleResponse<CriarLoteResultado>(response);
 }

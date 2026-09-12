@@ -52,6 +52,7 @@ const agendamentoAtivoProximo = {
     clienteId: clienteBase.id,
     servicoId: servicoBase.id,
     pacoteClienteId: null,
+    loteId: null,
     dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
     dataHoraFim: new Date('2026-07-22T10:30:00-03:00'),
     status: StatusAgendamento.AGENDADO,
@@ -678,6 +679,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         vi.mocked(agendamentoService.cancelar).mockResolvedValue({
             ...agendamentoAtivoProximo,
             status: StatusAgendamento.CANCELADO,
+            agendamentosAfetados: [],
         });
 
         const resultado = await __testables.cancelarAgendamentoTool(

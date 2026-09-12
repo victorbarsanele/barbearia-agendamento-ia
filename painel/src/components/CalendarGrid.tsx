@@ -8,6 +8,7 @@ type CalendarGridLabels = {
 type CalendarGridProps = {
     valueKey: string | null;
     onChange: (dateKey: string) => void;
+    selectedKeys?: string[];
     minDateKey?: string | null;
     maxDateKey?: string | null;
     labels?: CalendarGridLabels;
@@ -68,6 +69,7 @@ function dateKeyToViewDate(dateKey: string): Date {
 export function CalendarGrid({
     valueKey,
     onChange,
+    selectedKeys,
     minDateKey,
     maxDateKey,
     labels,
@@ -235,7 +237,9 @@ export function CalendarGrid({
                         minDateKey ?? null,
                         maxDateKey ?? null,
                     );
-                    const isSelected = valueKey === cell.dateKey;
+                    const isSelected = selectedKeys
+                        ? selectedKeys.includes(cell.dateKey)
+                        : valueKey === cell.dateKey;
 
                     return (
                         <button

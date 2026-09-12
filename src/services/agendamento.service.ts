@@ -4,6 +4,7 @@ import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import {
@@ -34,6 +35,22 @@ interface CriarAgendamentoData {
     servicoId: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
+}
+
+interface SlotLote {
+    data: string;
+    horario: string;
+}
+
+interface LoteAgendamentoData {
+    clienteId: string;
+    servicoId: string;
+    pacoteClienteId?: string;
+    slots: SlotLote[];
+}
+
+function montarDataHoraInicio(slot: SlotLote): string {
+    return `${slot.data}T${slot.horario}:00-03:00`;
 }
 
 interface AtualizarAgendamentoData {
@@ -328,24 +345,33 @@ function validarStatusPermiteVinculo(agendamento: {
     }
 }
 
+async function validarDisponibilidade(
+    dataHoraInicioStr: string,
+    duracaoMinutos: number,
+): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
+    const dataHoraInicio = converterParaData(dataHoraInicioStr);
+    const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
+
+    validarAntecedenciaMinima(dataHoraInicio);
+    validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
+    validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
+    await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
+    await validarConflito(dataHoraInicio, dataHoraFim);
+
+    return { dataHoraInicio, dataHoraFim };
+}
+
 export async function criar(data: CriarAgendamentoData) {
     try {
         const { servico } = await carregarDependencias(
             data.clienteId,
             data.servicoId,
         );
-        const dataHoraInicio = converterParaData(data.dataHoraInicio);
-        const dataHoraFim = adicionarMinutos(
-            dataHoraInicio,
+        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
+        const { dataHoraInicio, dataHoraFim } = await validarDisponibilidade(
+            data.dataHoraInicio,
             servico.duracaoMinutos,
         );
-
-        validarAntecedenciaMinima(dataHoraInicio);
-        validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
-        validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
-        await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
-        await validarConflito(dataHoraInicio, dataHoraFim);
-        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
 
         return await agendamentoRepository.criar({
             clienteId: data.clienteId,
@@ -361,6 +387,108 @@ export async function criar(data: CriarAgendamentoData) {
         }
 
         throw new AppError('Erro ao criar agendamento.', 500);
+    }
+}
+
+export async function simularLote(data: LoteAgendamentoData) {
+    try {
+        const { servico } = await carregarDependencias(
+            data.clienteId,
+            data.servicoId,
+        );
+        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
+
+        const disponiveis: SlotLote[] = [];
+        const conflitos: (SlotLote & { motivo: string })[] = [];
+
+        for (const slot of data.slots) {
+            try {
+                await validarDisponibilidade(
+                    montarDataHoraInicio(slot),
+                    servico.duracaoMinutos,
+                );
+                disponiveis.push(slot);
+            } catch (error) {
+                const motivo =
+                    error instanceof AppError
+                        ? error.message
+                        : 'Erro ao validar disponibilidade do horário.';
+                conflitos.push({ ...slot, motivo });
+            }
+        }
+
+        return { disponiveis, conflitos };
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao simular lote de agendamentos.', 500);
+    }
+}
+
+export async function criarLote(data: LoteAgendamentoData) {
+    try {
+        const { servico } = await carregarDependencias(
+            data.clienteId,
+            data.servicoId,
+        );
+        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
+
+        const lote = await loteAgendamentoRepository.criar({
+            clienteId: data.clienteId,
+            servicoId: data.servicoId,
+            pacoteClienteId: data.pacoteClienteId ?? null,
+        });
+
+        const criados: {
+            agendamentoId: string;
+            data: string;
+            horario: string;
+        }[] = [];
+        const falhados: (SlotLote & { motivo: string })[] = [];
+
+        // Sequencial e não-atômico: cada slot é validado e inserido isoladamente,
+        // para que um conflito em um item não reverta os demais já inseridos.
+        for (const slot of data.slots) {
+            try {
+                const { dataHoraInicio, dataHoraFim } =
+                    await validarDisponibilidade(
+                        montarDataHoraInicio(slot),
+                        servico.duracaoMinutos,
+                    );
+
+                const agendamento = await agendamentoRepository.criar({
+                    clienteId: data.clienteId,
+                    servicoId: data.servicoId,
+                    pacoteClienteId: data.pacoteClienteId ?? null,
+                    loteId: lote.id,
+                    dataHoraInicio,
+                    dataHoraFim,
+                    status: StatusAgendamento.AGENDADO,
+                });
+
+                criados.push({
+                    agendamentoId: agendamento.id,
+                    data: slot.data,
+                    horario: slot.horario,
+                });
+            } catch (error) {
+                const motivo =
+                    error instanceof AppError
+                        ? error.message
+                        : 'Erro ao criar agendamento.';
+                falhados.push({ ...slot, motivo });
+            }
+        }
+
+        return { loteId: lote.id, criados, falhados };
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao criar lote de agendamentos.', 500);
     }
 }
 
@@ -463,7 +591,11 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
     }
 }
 
-export async function cancelar(id: string, notificarCliente = false) {
+export async function cancelar(
+    id: string,
+    notificarCliente = false,
+    aplicarParaLote = false,
+) {
     try {
         const agendamento = await agendamentoRepository.buscarPorId(id);
 
@@ -489,7 +621,16 @@ export async function cancelar(id: string, notificarCliente = false) {
             }
         }
 
-        return agendamentoCancelado;
+        const agendamentosAfetados = agendamento.loteId
+            ? await propagarStatusParaLote(
+                  agendamento.loteId,
+                  id,
+                  aplicarParaLote,
+                  (siblingId) => agendamentoRepository.cancelar(siblingId),
+              )
+            : [];
+
+        return { ...agendamentoCancelado, agendamentosAfetados };
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -499,38 +640,87 @@ export async function cancelar(id: string, notificarCliente = false) {
     }
 }
 
-export async function concluir(id: string) {
-    try {
-        const agendamento = await agendamentoRepository.buscarPorId(id);
+async function propagarStatusParaLote(
+    loteId: string,
+    idOrigem: string,
+    aplicarParaLote: boolean,
+    aplicar: (siblingId: string) => Promise<unknown>,
+): Promise<string[]> {
+    if (!aplicarParaLote) {
+        return [];
+    }
 
-        if (!agendamento) {
-            throw new AppError('Agendamento não encontrado.', 404);
-        }
+    const siblings = await agendamentoRepository.listarSiblingsEditaveisDoLote(
+        loteId,
+        idOrigem,
+    );
 
-        if (agendamento.concluido) {
-            throw new AppError('Agendamento já está concluído.', 409);
-        }
-
-        if (!agendamento.pacoteClienteId) {
-            throw new AppError('Agendamento não vinculado a pacote.', 400);
-        }
-
-        const pacoteCliente = await pacoteClienteRepository.buscarPorId(
-            agendamento.pacoteClienteId,
-        );
-        if (!pacoteCliente || pacoteCliente.status !== 'ATIVO') {
-            throw new AppError(
-                'Não é possível concluir: pacote do cliente não está ativo.',
-                409,
+    const afetados: string[] = [];
+    for (const sibling of siblings) {
+        try {
+            await aplicar(sibling.id);
+            afetados.push(sibling.id);
+        } catch (error) {
+            console.error(
+                '[AGENDAMENTO SERVICE] Falha ao propagar status para agendamento do lote',
+                sibling.id,
+                error,
             );
         }
+    }
 
-        const resultado = await agendamentoRepository.concluirComPacote(
-            id,
-            agendamento.pacoteClienteId,
+    return afetados;
+}
+
+async function concluirInterno(id: string) {
+    const agendamento = await agendamentoRepository.buscarPorId(id);
+
+    if (!agendamento) {
+        throw new AppError('Agendamento não encontrado.', 404);
+    }
+
+    if (agendamento.concluido) {
+        throw new AppError('Agendamento já está concluído.', 409);
+    }
+
+    if (!agendamento.pacoteClienteId) {
+        throw new AppError('Agendamento não vinculado a pacote.', 400);
+    }
+
+    const pacoteCliente = await pacoteClienteRepository.buscarPorId(
+        agendamento.pacoteClienteId,
+    );
+    if (!pacoteCliente || pacoteCliente.status !== 'ATIVO') {
+        throw new AppError(
+            'Não é possível concluir: pacote do cliente não está ativo.',
+            409,
         );
+    }
 
-        return resultado.agendamento;
+    const resultado = await agendamentoRepository.concluirComPacote(
+        id,
+        agendamento.pacoteClienteId,
+    );
+
+    return { agendamento, resultado };
+}
+
+export async function concluir(id: string, aplicarParaLote = false) {
+    try {
+        const { agendamento, resultado } = await concluirInterno(id);
+
+        const agendamentosAfetados = agendamento.loteId
+            ? await propagarStatusParaLote(
+                  agendamento.loteId,
+                  id,
+                  aplicarParaLote,
+                  async (siblingId) => {
+                      await concluirInterno(siblingId);
+                  },
+              )
+            : [];
+
+        return { ...resultado.agendamento, agendamentosAfetados };
     } catch (error) {
         if (error instanceof AppError) {
             throw error;

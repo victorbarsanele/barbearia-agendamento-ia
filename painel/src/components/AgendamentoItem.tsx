@@ -8,9 +8,13 @@ import { Card } from './ui/Card';
 interface AgendamentoItemProps {
     agendamento: Agendamento;
     onEditar: (id: string) => void;
-    onCancelar: (id: string, notificarCliente: boolean) => Promise<void>;
+    onCancelar: (
+        id: string,
+        notificarCliente: boolean,
+        aplicarParaLote: boolean,
+    ) => Promise<void>;
     cancelando: boolean;
-    onConcluir: (id: string) => Promise<void>;
+    onConcluir: (id: string, aplicarParaLote: boolean) => Promise<void>;
     concluindo: boolean;
 }
 
@@ -35,6 +39,12 @@ export function AgendamentoItem({
     const [confirmacaoConclusaoAberta, setConfirmacaoConclusaoAberta] =
         useState(false);
     const [notificarCliente, setNotificarCliente] = useState(false);
+    const [aplicarParaLoteCancelar, setAplicarParaLoteCancelar] =
+        useState(false);
+    const [aplicarParaLoteConcluir, setAplicarParaLoteConcluir] =
+        useState(false);
+
+    const fazPartesDeLote = Boolean(agendamento.loteId);
 
     const podeCancelar = agendamento.status !== 'CANCELADO';
     const podeEditar = agendamento.status !== 'CANCELADO';
@@ -55,7 +65,11 @@ export function AgendamentoItem({
     };
 
     const confirmarCancelamento = async () => {
-        await onCancelar(agendamento.id, notificarCliente);
+        await onCancelar(
+            agendamento.id,
+            notificarCliente,
+            aplicarParaLoteCancelar,
+        );
         setConfirmacaoAberta(false);
     };
 
@@ -74,7 +88,7 @@ export function AgendamentoItem({
     };
 
     const confirmarConclusao = async () => {
-        await onConcluir(agendamento.id);
+        await onConcluir(agendamento.id, aplicarParaLoteConcluir);
         setConfirmacaoConclusaoAberta(false);
     };
 
@@ -206,6 +220,32 @@ export function AgendamentoItem({
                             </span>
                         </label>
 
+                        {fazPartesDeLote && (
+                            <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
+                                <input
+                                    type="checkbox"
+                                    checked={aplicarParaLoteCancelar}
+                                    onChange={(event) =>
+                                        setAplicarParaLoteCancelar(
+                                            event.target.checked,
+                                        )
+                                    }
+                                    className="peer sr-only"
+                                />
+                                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-[var(--color-gold)]/30 bg-[var(--color-surface)] peer-checked:border-[var(--color-gold)] peer-checked:bg-[var(--color-gold)] peer-checked:[&>svg]:opacity-100">
+                                    <Check
+                                        className="h-3 w-3 text-black opacity-0"
+                                        strokeWidth={3}
+                                    />
+                                </span>
+                                <span>
+                                    Esse agendamento faz parte de uma sequência.
+                                    Deseja aplicar esta alteração a todos os
+                                    agendamentos da sequência também?
+                                </span>
+                            </label>
+                        )}
+
                         <div className="flex flex-col gap-2 sm:flex-row">
                             <Button
                                 variant="danger"
@@ -257,6 +297,32 @@ export function AgendamentoItem({
                             </span>
                             .
                         </p>
+
+                        {fazPartesDeLote && (
+                            <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
+                                <input
+                                    type="checkbox"
+                                    checked={aplicarParaLoteConcluir}
+                                    onChange={(event) =>
+                                        setAplicarParaLoteConcluir(
+                                            event.target.checked,
+                                        )
+                                    }
+                                    className="peer sr-only"
+                                />
+                                <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-[var(--color-gold)]/30 bg-[var(--color-surface)] peer-checked:border-[var(--color-gold)] peer-checked:bg-[var(--color-gold)] peer-checked:[&>svg]:opacity-100">
+                                    <Check
+                                        className="h-3 w-3 text-black opacity-0"
+                                        strokeWidth={3}
+                                    />
+                                </span>
+                                <span>
+                                    Esse agendamento faz parte de uma sequência.
+                                    Deseja aplicar esta alteração a todos os
+                                    agendamentos da sequência também?
+                                </span>
+                            </label>
+                        )}
 
                         <div className="flex flex-col gap-2 sm:flex-row">
                             <Button

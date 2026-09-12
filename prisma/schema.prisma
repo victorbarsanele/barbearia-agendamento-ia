@@ -26,6 +26,7 @@ model Cliente {
   createdAt    DateTime      @default(now()) @db.Timestamptz(3)
   agendamentos Agendamento[]
   pacotes      PacoteCliente[]
+  lotes        LoteAgendamento[]
 
   @@map("clientes")
 }
@@ -37,6 +38,7 @@ model Servico {
   preco          Decimal?        @db.Decimal(10, 2)
   agendamentos   Agendamento[]
   pacotes        PacoteServico[]
+  lotes          LoteAgendamento[]
 
   @@map("servicos")
 }
@@ -46,6 +48,7 @@ model Agendamento {
   clienteId       String
   servicoId       String
   pacoteClienteId String?
+  loteId          String?
   dataHoraInicio  DateTime          @db.Timestamptz(3)
   dataHoraFim     DateTime          @db.Timestamptz(3)
   status          StatusAgendamento @default(AGENDADO)
@@ -56,12 +59,30 @@ model Agendamento {
   cliente         Cliente           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   servico         Servico           @relation(fields: [servicoId], references: [id], onDelete: Restrict)
   pacoteCliente   PacoteCliente?    @relation(fields: [pacoteClienteId], references: [id], onDelete: Restrict)
+  lote            LoteAgendamento?  @relation(fields: [loteId], references: [id], onDelete: SetNull)
 
   @@index([clienteId])
   @@index([servicoId])
   @@index([pacoteClienteId])
+  @@index([loteId])
   @@index([dataHoraInicio, dataHoraFim, status])
   @@map("agendamentos")
+}
+
+model LoteAgendamento {
+  id              String        @id @default(cuid())
+  clienteId       String
+  servicoId       String
+  pacoteClienteId String?
+  criadoEm        DateTime      @default(now()) @db.Timestamptz(3)
+
+  cliente         Cliente       @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  servico         Servico       @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+  agendamentos    Agendamento[]
+
+  @@index([clienteId])
+  @@index([servicoId])
+  @@map("lotes_agendamento")
 }
 
 model Pacote {

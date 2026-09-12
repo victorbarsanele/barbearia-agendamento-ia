@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, Calendar } from 'lucide-react';
 import { AgendamentoItem } from '../components/AgendamentoItem';
 import { CalendarGrid } from '../components/CalendarGrid.tsx';
+import { LoteAgendamentoModal } from '../components/LoteAgendamentoModal/LoteAgendamentoModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/Button';
@@ -102,6 +103,7 @@ export function AgendamentosPage() {
     const [dataSelecionadaKey, setDataSelecionadaKey] =
         useState<string>(dataInicial);
     const [calendarioAberto, setCalendarioAberto] = useState(false);
+    const [loteModalAberto, setLoteModalAberto] = useState(false);
 
     useEffect(() => {
         let isMounted = true;
@@ -157,21 +159,21 @@ export function AgendamentosPage() {
     }, [agendamentos, dataSelecionadaKey]);
 
     const handleCancelar = useCallback(
-        async (id: string, notificarCliente: boolean) => {
+        async (
+            id: string,
+            notificarCliente: boolean,
+            aplicarParaLote: boolean,
+        ) => {
             setCancelandoId(id);
             setErro(null);
 
             try {
-                const agendamentoCancelado = await cancelarAgendamento(id, {
+                await cancelarAgendamento(id, {
                     notificarCliente,
+                    aplicarParaLote,
                 });
-                setAgendamentos((current) =>
-                    current.map((agendamento) =>
-                        agendamento.id === agendamentoCancelado.id
-                            ? agendamentoCancelado
-                            : agendamento,
-                    ),
-                );
+                const listaAtualizada = await listarAgendamentos();
+                setAgendamentos(listaAtualizada);
             } catch (error) {
                 const message =
                     error instanceof Error
@@ -185,29 +187,27 @@ export function AgendamentosPage() {
         [],
     );
 
-    const handleConcluir = useCallback(async (id: string) => {
-        setConcluindoId(id);
-        setErro(null);
+    const handleConcluir = useCallback(
+        async (id: string, aplicarParaLote: boolean) => {
+            setConcluindoId(id);
+            setErro(null);
 
-        try {
-            const agendamentoConcluido = await concluirAgendamento(id);
-            setAgendamentos((current) =>
-                current.map((agendamento) =>
-                    agendamento.id === agendamentoConcluido.id
-                        ? agendamentoConcluido
-                        : agendamento,
-                ),
-            );
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível concluir o agendamento.';
-            setErro(message);
-        } finally {
-            setConcluindoId(null);
-        }
-    }, []);
+            try {
+                await concluirAgendamento(id, aplicarParaLote);
+                const listaAtualizada = await listarAgendamentos();
+                setAgendamentos(listaAtualizada);
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'Não foi possível concluir o agendamento.';
+                setErro(message);
+            } finally {
+                setConcluindoId(null);
+            }
+        },
+        [],
+    );
 
     const handleDiaAnterior = useCallback(() => {
         setDataSelecionadaKey((current) => addDaysToDateKey(current, -1));
@@ -252,6 +252,13 @@ export function AgendamentosPage() {
                                 onClick={() => navigate('/novo')}
                             >
                                 Novo
+                            </Button>
+                            <Button
+                                variant="outline"
+                                className="min-h-8 rounded-lg px-4 text-xs font-semibold"
+                                onClick={() => setLoteModalAberto(true)}
+                            >
+                                Lote
                             </Button>
                             <Button
                                 variant="ghost"
@@ -357,6 +364,16 @@ export function AgendamentosPage() {
                     ))}
                 </ul>
             )}
+
+            <LoteAgendamentoModal
+                aberto={loteModalAberto}
+                onFechar={() => setLoteModalAberto(false)}
+                onSucesso={() => {
+                    listarAgendamentos()
+                        .then(setAgendamentos)
+                        .catch(() => undefined);
+                }}
+            />
         </main>
     );
 }
