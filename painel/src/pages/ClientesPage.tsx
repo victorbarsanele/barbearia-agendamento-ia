@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Calendar, Package, Pencil, Trash2 } from 'lucide-react';
 import { AgendamentosClienteModal } from '../components/AgendamentosClienteModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PacoteClienteModal } from '../components/PacoteClienteModal';
@@ -15,7 +16,6 @@ import {
 
 const CLIENTES_POR_PAGINA = 10;
 const DEBOUNCE_BUSCA_MS = 350;
-
 
 function getMensagemErroExclusaoCliente(error: unknown): string {
     const message = error instanceof Error ? error.message.toLowerCase() : '';
@@ -241,17 +241,22 @@ export function ClientesPage() {
                                 </p>
                             </div>
 
-                            <div className="ml-auto flex gap-2">
+                            <div className="ml-auto flex gap-1">
                                 <Button
                                     type="button"
                                     variant="ghost"
                                     onClick={() =>
                                         setClienteModalAgendamentos(cliente)
                                     }
-                                    className="min-h-8 px-3 text-xs"
+                                    title={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
+                                    aria-label={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
+                                    className="relative h-8 min-h-8 w-8 p-0"
                                 >
-                                    Agendamentos (
-                                    {agendamentosPorCliente[cliente.id] ?? 0})
+                                    <Calendar size={16} aria-hidden="true" />
+                                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[#0a0a0a]">
+                                        {agendamentosPorCliente[cliente.id] ??
+                                            0}
+                                    </span>
                                 </Button>
                                 <Button
                                     type="button"
@@ -259,9 +264,11 @@ export function ClientesPage() {
                                     onClick={() =>
                                         setClienteModalPacote(cliente)
                                     }
-                                    className="min-h-8 px-3 text-xs"
+                                    title="Gerenciar pacote do cliente"
+                                    aria-label="Gerenciar pacote do cliente"
+                                    className="h-8 min-h-8 w-8 p-0"
                                 >
-                                    Pacote
+                                    <Package size={16} aria-hidden="true" />
                                 </Button>
                                 <Button
                                     type="button"
@@ -271,9 +278,11 @@ export function ClientesPage() {
                                             `/clientes/editar/${cliente.id}`,
                                         )
                                     }
-                                    className="min-h-8 px-3 text-xs"
+                                    title="Editar cliente"
+                                    aria-label="Editar cliente"
+                                    className="h-8 min-h-8 w-8 p-0"
                                 >
-                                    Editar
+                                    <Pencil size={16} aria-hidden="true" />
                                 </Button>
                                 <Button
                                     type="button"
@@ -282,11 +291,11 @@ export function ClientesPage() {
                                         setClientePendenteExclusao(cliente)
                                     }
                                     disabled={excluindoId === cliente.id}
-                                    className="min-h-8 px-3 text-xs"
+                                    title="Excluir cliente"
+                                    aria-label="Excluir cliente"
+                                    className="h-8 min-h-8 w-8 p-0"
                                 >
-                                    {excluindoId === cliente.id
-                                        ? 'Excluindo...'
-                                        : 'Excluir'}
+                                    <Trash2 size={16} aria-hidden="true" />
                                 </Button>
                             </div>
                         </Card>

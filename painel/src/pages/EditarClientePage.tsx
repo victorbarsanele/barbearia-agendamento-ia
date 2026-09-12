@@ -217,7 +217,7 @@ export function EditarClientePage() {
                             disabled={!podeSalvar}
                             className="min-h-12"
                         >
-                            {submetendo ? 'Salvando...' : 'Salvar alteracoes'}
+                            {submetendo ? 'Salvando...' : 'Salvar alterações'}
                         </Button>
                     </form>
                 </Card>
