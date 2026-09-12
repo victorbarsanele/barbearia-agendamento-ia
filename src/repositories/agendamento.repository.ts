@@ -18,6 +18,7 @@ interface SalvarAgendamentoData {
     clienteId: string;
     servicoId: string;
     pacoteClienteId?: string | null;
+    loteId?: string | null;
     dataHoraInicio: Date;
     dataHoraFim: Date;
     status?: StatusAgendamento;
@@ -197,6 +198,29 @@ export async function cancelar(id: string): Promise<AgendamentoComRelacoes> {
         return await prisma.agendamento.update({
             where: { id },
             data: { status: StatusAgendamento.CANCELADO },
+            include: includeRelacoes,
+        });
+    } catch (error) {
+        throw error;
+    }
+}
+
+export async function listarSiblingsEditaveisDoLote(
+    loteId: string,
+    ignorarAgendamentoId: string,
+): Promise<AgendamentoComRelacoes[]> {
+    try {
+        return await prisma.agendamento.findMany({
+            where: {
+                loteId,
+                id: { not: ignorarAgendamentoId },
+                status: {
+                    notIn: [
+                        StatusAgendamento.CONCLUIDO,
+                        StatusAgendamento.CANCELADO,
+                    ],
+                },
+            },
             include: includeRelacoes,
         });
     } catch (error) {

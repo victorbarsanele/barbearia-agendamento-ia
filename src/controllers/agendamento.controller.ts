@@ -20,6 +20,7 @@ interface AtualizarAgendamentoBody {
 
 interface CancelarAgendamentoBody {
     notificarCliente?: boolean;
+    aplicarParaLote?: boolean;
 }
 
 interface VincularPacoteBody {
@@ -28,6 +29,29 @@ interface VincularPacoteBody {
 
 interface AgendamentoParams {
     id: string;
+}
+
+interface SlotLoteBody {
+    data: string;
+    horario: string;
+}
+
+interface SimularLoteBody {
+    clienteId: string;
+    servicoId: string;
+    pacoteClienteId?: string;
+    slots: SlotLoteBody[];
+}
+
+interface CriarLoteBody {
+    clienteId: string;
+    servicoId: string;
+    pacoteClienteId?: string;
+    slots: SlotLoteBody[];
+}
+
+interface ConcluirAgendamentoBody {
+    aplicarParaLote?: boolean;
 }
 
 function handleError(error: unknown, reply: FastifyReply): void {
@@ -105,6 +129,7 @@ export async function cancelar(
         const agendamento = await agendamentoService.cancelar(
             request.params.id,
             request.body?.notificarCliente === true,
+            request.body?.aplicarParaLote === true,
         );
         void reply.send(agendamento);
     } catch (error) {
@@ -113,14 +138,42 @@ export async function cancelar(
 }
 
 export async function concluir(
-    request: FastifyRequest<{ Params: AgendamentoParams }>,
+    request: FastifyRequest<{
+        Params: AgendamentoParams;
+        Body: ConcluirAgendamentoBody;
+    }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
         const agendamento = await agendamentoService.concluir(
             request.params.id,
+            request.body?.aplicarParaLote === true,
         );
         void reply.send(agendamento);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function simularLote(
+    request: FastifyRequest<{ Body: SimularLoteBody }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const resultado = await agendamentoService.simularLote(request.body);
+        void reply.send(resultado);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function criarLote(
+    request: FastifyRequest<{ Body: CriarLoteBody }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const resultado = await agendamentoService.criarLote(request.body);
+        void reply.status(201).send(resultado);
     } catch (error) {
         handleError(error, reply);
     }

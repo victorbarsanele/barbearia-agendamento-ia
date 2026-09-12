@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import {
     criarBloqueio,
     excluirBloqueio,
@@ -314,23 +314,12 @@ export function BloqueiosPage() {
                         )}
                     </div>
 
-                    <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                        <input
-                            type="checkbox"
-                            checked={atravessaDias}
-                            onChange={(event) =>
-                                handleAtravessaDiasChange(event.target.checked)
-                            }
-                            className="peer sr-only"
-                        />
-                        <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-[var(--color-gold)]/30 bg-[var(--color-surface)] peer-checked:border-[var(--color-gold)] peer-checked:bg-[var(--color-gold)] peer-checked:[&>svg]:opacity-100">
-                            <Check
-                                className="h-3 w-3 text-black opacity-0"
-                                strokeWidth={3}
-                            />
-                        </span>
+                    <Checkbox
+                        checked={atravessaDias}
+                        onChange={handleAtravessaDiasChange}
+                    >
                         Bloqueio atravessa mais de um dia?
-                    </label>
+                    </Checkbox>
 
                     {atravessaDias && (
                         <div>

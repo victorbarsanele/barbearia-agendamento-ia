@@ -14,6 +14,12 @@ vi.mock('../repositories/agendamento.repository', () => ({
     contarAtivosPorServicoId: vi.fn(),
     excluirCanceladosPorClienteId: vi.fn(),
     excluirCanceladosPorServicoId: vi.fn(),
+    listarSiblingsEditaveisDoLote: vi.fn(),
+}));
+
+vi.mock('../repositories/loteAgendamento.repository', () => ({
+    criar: vi.fn(),
+    buscarPorId: vi.fn(),
 }));
 
 vi.mock('../repositories/bloqueio.repository', () => ({
@@ -38,6 +44,7 @@ vi.mock('./gemini.service', () => ({
 }));
 
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
@@ -64,6 +71,7 @@ const agendamentoAtual = {
     clienteId: clienteBase.id,
     servicoId: servicoBase.id,
     pacoteClienteId: null,
+    loteId: null,
     dataHoraInicio: new Date('2026-07-20T09:00:00-03:00'),
     dataHoraFim: new Date('2026-07-20T09:30:00-03:00'),
     status: StatusAgendamento.AGENDADO,
@@ -1066,6 +1074,196 @@ describe('agendamento.service.desvincularPacote', () => {
 
         expect(
             agendamentoRepository.atualizarPacoteClienteId,
+        ).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.criarLote', () => {
+    const loteBase = {
+        id: 'lote-1',
+        clienteId: clienteBase.id,
+        servicoId: servicoBase.id,
+        pacoteClienteId: null,
+        criadoEm: new Date('2026-07-20T00:00:00Z'),
+        cliente: clienteBase,
+        servico: servicoBase,
+    };
+
+    it('cria parcialmente quando há conflito no meio do lote', async () => {
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue(
+            loteBase as never,
+        );
+
+        // 1º slot livre, 2º slot com conflito, 3º slot livre novamente
+        vi.mocked(agendamentoRepository.buscarConflito)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ ...agendamentoAtual } as never)
+            .mockResolvedValueOnce(null);
+
+        vi.mocked(agendamentoRepository.criar).mockImplementation(
+            async (data) =>
+                ({
+                    ...agendamentoAtual,
+                    id: `agendamento-${data.dataHoraInicio.toISOString()}`,
+                    dataHoraInicio: data.dataHoraInicio,
+                    dataHoraFim: data.dataHoraFim,
+                    loteId: data.loteId ?? null,
+                }) as never,
+        );
+
+        const resultado = await agendamentoService.criarLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            slots: [
+                { data: '2026-07-21', horario: '10:00' },
+                { data: '2026-07-21', horario: '11:00' },
+                { data: '2026-07-21', horario: '12:30' },
+            ],
+        });
+
+        expect(resultado.loteId).toBe('lote-1');
+        expect(resultado.criados).toHaveLength(2);
+        expect(resultado.falhados).toHaveLength(1);
+        expect(resultado.falhados[0]).toMatchObject({
+            data: '2026-07-21',
+            horario: '11:00',
+            motivo: 'Já existe um agendamento nesse horário.',
+        });
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(2);
+    });
+
+    it('revalida disponibilidade no momento da inserção (corrida com a simulação)', async () => {
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue(
+            loteBase as never,
+        );
+
+        // Simulação (que não é chamada aqui) teria dado livre, mas na
+        // inserção outro processo já ocupou o horário nesse meio-tempo.
+        vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValueOnce({
+            ...agendamentoAtual,
+        } as never);
+
+        const resultado = await agendamentoService.criarLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            slots: [{ data: '2026-07-21', horario: '10:00' }],
+        });
+
+        expect(resultado.criados).toHaveLength(0);
+        expect(resultado.falhados).toHaveLength(1);
+        expect(resultado.falhados[0].motivo).toBe(
+            'Já existe um agendamento nesse horário.',
+        );
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.simularLote', () => {
+    it('retorna slots disponíveis e conflitos sem persistir nada', async () => {
+        vi.mocked(agendamentoRepository.buscarConflito)
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ ...agendamentoAtual } as never);
+
+        const resultado = await agendamentoService.simularLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            slots: [
+                { data: '2026-07-21', horario: '10:00' },
+                { data: '2026-07-21', horario: '11:00' },
+            ],
+        });
+
+        expect(resultado.disponiveis).toEqual([
+            { data: '2026-07-21', horario: '10:00' },
+        ]);
+        expect(resultado.conflitos).toHaveLength(1);
+        expect(resultado.conflitos[0].data).toBe('2026-07-21');
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+        expect(loteAgendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.cancelar com aplicarParaLote', () => {
+    it('propaga cancelamento para agendamentos editáveis do lote, excluindo concluídos/cancelados', async () => {
+        const alvo = {
+            ...agendamentoAtual,
+            id: 'agendamento-1',
+            loteId: 'lote-1',
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(
+            alvo as never,
+        );
+        vi.mocked(agendamentoRepository.cancelar).mockResolvedValue({
+            ...alvo,
+            status: StatusAgendamento.CANCELADO,
+        } as never);
+        vi.mocked(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
+        ).mockResolvedValue([
+            { ...agendamentoAtual, id: 'agendamento-2', loteId: 'lote-1' },
+            { ...agendamentoAtual, id: 'agendamento-3', loteId: 'lote-1' },
+        ] as never);
+
+        const resultado = await agendamentoService.cancelar(
+            'agendamento-1',
+            false,
+            true,
+        );
+
+        expect(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
+        ).toHaveBeenCalledWith('lote-1', 'agendamento-1');
+        expect(agendamentoRepository.cancelar).toHaveBeenCalledTimes(3);
+        expect(resultado.agendamentosAfetados).toEqual([
+            'agendamento-2',
+            'agendamento-3',
+        ]);
+    });
+
+    it('não propaga quando aplicarParaLote é falso', async () => {
+        const alvo = {
+            ...agendamentoAtual,
+            id: 'agendamento-1',
+            loteId: 'lote-1',
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(
+            alvo as never,
+        );
+        vi.mocked(agendamentoRepository.cancelar).mockResolvedValue({
+            ...alvo,
+            status: StatusAgendamento.CANCELADO,
+        } as never);
+
+        const resultado = await agendamentoService.cancelar('agendamento-1');
+
+        expect(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
+        ).not.toHaveBeenCalled();
+        expect(agendamentoRepository.cancelar).toHaveBeenCalledTimes(1);
+        expect(resultado.agendamentosAfetados).toEqual([]);
+    });
+
+    it('reagendamento de horário (atualizar) nunca propaga para o lote', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            loteId: 'lote-1',
+        } as never);
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+            ...agendamentoAtual,
+            loteId: 'lote-1',
+            dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
+        } as never);
+
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T11:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+        });
+
+        expect(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
         ).not.toHaveBeenCalled();
     });
 });

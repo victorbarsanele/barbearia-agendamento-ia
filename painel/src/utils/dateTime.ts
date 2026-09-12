@@ -48,6 +48,12 @@ export function getBrazilDateKey(date: Date): string {
     ).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
 }
 
+export function formatBrazilDateKey(dateKey: string): string {
+    const [year, month, day] = dateKey.split('-');
+
+    return `${day}/${month}/${year}`;
+}
+
 export function createBrazilDate(
     year: number,
     monthIndex: number,

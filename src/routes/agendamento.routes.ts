@@ -101,6 +101,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                     additionalProperties: false,
                     properties: {
                         notificarCliente: { type: 'boolean' },
+                        aplicarParaLote: { type: 'boolean' },
                     },
                 },
             },
@@ -118,6 +119,13 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                     additionalProperties: false,
                     properties: {
                         id: { type: 'string', minLength: 1 },
+                    },
+                },
+                body: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        aplicarParaLote: { type: 'boolean' },
                     },
                 },
             },
@@ -165,5 +173,39 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         agendamentoController.desvincularPacote,
+    );
+
+    const slotLoteSchema = {
+        type: 'object',
+        required: ['data', 'horario'],
+        additionalProperties: false,
+        properties: {
+            data: { type: 'string', minLength: 1 },
+            horario: { type: 'string', minLength: 1 },
+        },
+    } as const;
+
+    const loteBodySchema = {
+        type: 'object',
+        required: ['clienteId', 'servicoId', 'slots'],
+        additionalProperties: false,
+        properties: {
+            clienteId: { type: 'string', minLength: 1 },
+            servicoId: { type: 'string', minLength: 1 },
+            pacoteClienteId: { type: 'string', minLength: 1 },
+            slots: { type: 'array', items: slotLoteSchema, minItems: 1 },
+        },
+    } as const;
+
+    app.post(
+        '/agendamentos/lote/simular',
+        { schema: { body: loteBodySchema } },
+        agendamentoController.simularLote,
+    );
+
+    app.post(
+        '/agendamentos/lote',
+        { schema: { body: loteBodySchema } },
+        agendamentoController.criarLote,
     );
 }
