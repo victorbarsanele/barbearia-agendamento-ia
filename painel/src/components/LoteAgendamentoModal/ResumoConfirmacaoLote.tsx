@@ -61,11 +61,11 @@ export function ResumoConfirmacaoLote({
                 <p className="text-sm text-[var(--color-danger)]">{erro}</p>
             )}
 
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex gap-2">
                 <Button
                     disabled={enviando || slots.length === 0}
                     onClick={onConfirmar}
-                    className="min-h-11 flex-1"
+                    className="h-10 flex-1 rounded-[8px] text-sm"
                 >
                     {enviando ? 'Confirmando...' : 'Confirmar'}
                 </Button>
@@ -73,7 +73,7 @@ export function ResumoConfirmacaoLote({
                     variant="ghost"
                     disabled={enviando}
                     onClick={onVoltar}
-                    className="min-h-11 flex-1"
+                    className="h-10 flex-1 rounded-[8px] text-sm"
                 >
                     Voltar
                 </Button>

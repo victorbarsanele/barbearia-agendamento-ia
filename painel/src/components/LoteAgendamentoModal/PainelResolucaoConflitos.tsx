@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { CheckCircle2 } from 'lucide-react';
+import { TimePicker } from '../TimePicker';
 import { formatBrazilDateKey } from '../../utils/dateTime';
 
 interface SlotLote {
@@ -32,9 +34,10 @@ export function PainelResolucaoConflitos({
 
     if (conflitos.length === 0) {
         return (
-            <p className="text-sm text-[var(--color-text-secondary)]">
-                Nenhum conflito encontrado nos horários selecionados.
-            </p>
+            <div className="flex items-center gap-2 rounded-md border border-[var(--color-success)]/40 bg-[var(--color-success)]/10 p-3 text-sm text-[var(--color-success)]">
+                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                <p>Tudo certo! Todas as datas estão disponíveis.</p>
+            </div>
         );
     }
 
@@ -58,14 +61,13 @@ export function PainelResolucaoConflitos({
                         </div>
 
                         <div className="flex items-center gap-2">
-                            <input
-                                type="time"
-                                className="h-9 rounded-[6px] border border-[var(--color-border)] bg-[var(--color-surface-elevated)] px-2 text-xs text-[var(--color-text-primary)]"
+                            <TimePicker
                                 value={horariosAlternativos[chave] ?? ''}
-                                onChange={(event) =>
+                                compact
+                                onChange={(value) =>
                                     setHorariosAlternativos((current) => ({
                                         ...current,
-                                        [chave]: event.target.value,
+                                        [chave]: value,
                                     }))
                                 }
                             />

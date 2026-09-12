@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     buscarClientesPorNome,
     type Cliente,
@@ -8,6 +8,8 @@ import {
     type PacoteClienteAtivo,
 } from '../../services/pacoteCliente.service';
 import { listarServicos, type Servico } from '../../services/servicos.service';
+import { filtrarServicosPorPacoteAtivo } from '../../utils/pacoteCliente';
+import { Checkbox } from '../ui/Checkbox';
 
 const DEBOUNCE_MS = 300;
 
@@ -100,6 +102,29 @@ export function SeletorClienteServico({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [clienteSelecionado?.id]);
 
+    const servicosDisponiveis = useMemo(
+        () =>
+            filtrarServicosPorPacoteAtivo(
+                servicos,
+                pacoteAtivo,
+                Boolean(pacoteClienteId),
+            ),
+        [pacoteAtivo, pacoteClienteId, servicos],
+    );
+
+    useEffect(() => {
+        if (servicosDisponiveis.length === 0) {
+            if (servicoId) {
+                onServicoChange('');
+            }
+            return;
+        }
+
+        if (!servicosDisponiveis.some((servico) => servico.id === servicoId)) {
+            onServicoChange(servicosDisponiveis[0].id);
+        }
+    }, [onServicoChange, servicoId, servicosDisponiveis]);
+
     return (
         <div className="space-y-4">
             <div className="relative">
@@ -149,7 +174,7 @@ export function SeletorClienteServico({
                     onChange={(event) => onServicoChange(event.target.value)}
                 >
                     <option value="">Selecione um serviço</option>
-                    {servicos.map((servico) => (
+                    {servicosDisponiveis.map((servico) => (
                         <option key={servico.id} value={servico.id}>
                             {servico.nome}
                         </option>
@@ -158,21 +183,17 @@ export function SeletorClienteServico({
             </div>
 
             {pacoteAtivo && (
-                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                    <input
-                        type="checkbox"
-                        checked={pacoteClienteId === pacoteAtivo.id}
-                        onChange={(event) =>
-                            onPacoteClienteChange(
-                                event.target.checked
-                                    ? pacoteAtivo.id
-                                    : undefined,
-                            )
-                        }
-                    />
+                <Checkbox
+                    checked={pacoteClienteId === pacoteAtivo.id}
+                    onChange={(checked) =>
+                        onPacoteClienteChange(
+                            checked ? pacoteAtivo.id : undefined,
+                        )
+                    }
+                >
                     Vincular ao pacote ativo deste cliente (
                     {pacoteAtivo.quantidadeRestante} sessões restantes)
-                </label>
+                </Checkbox>
             )}
         </div>
     );

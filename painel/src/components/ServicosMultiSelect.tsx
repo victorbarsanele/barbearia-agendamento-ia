@@ -1,4 +1,5 @@
 import type { Servico } from '../services/servicos.service';
+import { Checkbox } from './ui/Checkbox';
 
 interface ServicosMultiSelectProps {
     servicos: Servico[];
@@ -27,21 +28,15 @@ export function ServicosMultiSelect({
                 const marcado = selecionados.includes(servico.id);
 
                 return (
-                    <label
+                    <Checkbox
                         key={servico.id}
-                        className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text-primary)]"
+                        checked={marcado}
+                        disabled={disabled}
+                        onChange={() => onToggle(servico.id)}
+                        className="text-[var(--color-text-primary)]"
                     >
-                        <input
-                            type="checkbox"
-                            checked={marcado}
-                            disabled={disabled}
-                            onChange={() => onToggle(servico.id)}
-                            className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-gold)]"
-                        />
-                        <span>
-                            {servico.nome} ({servico.duracaoMinutos} min)
-                        </span>
-                    </label>
+                        {servico.nome} ({servico.duracaoMinutos} min)
+                    </Checkbox>
                 );
             })}
         </div>

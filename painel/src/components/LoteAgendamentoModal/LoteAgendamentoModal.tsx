@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import type { Cliente } from '../../services/clientes.service';
 import {
     criarLoteAgendamentos,
@@ -7,6 +8,8 @@ import {
 } from '../../services/agendamentos.service';
 import { listarServicos, type Servico } from '../../services/servicos.service';
 import { Card } from '../ui/Card';
+import { Checkbox } from '../ui/Checkbox';
+import { Button } from '../ui/Button';
 import { SeletorClienteServico } from './SeletorClienteServico';
 import { GeradorRepeticao } from './GeradorRepeticao';
 import { CalendarioSelecaoMultipla } from './CalendarioSelecaoMultipla';
@@ -230,15 +233,17 @@ export function LoteAgendamentoModal({
                         className="text-2xl font-bold text-[var(--color-gold)]"
                         style={{ fontFamily: 'var(--font-title)' }}
                     >
-                        Agendamento em lote
+                        Agendar em lote
                     </h2>
-                    <button
+                    <Button
                         type="button"
+                        variant="ghost"
                         onClick={fechar}
-                        className="text-sm text-[var(--color-text-secondary)]"
+                        className="min-h-8 w-8 px-0"
+                        aria-label="Fechar"
                     >
-                        Fechar
-                    </button>
+                        <X className="h-4 w-4" />
+                    </Button>
                 </div>
 
                 {erro && (
@@ -267,6 +272,18 @@ export function LoteAgendamentoModal({
 
                 {etapa === 'datas' && (
                     <div className="space-y-6">
+                        {temRecorrencia && (
+                            <div className="flex justify-center">
+                                <Checkbox
+                                    checked={temRecorrencia}
+                                    onChange={alternarRecorrencia}
+                                    className="text-[var(--color-text-primary)]"
+                                >
+                                    Há recorrência
+                                </Checkbox>
+                            </div>
+                        )}
+
                         {!temRecorrencia && (
                             <CalendarioSelecaoMultipla
                                 slots={slotsSelecionados}
@@ -274,16 +291,17 @@ export function LoteAgendamentoModal({
                             />
                         )}
 
-                        <label className="flex items-center gap-2 text-sm text-[var(--color-text-primary)]">
-                            <input
-                                type="checkbox"
-                                checked={temRecorrencia}
-                                onChange={(event) =>
-                                    alternarRecorrencia(event.target.checked)
-                                }
-                            />
-                            Há recorrência
-                        </label>
+                        {!temRecorrencia && (
+                            <div className="flex justify-center">
+                                <Checkbox
+                                    checked={temRecorrencia}
+                                    onChange={alternarRecorrencia}
+                                    className="text-[var(--color-text-primary)]"
+                                >
+                                    Há recorrência
+                                </Checkbox>
+                            </div>
+                        )}
 
                         {temRecorrencia && (
                             <GeradorRepeticao onGerar={setSlotsSelecionados} />

@@ -36,13 +36,11 @@ export function CalendarioSelecaoMultipla({
 
     return (
         <div className="space-y-3">
-            <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                <span>Horário para novas datas manuais:</span>
-                <TimePicker
-                    value={horarioManual}
-                    onChange={setHorarioManual}
-                    compact
-                />
+            <div className="flex flex-col items-center">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-text-secondary)]">
+                    SELECIONE UM HORÁRIO
+                </p>
+                <TimePicker value={horarioManual} onChange={setHorarioManual} />
             </div>
 
             <CalendarGrid

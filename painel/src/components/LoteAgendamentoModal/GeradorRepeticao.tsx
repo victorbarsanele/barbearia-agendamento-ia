@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { DateKeyPicker } from '../DateKeyPicker';
 import { TimePicker } from '../TimePicker';
+import { Radio } from '../ui/Radio';
 
 interface SlotLote {
     data: string;
@@ -130,7 +131,7 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                 <label className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]">
                     Dias da semana
                 </label>
-                <div className="flex flex-wrap gap-2">
+                <div className="grid grid-cols-3 gap-2">
                     {DIAS_SEMANA.map((dia) => (
                         <button
                             key={dia.valor}
@@ -156,8 +157,11 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                     {Array.from(diasSelecionados)
                         .sort()
                         .map((dia) => (
-                            <div key={dia} className="flex items-center gap-2">
-                                <span className="w-10 text-xs text-[var(--color-text-secondary)]">
+                            <div
+                                key={dia}
+                                className="flex flex-col items-center gap-2"
+                            >
+                                <span className="text-xs text-[var(--color-text-secondary)]">
                                     {
                                         DIAS_SEMANA.find(
                                             (item) => item.valor === dia,
@@ -166,7 +170,6 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                                 </span>
                                 <TimePicker
                                     value={horarioPorDia[dia] ?? ''}
-                                    compact
                                     onChange={(value) =>
                                         setHorarioPorDia((current) => ({
                                             ...current,
@@ -190,23 +193,19 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                 <label className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]">
                     Critério de parada
                 </label>
-                <div className="flex items-center gap-4 text-sm text-[var(--color-text-secondary)]">
-                    <label className="flex items-center gap-1.5">
-                        <input
-                            type="radio"
-                            checked={criterioParada === 'ocorrencias'}
-                            onChange={() => setCriterioParada('ocorrencias')}
-                        />
+                <div className="flex flex-col gap-3 text-sm text-[var(--color-text-secondary)]">
+                    <Radio
+                        checked={criterioParada === 'ocorrencias'}
+                        onChange={() => setCriterioParada('ocorrencias')}
+                    >
                         Número de ocorrências
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                        <input
-                            type="radio"
-                            checked={criterioParada === 'data'}
-                            onChange={() => setCriterioParada('data')}
-                        />
+                    </Radio>
+                    <Radio
+                        checked={criterioParada === 'data'}
+                        onChange={() => setCriterioParada('data')}
+                    >
                         Data final
-                    </label>
+                    </Radio>
                 </div>
 
                 {criterioParada === 'ocorrencias' ? (
@@ -222,10 +221,6 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                 ) : (
                     <DateKeyPicker value={dataFinal} onChange={setDataFinal} />
                 )}
-                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                    O número de ocorrências conta o total de agendamentos do
-                    lote, não por dia da semana individualmente.
-                </p>
             </div>
 
             <button

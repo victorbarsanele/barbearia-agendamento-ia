@@ -15,8 +15,10 @@ import {
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
+import { filtrarServicosPorPacoteAtivo } from '../utils/pacoteCliente';
 
 const DEBOUNCE_MS = 300;
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
@@ -251,24 +253,13 @@ export function NovoAgendamentoPage() {
         };
     }, [clienteSelecionado?.id]);
 
-    const servicosDoPacoteAtivo = useMemo(() => {
-        if (!pacoteAtivo) {
-            return null;
-        }
-
-        const idsInclusos = new Set(
-            pacoteAtivo.pacote.servicos.map((item) => item.servicoId),
-        );
-        return servicos.filter((servico) => idsInclusos.has(servico.id));
-    }, [pacoteAtivo, servicos]);
-
     const servicosDisponiveis = useMemo(() => {
-        if (usarPacoteAtivo && servicosDoPacoteAtivo) {
-            return servicosDoPacoteAtivo;
-        }
-
-        return servicos;
-    }, [servicos, servicosDoPacoteAtivo, usarPacoteAtivo]);
+        return filtrarServicosPorPacoteAtivo(
+            servicos,
+            pacoteAtivo,
+            usarPacoteAtivo,
+        );
+    }, [pacoteAtivo, servicos, usarPacoteAtivo]);
 
     useEffect(() => {
         if (servicosDisponiveis.length === 0) {
@@ -477,17 +468,11 @@ export function NovoAgendamentoPage() {
                         {!carregandoPacoteAtivo &&
                             pacoteAtivo &&
                             pacoteAtivo.quantidadeRestante > 0 && (
-                                <label className="mt-3 flex items-start gap-3 rounded-[8px] border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] p-3 text-sm text-[var(--color-text-primary)]">
-                                    <input
-                                        type="checkbox"
-                                        checked={usarPacoteAtivo}
-                                        onChange={(event) =>
-                                            setUsarPacoteAtivo(
-                                                event.target.checked,
-                                            )
-                                        }
-                                        className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-gold)]"
-                                    />
+                                <Checkbox
+                                    checked={usarPacoteAtivo}
+                                    onChange={setUsarPacoteAtivo}
+                                    className="mt-3 items-start gap-3 rounded-[8px] border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] p-3 text-[var(--color-text-primary)]"
+                                >
                                     <span>
                                         Usar pacote ativo (
                                         {pacoteAtivo.quantidadeRestante} de{' '}
@@ -497,7 +482,7 @@ export function NovoAgendamentoPage() {
                                             {pacoteAtivo.pacote.nome}
                                         </span>
                                     </span>
-                                </label>
+                                </Checkbox>
                             )}
 
                         {!buscandoClientes &&
