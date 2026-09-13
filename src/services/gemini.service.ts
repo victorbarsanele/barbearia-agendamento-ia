@@ -17,6 +17,7 @@ import {
     HORA_ABERTURA,
     HORA_FECHAMENTO,
 } from './horario-funcionamento';
+import { normalizarTelefone } from '../utils/telefone';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const TIME_ZONE = agendamentoService.TIME_ZONE;
@@ -319,25 +320,17 @@ function extractPhoneDigits(value: string): string {
 }
 
 function normalizeConversationKey(remoteJid: string): string {
-    const digits = extractPhoneDigits(remoteJid);
+    const digits = normalizarTelefone(remoteJid);
 
     if (!digits) {
         return '';
-    }
-
-    if (digits.startsWith('55') && digits.length >= 12) {
-        return digits;
-    }
-
-    if (digits.length === 10 || digits.length === 11) {
-        return `55${digits}`;
     }
 
     return digits;
 }
 
 function normalizePhone(value: string): string {
-    return extractPhoneDigits(value);
+    return normalizarTelefone(value);
 }
 
 function buildPhoneVariants(value: string): string[] {
@@ -390,21 +383,7 @@ async function buscarClientePorTelefoneVariantes(
 }
 
 function normalizeBrazilPhoneForEvolution(value: string): string {
-    const digits = normalizePhone(value);
-
-    if (!digits) {
-        return '';
-    }
-
-    if (digits.startsWith('55') && digits.length >= 12) {
-        return digits;
-    }
-
-    if (digits.length === 10 || digits.length === 11) {
-        return `55${digits}`;
-    }
-
-    return digits;
+    return normalizarTelefone(value);
 }
 
 function normalizeDateTimeInput(value: string): string {

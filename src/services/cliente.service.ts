@@ -3,10 +3,7 @@ import { Prisma } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
-
-function normalizarTelefone(telefone: string): string {
-    return telefone.replace(/\D/g, '');
-}
+import { normalizarTelefone } from '../utils/telefone';
 
 function isForeignKeyConflict(error: unknown): boolean {
     if (

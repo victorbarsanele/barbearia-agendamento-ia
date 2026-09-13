@@ -1,5 +1,6 @@
 import { Cliente } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { normalizarTelefone } from '../utils/telefone';
 
 export async function criar(data: {
     nome: string;
@@ -41,10 +42,18 @@ function buildWhereBusca(search?: string) {
         return undefined;
     }
 
+    const telefoneNormalizado = normalizarTelefone(search);
+    const pareceTelefone =
+        /^[\d\s()+./-]+$/.test(search) && telefoneNormalizado.length > 0;
+
     return {
         OR: [
             { nome: { contains: search, mode: 'insensitive' as const } },
-            { telefone: { contains: search } },
+            {
+                telefone: {
+                    contains: pareceTelefone ? telefoneNormalizado : search,
+                },
+            },
         ],
     };
 }
