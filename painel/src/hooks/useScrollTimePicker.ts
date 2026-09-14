@@ -14,6 +14,8 @@ interface UseScrollTimePickerResult {
     minuteColumnRef: RefObject<HTMLDivElement | null>;
     hourButtonRefs: MutableRefObject<Array<HTMLButtonElement | null>>;
     minuteButtonRefs: MutableRefObject<Array<HTMLButtonElement | null>>;
+    handleHourSelect: (hour: string) => void;
+    handleMinuteSelect: (minute: string) => void;
     handleHourScroll: () => void;
     handleMinuteScroll: () => void;
 }
@@ -34,14 +36,24 @@ export function useScrollTimePicker({
     const minuteScrollTimerRef = useRef<number | null>(null);
     const skipNextAutoAlignRef = useRef(false);
 
+    const clearHourScrollTimer = () => {
+        if (hourScrollTimerRef.current !== null) {
+            window.clearTimeout(hourScrollTimerRef.current);
+            hourScrollTimerRef.current = null;
+        }
+    };
+
+    const clearMinuteScrollTimer = () => {
+        if (minuteScrollTimerRef.current !== null) {
+            window.clearTimeout(minuteScrollTimerRef.current);
+            minuteScrollTimerRef.current = null;
+        }
+    };
+
     useEffect(() => {
         return () => {
-            if (hourScrollTimerRef.current !== null) {
-                window.clearTimeout(hourScrollTimerRef.current);
-            }
-            if (minuteScrollTimerRef.current !== null) {
-                window.clearTimeout(minuteScrollTimerRef.current);
-            }
+            clearHourScrollTimer();
+            clearMinuteScrollTimer();
         };
     }, []);
 
@@ -68,7 +80,12 @@ export function useScrollTimePicker({
             }
         };
 
-        alignColumn(hourColumnRef.current, hourButtonRefs.current, hours, selectedHour);
+        alignColumn(
+            hourColumnRef.current,
+            hourButtonRefs.current,
+            hours,
+            selectedHour,
+        );
         alignColumn(
             minuteColumnRef.current,
             minuteButtonRefs.current,
@@ -87,6 +104,18 @@ export function useScrollTimePicker({
         onMinuteChange(minute);
     };
 
+    const handleHourSelect = (hour: string) => {
+        clearHourScrollTimer();
+        clearMinuteScrollTimer();
+        emitHourChange(hour);
+    };
+
+    const handleMinuteSelect = (minute: string) => {
+        clearHourScrollTimer();
+        clearMinuteScrollTimer();
+        emitMinuteChange(minute);
+    };
+
     const selectClosestValue = (
         column: HTMLDivElement | null,
         buttons: Array<HTMLButtonElement | null>,
@@ -98,7 +127,8 @@ export function useScrollTimePicker({
             return;
         }
 
-        const center = column.getBoundingClientRect().top + column.clientHeight / 2;
+        const center =
+            column.getBoundingClientRect().top + column.clientHeight / 2;
         let closest = current;
         let closestDistance = Number.POSITIVE_INFINITY;
 
@@ -123,11 +153,11 @@ export function useScrollTimePicker({
     };
 
     const handleHourScroll = () => {
-        if (hourScrollTimerRef.current !== null) {
-            window.clearTimeout(hourScrollTimerRef.current);
-        }
+        clearMinuteScrollTimer();
+        clearHourScrollTimer();
 
         hourScrollTimerRef.current = window.setTimeout(() => {
+            hourScrollTimerRef.current = null;
             selectClosestValue(
                 hourColumnRef.current,
                 hourButtonRefs.current,
@@ -139,11 +169,11 @@ export function useScrollTimePicker({
     };
 
     const handleMinuteScroll = () => {
-        if (minuteScrollTimerRef.current !== null) {
-            window.clearTimeout(minuteScrollTimerRef.current);
-        }
+        clearHourScrollTimer();
+        clearMinuteScrollTimer();
 
         minuteScrollTimerRef.current = window.setTimeout(() => {
+            minuteScrollTimerRef.current = null;
             selectClosestValue(
                 minuteColumnRef.current,
                 minuteButtonRefs.current,
@@ -159,6 +189,8 @@ export function useScrollTimePicker({
         minuteColumnRef,
         hourButtonRefs,
         minuteButtonRefs,
+        handleHourSelect,
+        handleMinuteSelect,
         handleHourScroll,
         handleMinuteScroll,
     };

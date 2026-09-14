@@ -102,6 +102,8 @@ export function DateTimePicker({
         minuteColumnRef,
         hourButtonRefs,
         minuteButtonRefs,
+        handleHourSelect: handleHourClick,
+        handleMinuteSelect: handleMinuteClick,
         handleHourScroll,
         handleMinuteScroll,
     } = useScrollTimePicker({
@@ -143,7 +145,7 @@ export function DateTimePicker({
                         <div
                             ref={hourColumnRef}
                             onScroll={handleHourScroll}
-                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16"
+                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-23"
                         >
                             <div className="space-y-1">
                                 {HOURS.map((hour, index) => {
@@ -158,7 +160,7 @@ export function DateTimePicker({
                                             }}
                                             type="button"
                                             onClick={() =>
-                                                handleHourSelect(hour)
+                                                handleHourClick(hour)
                                             }
                                             className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
@@ -178,7 +180,7 @@ export function DateTimePicker({
                         <div
                             ref={minuteColumnRef}
                             onScroll={handleMinuteScroll}
-                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-16"
+                            className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-23"
                         >
                             <div className="space-y-1">
                                 {MINUTES.map((minute, index) => {
@@ -195,7 +197,7 @@ export function DateTimePicker({
                                             }}
                                             type="button"
                                             onClick={() =>
-                                                handleMinuteSelect(minute)
+                                                handleMinuteClick(minute)
                                             }
                                             className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
