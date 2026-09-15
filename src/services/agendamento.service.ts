@@ -9,8 +9,7 @@ import * as pacoteClienteRepository from '../repositories/pacoteCliente.reposito
 import * as servicoRepository from '../repositories/servico.repository';
 import {
     ehDiaDeFuncionamento,
-    HORA_ABERTURA,
-    HORA_FECHAMENTO,
+    estaDentroDoHorarioDoAgendamento,
     TIME_ZONE as HORARIO_TIME_ZONE,
 } from './horario-funcionamento';
 
@@ -188,34 +187,24 @@ function validarAntecedenciaMinima(dataHoraInicio: Date): void {
 function validarHorarioFuncionamento(
     dataHoraInicio: Date,
     dataHoraFim: Date,
+    permiteExtensaoFechamento: boolean,
 ): void {
-    const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
-    const fimEmBrasilia = toZonedTime(dataHoraFim, TIME_ZONE);
-
-    const diaInicio = inicioEmBrasilia.getDay();
-    const diaFim = fimEmBrasilia.getDay();
-
     if (!ehDiaDeFuncionamento(dataHoraInicio)) {
         throw new AppError(
-            'Barbearia funciona de segunda a sábado, das 9h às 19h (horário de Brasília).',
+            'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             422,
         );
     }
 
-    const minutosInicio =
-        inicioEmBrasilia.getHours() * 60 + inicioEmBrasilia.getMinutes();
-    const minutosFim =
-        fimEmBrasilia.getHours() * 60 + fimEmBrasilia.getMinutes();
-    const minutosAbertura = HORA_ABERTURA * 60;
-    const minutosFechamento = HORA_FECHAMENTO * 60;
-
     if (
-        diaFim !== diaInicio ||
-        minutosInicio < minutosAbertura ||
-        minutosFim > minutosFechamento
+        !estaDentroDoHorarioDoAgendamento(
+            dataHoraInicio,
+            dataHoraFim,
+            permiteExtensaoFechamento,
+        )
     ) {
         throw new AppError(
-            `Agendamento deve estar dentro do horário de funcionamento: segunda a sábado, das ${HORA_ABERTURA}h às ${HORA_FECHAMENTO}h (horário de Brasília).`,
+            'Agendamento deve estar dentro do horário de funcionamento: segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             422,
         );
     }
@@ -348,12 +337,17 @@ function validarStatusPermiteVinculo(agendamento: {
 async function validarDisponibilidade(
     dataHoraInicioStr: string,
     duracaoMinutos: number,
+    permiteExtensaoFechamento: boolean,
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
     validarAntecedenciaMinima(dataHoraInicio);
-    validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
+    validarHorarioFuncionamento(
+        dataHoraInicio,
+        dataHoraFim,
+        permiteExtensaoFechamento,
+    );
     validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
     await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
     await validarConflito(dataHoraInicio, dataHoraFim);
@@ -371,6 +365,7 @@ export async function criar(data: CriarAgendamentoData) {
         const { dataHoraInicio, dataHoraFim } = await validarDisponibilidade(
             data.dataHoraInicio,
             servico.duracaoMinutos,
+            servico.permiteExtensaoFechamento,
         );
 
         return await agendamentoRepository.criar({
@@ -406,6 +401,7 @@ export async function simularLote(data: LoteAgendamentoData) {
                 await validarDisponibilidade(
                     montarDataHoraInicio(slot),
                     servico.duracaoMinutos,
+                    servico.permiteExtensaoFechamento,
                 );
                 disponiveis.push(slot);
             } catch (error) {
@@ -456,6 +452,7 @@ export async function criarLote(data: LoteAgendamentoData) {
                     await validarDisponibilidade(
                         montarDataHoraInicio(slot),
                         servico.duracaoMinutos,
+                        servico.permiteExtensaoFechamento,
                     );
 
                 const agendamento = await agendamentoRepository.criar({
@@ -542,7 +539,11 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         );
 
         validarAntecedenciaMinima(dataHoraInicio);
-        validarHorarioFuncionamento(dataHoraInicio, dataHoraFim);
+        validarHorarioFuncionamento(
+            dataHoraInicio,
+            dataHoraFim,
+            servico.permiteExtensaoFechamento,
+        );
         if (data.status !== StatusAgendamento.CANCELADO) {
             validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
             await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);

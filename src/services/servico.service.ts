@@ -39,6 +39,7 @@ export async function criar(data: {
     nome: string;
     duracaoMinutos: number;
     preco?: number | null;
+    permiteExtensaoFechamento?: boolean;
 }): Promise<Servico> {
     if (data.duracaoMinutos <= 0) {
         throw new AppError(
@@ -54,6 +55,7 @@ export async function criar(data: {
         nome: data.nome,
         duracaoMinutos: data.duracaoMinutos,
         preco: data.preco ?? null,
+        permiteExtensaoFechamento: data.permiteExtensaoFechamento ?? false,
     });
 }
 
@@ -68,7 +70,12 @@ export async function buscarPorId(id: string): Promise<Servico> {
 
 export async function atualizar(
     id: string,
-    data: { nome: string; duracaoMinutos: number; preco?: number | null },
+    data: {
+        nome: string;
+        duracaoMinutos: number;
+        preco?: number | null;
+        permiteExtensaoFechamento?: boolean;
+    },
 ): Promise<Servico> {
     const servicoExistente = await servicoRepository.buscarPorId(id);
     if (!servicoExistente) {
@@ -93,6 +100,9 @@ export async function atualizar(
             data.preco !== undefined
                 ? data.preco
                 : (servicoExistente.preco?.toNumber() ?? null),
+        permiteExtensaoFechamento:
+            data.permiteExtensaoFechamento ??
+            servicoExistente.permiteExtensaoFechamento,
     });
 }
 

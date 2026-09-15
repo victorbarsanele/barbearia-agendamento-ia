@@ -1,11 +1,7 @@
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
-import {
-    estaDentroDoHorarioDeFuncionamento,
-    HORA_ABERTURA,
-    HORA_FECHAMENTO,
-} from './horario-funcionamento';
+import { estaDentroDoHorarioDeFuncionamento } from './horario-funcionamento';
 
 interface CriarBloqueioData {
     dataHoraInicio: string;
@@ -45,7 +41,7 @@ export async function criar(data: CriarBloqueioData) {
         !estaDentroDoHorarioDeFuncionamento(dataHoraFim)
     ) {
         throw new AppError(
-            `Bloqueio deve estar dentro do horário de funcionamento (segunda a sábado, das ${HORA_ABERTURA}h às ${HORA_FECHAMENTO}h).`,
+            'Bloqueio deve estar dentro do horário de funcionamento (segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h).',
             422,
         );
     }

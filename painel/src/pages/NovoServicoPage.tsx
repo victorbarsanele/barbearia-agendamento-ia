@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import {
     criarServico,
     type ServicoPayload,
@@ -12,11 +13,13 @@ function buildPayload(
     nome: string,
     duracaoMinutos: string,
     precoNumero: number | undefined,
+    permiteExtensaoFechamento: boolean,
 ): ServicoPayload {
     return {
         nome: nome.trim(),
         duracaoMinutos: Number(duracaoMinutos),
         preco: precoNumero ?? null,
+        permiteExtensaoFechamento,
     };
 }
 
@@ -26,6 +29,8 @@ export function NovoServicoPage() {
     const [nome, setNome] = useState('');
     const [duracaoMinutos, setDuracaoMinutos] = useState('');
     const [preco, setPreco] = useState('');
+    const [permiteExtensaoFechamento, setPermiteExtensaoFechamento] =
+        useState(false);
 
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
@@ -77,7 +82,14 @@ export function NovoServicoPage() {
         setSucesso(null);
 
         try {
-            await criarServico(buildPayload(nome, duracaoMinutos, precoNumero));
+            await criarServico(
+                buildPayload(
+                    nome,
+                    duracaoMinutos,
+                    precoNumero,
+                    permiteExtensaoFechamento,
+                ),
+            );
             setSucesso('Servico cadastrado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
                 navigate('/servicos');
@@ -131,6 +143,13 @@ export function NovoServicoPage() {
                             className={fieldClassName}
                         />
                     </div>
+
+                    <Checkbox
+                        checked={permiteExtensaoFechamento}
+                        onChange={setPermiteExtensaoFechamento}
+                    >
+                        Permite estender fechamento na quinta/sexta às 19h30
+                    </Checkbox>
 
                     <div>
                         <label

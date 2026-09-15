@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import {
     atualizarServico,
     buscarServicoPorId,
@@ -18,11 +19,13 @@ function buildPayload(
     nome: string,
     duracaoMinutos: string,
     precoNumero: number | undefined,
+    permiteExtensaoFechamento: boolean,
 ): ServicoPayload {
     return {
         nome: nome.trim(),
         duracaoMinutos: Number(duracaoMinutos),
         preco: precoNumero ?? null,
+        permiteExtensaoFechamento,
     };
 }
 
@@ -34,6 +37,8 @@ export function EditarServicoPage() {
     const [nome, setNome] = useState('');
     const [duracaoMinutos, setDuracaoMinutos] = useState('');
     const [preco, setPreco] = useState('');
+    const [permiteExtensaoFechamento, setPermiteExtensaoFechamento] =
+        useState(false);
 
     const [loading, setLoading] = useState(true);
     const [submetendo, setSubmetendo] = useState(false);
@@ -79,6 +84,9 @@ export function EditarServicoPage() {
                 setNome(response.nome);
                 setDuracaoMinutos(String(response.duracaoMinutos));
                 setPreco(formatPrecoNumberToInputBR(response.preco));
+                setPermiteExtensaoFechamento(
+                    response.permiteExtensaoFechamento,
+                );
             } catch (error) {
                 if (!ativo) {
                     return;
@@ -145,7 +153,12 @@ export function EditarServicoPage() {
         try {
             await atualizarServico(
                 id,
-                buildPayload(nome, duracaoMinutos, precoNumero),
+                buildPayload(
+                    nome,
+                    duracaoMinutos,
+                    precoNumero,
+                    permiteExtensaoFechamento,
+                ),
             );
             setSucesso('Servico atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -211,6 +224,13 @@ export function EditarServicoPage() {
                                 className={fieldClassName}
                             />
                         </div>
+
+                        <Checkbox
+                            checked={permiteExtensaoFechamento}
+                            onChange={setPermiteExtensaoFechamento}
+                        >
+                            Permite estender fechamento na quinta/sexta às 19h30
+                        </Checkbox>
 
                         <div>
                             <label

@@ -32,13 +32,14 @@ model Cliente {
 }
 
 model Servico {
-  id             String          @id @default(cuid())
-  nome           String
-  duracaoMinutos Int
-  preco          Decimal?        @db.Decimal(10, 2)
-  agendamentos   Agendamento[]
-  pacotes        PacoteServico[]
-  lotes          LoteAgendamento[]
+  id                        String          @id @default(cuid())
+  nome                      String
+  duracaoMinutos            Int
+  preco                     Decimal?        @db.Decimal(10, 2)
+  permiteExtensaoFechamento Boolean         @default(false)
+  agendamentos              Agendamento[]
+  pacotes                   PacoteServico[]
+  lotes                     LoteAgendamento[]
 
   @@map("servicos")
 }

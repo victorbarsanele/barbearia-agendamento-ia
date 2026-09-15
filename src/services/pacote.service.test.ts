@@ -56,6 +56,7 @@ const servicoBase = {
     nome: 'Corte masculino',
     duracaoMinutos: 30,
     preco: null,
+    permiteExtensaoFechamento: false,
 };
 
 beforeEach(() => {

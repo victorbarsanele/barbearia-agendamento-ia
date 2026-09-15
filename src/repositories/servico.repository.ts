@@ -5,6 +5,7 @@ export async function criar(data: {
     nome: string;
     duracaoMinutos: number;
     preco: number | null;
+    permiteExtensaoFechamento: boolean;
 }): Promise<Servico> {
     return prisma.servico.create({ data });
 }
@@ -15,7 +16,12 @@ export async function buscarPorId(id: string): Promise<Servico | null> {
 
 export async function atualizar(
     id: string,
-    data: { nome: string; duracaoMinutos: number; preco: number | null },
+    data: {
+        nome: string;
+        duracaoMinutos: number;
+        preco: number | null;
+        permiteExtensaoFechamento: boolean;
+    },
 ): Promise<Servico> {
     return prisma.servico.update({
         where: { id },
