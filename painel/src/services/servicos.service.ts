@@ -5,12 +5,14 @@ export interface Servico {
     nome: string;
     duracaoMinutos: number;
     preco: string | null;
+    permiteExtensaoFechamento: boolean;
 }
 
 export interface ServicoPayload {
     nome: string;
     duracaoMinutos: number;
     preco?: number | null;
+    permiteExtensaoFechamento: boolean;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {

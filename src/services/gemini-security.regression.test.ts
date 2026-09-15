@@ -58,6 +58,7 @@ const SERVICO_ALVO = {
     nome: 'Corte e Barba',
     duracaoMinutos: 60,
     preco: null,
+    permiteExtensaoFechamento: false,
 };
 
 function amanha(): Date {

@@ -45,6 +45,7 @@ const servicoBase = {
     nome: 'Corte masculino',
     duracaoMinutos: 30,
     preco: null,
+    permiteExtensaoFechamento: false,
 };
 
 const agendamentoAtivoProximo = {
@@ -141,6 +142,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 nome: 'Corte e Barba',
                 duracaoMinutos: 60,
                 preco: null,
+                permiteExtensaoFechamento: true,
             },
         ]);
         vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
@@ -235,18 +237,21 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 nome: 'Corte Simples',
                 duracaoMinutos: 30,
                 preco: null,
+                permiteExtensaoFechamento: false,
             },
             {
                 id: 'corte-e-barba-id-real',
                 nome: 'Corte e Barba',
                 duracaoMinutos: 60,
                 preco: null,
+                permiteExtensaoFechamento: true,
             },
             {
                 id: 'barba-id-real',
                 nome: 'Barba',
                 duracaoMinutos: 30,
                 preco: null,
+                permiteExtensaoFechamento: false,
             },
         ]);
 
@@ -293,18 +298,21 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 nome: 'Corte Simples',
                 duracaoMinutos: 30,
                 preco: null,
+                permiteExtensaoFechamento: false,
             },
             {
                 id: 'corte-e-barba-id-real',
                 nome: 'Corte e Barba',
                 duracaoMinutos: 60,
                 preco: null,
+                permiteExtensaoFechamento: true,
             },
             {
                 id: 'barba-id-real',
                 nome: 'Barba',
                 duracaoMinutos: 30,
                 preco: null,
+                permiteExtensaoFechamento: false,
             },
         ]);
 
@@ -582,12 +590,14 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 nome: 'Corte Simples',
                 duracaoMinutos: 30,
                 preco: null,
+                permiteExtensaoFechamento: false,
             },
             {
                 id: 'servico-2',
                 nome: 'Corte e Barba',
                 duracaoMinutos: 60,
                 preco: null,
+                permiteExtensaoFechamento: true,
             },
         ]);
 

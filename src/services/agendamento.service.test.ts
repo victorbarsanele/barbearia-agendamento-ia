@@ -64,6 +64,7 @@ const servicoBase = {
     nome: 'Corte masculino',
     duracaoMinutos: 30,
     preco: null,
+    permiteExtensaoFechamento: false,
 };
 
 const agendamentoAtual = {
@@ -180,12 +181,12 @@ describe('agendamento.service.criar', () => {
         ).rejects.toMatchObject({
             name: 'AppError',
             message:
-                'Agendamento deve estar dentro do horário de funcionamento: segunda a sábado, das 9h às 19h (horário de Brasília).',
+                'Agendamento deve estar dentro do horário de funcionamento: segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             statusCode: 422,
         });
     });
 
-    it('rejeita agendamento depois das 19h', async () => {
+    it('rejeita agendamento depois das 20h', async () => {
         vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
             ...servicoBase,
             duracaoMinutos: 30,
@@ -195,12 +196,12 @@ describe('agendamento.service.criar', () => {
             agendamentoService.criar({
                 clienteId: clienteBase.id,
                 servicoId: servicoBase.id,
-                dataHoraInicio: '2026-07-20T18:45:00-03:00',
+                dataHoraInicio: '2026-07-20T20:15:00-03:00',
             }),
         ).rejects.toMatchObject({
             name: 'AppError',
             message:
-                'Agendamento deve estar dentro do horário de funcionamento: segunda a sábado, das 9h às 19h (horário de Brasília).',
+                'Agendamento deve estar dentro do horário de funcionamento: segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             statusCode: 422,
         });
     });
@@ -217,9 +218,119 @@ describe('agendamento.service.criar', () => {
         ).rejects.toMatchObject({
             name: 'AppError',
             message:
-                'Barbearia funciona de segunda a sábado, das 9h às 19h (horário de Brasília).',
+                'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             statusCode: 422,
         });
+    });
+
+    it('aceita agendamento até 20h em dia útil', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 30,
+        });
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T19:30:00-03:00',
+            }),
+        ).resolves.toBeDefined();
+    });
+
+    it('aceita quinta-feira às 19h30 para serviço elegível', async () => {
+        const servicoElegivel = {
+            ...servicoBase,
+            duracaoMinutos: 60,
+            permiteExtensaoFechamento: true,
+        };
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoElegivel,
+        );
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-23T19:30:00-03:00',
+            }),
+        ).resolves.toBeDefined();
+    });
+
+    it('aceita sexta-feira às 19h30 para serviço elegível', async () => {
+        const servicoElegivel = {
+            ...servicoBase,
+            duracaoMinutos: 60,
+            permiteExtensaoFechamento: true,
+        };
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoElegivel,
+        );
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T19:30:00-03:00',
+            }),
+        ).resolves.toBeDefined();
+    });
+
+    it('rejeita quinta-feira às 19h30 para serviço não elegível', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 60,
+            permiteExtensaoFechamento: false,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-23T19:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({ statusCode: 422 });
+    });
+
+    it('rejeita sexta-feira às 19h30 quando serviço elegível termina após extensão', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 90,
+            permiteExtensaoFechamento: true,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T19:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({ statusCode: 422 });
+    });
+
+    it('rejeita sábado após 17h mesmo para serviço elegível', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 60,
+            permiteExtensaoFechamento: true,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-25T16:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({ statusCode: 422 });
     });
 
     it('rejeita agendamento com antecedência menor que o mínimo permitido', async () => {

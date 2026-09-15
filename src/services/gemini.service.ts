@@ -14,8 +14,8 @@ import * as agendamentoService from './agendamento.service';
 import {
     DIAS_FUNCIONAMENTO,
     ehDiaDeFuncionamento,
-    HORA_ABERTURA,
-    HORA_FECHAMENTO,
+    obterHorarioFuncionamento,
+    estaDentroDoHorarioDoAgendamento,
 } from './horario-funcionamento';
 import { normalizarTelefone } from '../utils/telefone';
 
@@ -195,7 +195,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'buscarHorariosDisponiveis',
         description:
-            "Retorna horários livres em uma data desejada, considerando agenda, funcionamento (09h-19h, seg-sab) e bloqueios administrativos. O retorno pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
+            "Retorna horários livres em uma data desejada, considerando agenda, funcionamento (09h-20h de segunda a sexta, 08h-17h sábado) e bloqueios administrativos. O retorno pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
         parametersJsonSchema: {
             type: 'object',
             properties: {
@@ -840,7 +840,7 @@ async function buscarHorariosDisponiveisTool(
             horarios: [],
             bloqueios: [],
             observacao:
-                'A barbearia funciona de segunda a sábado, das 09h às 19h.',
+                'A barbearia funciona de segunda a sexta, das 09h às 20h, e sábado, das 08h às 17h.',
         };
     }
 
@@ -883,8 +883,22 @@ async function buscarHorariosDisponiveisTool(
         end: getMinutesInBrasilia(new Date(bloqueio.dataHoraFim)),
     }));
 
-    const openMinutes = HORA_ABERTURA * 60;
-    const closeMinutes = HORA_FECHAMENTO * 60;
+    const horario = obterHorarioFuncionamento(date);
+    if (!horario) {
+        return {
+            data: args.data,
+            horarios: [],
+            bloqueios: [],
+            observacao: 'A barbearia não funciona aos domingos.',
+        };
+    }
+
+    const permiteExtensaoFechamento =
+        servicoSelecionado?.permiteExtensaoFechamento ?? false;
+    const openMinutes = horario.abertura * 60;
+    const closeMinutes =
+        horario.fechamento * 60 +
+        (permiteExtensaoFechamento && [4, 5].includes(date.getDay()) ? 30 : 0);
     const freeSlots: string[] = [];
     const earliestAllowedStart = new Date(
         Date.now() + agendamentoService.MIN_ANTECEDENCIA_MS,
@@ -898,6 +912,17 @@ async function buscarHorariosDisponiveisTool(
         const slotStart = minute;
         const slotEnd = minute + duracaoConsulta;
         const slotStartDate = dateAtMinutesInBrasilia(args.data, slotStart);
+        const slotEndDate = dateAtMinutesInBrasilia(args.data, slotEnd);
+
+        if (
+            !estaDentroDoHorarioDoAgendamento(
+                slotStartDate,
+                slotEndDate,
+                permiteExtensaoFechamento,
+            )
+        ) {
+            continue;
+        }
 
         if (slotStartDate.getTime() < earliestAllowedStart.getTime()) {
             continue;

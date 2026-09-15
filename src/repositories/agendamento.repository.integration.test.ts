@@ -25,6 +25,7 @@ beforeEach(async () => {
             nome: `Servico Integracao ${sufixo}`,
             duracaoMinutos: 30,
             preco: null,
+            permiteExtensaoFechamento: false,
         },
     });
 

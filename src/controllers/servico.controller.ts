@@ -6,12 +6,14 @@ interface CriarServicoBody {
     nome: string;
     duracaoMinutos: number;
     preco?: number | null;
+    permiteExtensaoFechamento?: boolean;
 }
 
 interface AtualizarServicoBody {
     nome: string;
     duracaoMinutos: number;
     preco?: number | null;
+    permiteExtensaoFechamento?: boolean;
 }
 
 interface BuscarServicoPorIdParams {

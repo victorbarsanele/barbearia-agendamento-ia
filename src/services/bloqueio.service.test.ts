@@ -48,7 +48,7 @@ describe('bloqueio.service.criar', () => {
         ).rejects.toMatchObject({
             statusCode: 422,
             message:
-                'Bloqueio deve estar dentro do horário de funcionamento (segunda a sábado, das 9h às 19h).',
+                'Bloqueio deve estar dentro do horário de funcionamento (segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h).',
         });
 
         expect(bloqueioRepository.criar).not.toHaveBeenCalled();
@@ -64,7 +64,7 @@ describe('bloqueio.service.criar', () => {
         ).rejects.toMatchObject({
             statusCode: 422,
             message:
-                'Bloqueio deve estar dentro do horário de funcionamento (segunda a sábado, das 9h às 19h).',
+                'Bloqueio deve estar dentro do horário de funcionamento (segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h).',
         });
 
         expect(bloqueioRepository.criar).not.toHaveBeenCalled();
