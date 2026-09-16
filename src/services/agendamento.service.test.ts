@@ -146,6 +146,25 @@ describe('agendamento.service.criar', () => {
         });
     });
 
+    it('aceita criação retroativa no passado quando horário está livre', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:30:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T09:00:00-03:00',
+                registroRetroativo: true,
+            }),
+        ).resolves.toBeDefined();
+
+        expect(agendamentoRepository.criar).toHaveBeenCalled();
+    });
+
     it('rejeita criação quando horário colide com bloqueio', async () => {
         vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
             id: 'bloqueio-1',

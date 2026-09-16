@@ -34,6 +34,7 @@ interface CriarAgendamentoData {
     servicoId: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
+    registroRetroativo?: boolean;
 }
 
 interface SlotLote {
@@ -338,11 +339,14 @@ async function validarDisponibilidade(
     dataHoraInicioStr: string,
     duracaoMinutos: number,
     permiteExtensaoFechamento: boolean,
+    registroRetroativo = false,
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
-    validarAntecedenciaMinima(dataHoraInicio);
+    if (!registroRetroativo) {
+        validarAntecedenciaMinima(dataHoraInicio);
+    }
     validarHorarioFuncionamento(
         dataHoraInicio,
         dataHoraFim,
@@ -366,6 +370,7 @@ export async function criar(data: CriarAgendamentoData) {
             data.dataHoraInicio,
             servico.duracaoMinutos,
             servico.permiteExtensaoFechamento,
+            data.registroRetroativo,
         );
 
         return await agendamentoRepository.criar({

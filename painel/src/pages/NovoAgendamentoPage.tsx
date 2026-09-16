@@ -91,6 +91,7 @@ export function NovoAgendamentoPage() {
     const [horaSelecionada, setHoraSelecionada] = useState('');
     const [minutoSelecionado, setMinutoSelecionado] = useState('');
     const [dataHoraNoPassado, setDataHoraNoPassado] = useState(false);
+    const [registroRetroativo, setRegistroRetroativo] = useState(false);
 
     const [loadingServicos, setLoadingServicos] = useState(true);
     const [submetendo, setSubmetendo] = useState(false);
@@ -122,6 +123,14 @@ export function NovoAgendamentoPage() {
 
         return `${horaSelecionada}:${minutoSelecionado}`;
     }, [horaSelecionada, minutoSelecionado]);
+    const registroRetroativoDisponivel = data === minData;
+    const minDateTime = useMemo(
+        () =>
+            registroRetroativoDisponivel
+                ? new Date(Date.now() + 60 * 60 * 1000)
+                : undefined,
+        [registroRetroativoDisponivel],
+    );
 
     useEffect(() => {
         let ativo = true;
@@ -282,7 +291,7 @@ export function NovoAgendamentoPage() {
             !!servicoId &&
             !!data &&
             !!hora &&
-            !dataHoraNoPassado &&
+            (!dataHoraNoPassado || registroRetroativo) &&
             !submetendo &&
             !loadingServicos
         );
@@ -292,6 +301,7 @@ export function NovoAgendamentoPage() {
         dataHoraNoPassado,
         hora,
         loadingServicos,
+        registroRetroativo,
         servicoId,
         submetendo,
     ]);
@@ -335,12 +345,37 @@ export function NovoAgendamentoPage() {
         ).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
         const nextHora = `${parts.hour}:${parts.minute}`;
 
+        const nextDateIsToday = nextData === minData;
+        const nextDateIsInvalidWithoutRetroactive =
+            nextDate.getTime() < Date.now() + 60 * 60 * 1000;
+
         setData(nextData);
-        setHoraSelecionada(parts.hour);
-        setMinutoSelecionado(parts.minute);
-        setDataHoraNoPassado(calcularDataHoraNoPassado(nextData, nextHora));
+        setRegistroRetroativo(nextDateIsToday ? registroRetroativo : false);
+
+        if (!nextDateIsToday && nextDateIsInvalidWithoutRetroactive) {
+            setHoraSelecionada('');
+            setMinutoSelecionado('');
+            setDataHoraNoPassado(false);
+        } else {
+            setHoraSelecionada(parts.hour);
+            setMinutoSelecionado(parts.minute);
+            setDataHoraNoPassado(calcularDataHoraNoPassado(nextData, nextHora));
+        }
         setErro(null);
         setSucesso(null);
+    };
+
+    const handleRegistroRetroativoChange = (checked: boolean) => {
+        setRegistroRetroativo(checked);
+
+        if (!checked && dataHoraSelecionada) {
+            const antecedenciaMinima = Date.now() + 60 * 60 * 1000;
+            if (dataHoraSelecionada.getTime() < antecedenciaMinima) {
+                setHoraSelecionada('');
+                setMinutoSelecionado('');
+                setDataHoraNoPassado(false);
+            }
+        }
     };
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -359,7 +394,7 @@ export function NovoAgendamentoPage() {
         const horarioNoPassado = calcularDataHoraNoPassado(data, hora);
         setDataHoraNoPassado(horarioNoPassado);
 
-        if (horarioNoPassado) {
+        if (horarioNoPassado && !registroRetroativo) {
             setErro('Selecione uma data e hora futuras para o agendamento.');
             return;
         }
@@ -375,6 +410,7 @@ export function NovoAgendamentoPage() {
             ...(usarPacoteAtivo && pacoteAtivo
                 ? { pacoteClienteId: pacoteAtivo.id }
                 : {}),
+            ...(registroRetroativo ? { registroRetroativo: true } : {}),
         };
 
         try {
@@ -564,6 +600,9 @@ export function NovoAgendamentoPage() {
                             value={dataHoraSelecionada}
                             onChange={handleChangeDataHora}
                             minDate={minDataDate}
+                            minDateTime={
+                                registroRetroativo ? undefined : minDateTime
+                            }
                             labels={{
                                 dateTitle: 'SELECIONE UMA DATA',
                                 timeTitle: 'SELECIONE UM HORÁRIO',
@@ -571,12 +610,25 @@ export function NovoAgendamentoPage() {
                         />
                     </div>
 
-                    {data && hora && dataHoraNoPassado && (
-                        <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
-                            O horário selecionado já passou. Escolha uma
-                            data/hora futura.
-                        </div>
+                    {registroRetroativoDisponivel && (
+                        <Checkbox
+                            checked={registroRetroativo}
+                            onChange={handleRegistroRetroativoChange}
+                            className="text-[var(--color-text-primary)]"
+                        >
+                            Registro retroativo
+                        </Checkbox>
                     )}
+
+                    {data &&
+                        hora &&
+                        dataHoraNoPassado &&
+                        !registroRetroativo && (
+                            <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
+                                O horário selecionado já passou. Escolha uma
+                                data/hora futura.
+                            </div>
+                        )}
 
                     {erro && (
                         <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">

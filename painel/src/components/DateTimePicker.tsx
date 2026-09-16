@@ -11,6 +11,7 @@ type DateTimePickerProps = {
     value: Date | null;
     onChange: (date: Date) => void;
     minDate?: Date;
+    minDateTime?: Date;
     maxDate?: Date;
     className?: string;
     labels?: {
@@ -28,6 +29,7 @@ export function DateTimePicker({
     value,
     onChange,
     minDate,
+    minDateTime,
     maxDate,
     className = '',
     labels,
@@ -45,6 +47,26 @@ export function DateTimePicker({
     const valueParts = value ? getBrazilDateParts(value) : null;
     const selectedHour = valueParts?.hour ?? '';
     const selectedMinute = valueParts?.minute ?? '';
+    const activeDate = value ?? viewDate;
+    const activeDateKey = getBrazilDateKey(activeDate);
+    const minDateTimeKey = minDateTime ? getBrazilDateKey(minDateTime) : null;
+
+    const isTimeAllowed = (hour: string, minute: string): boolean => {
+        if (!minDateTime || activeDateKey !== minDateTimeKey) {
+            return true;
+        }
+
+        const parts = getBrazilDateParts(activeDate);
+        return (
+            createBrazilDate(
+                parts.year,
+                parts.monthIndex,
+                parts.day,
+                Number(hour),
+                Number(minute),
+            ).getTime() >= minDateTime.getTime()
+        );
+    };
 
     const emitDate = (date: Date) => {
         // Evita realinhar scroll quando mudança veio da própria interação interna.
@@ -150,6 +172,9 @@ export function DateTimePicker({
                             <div className="space-y-1">
                                 {HOURS.map((hour, index) => {
                                     const isSelected = hour === selectedHour;
+                                    const isDisabled = !MINUTES.some((minute) =>
+                                        isTimeAllowed(hour, minute),
+                                    );
 
                                     return (
                                         <button
@@ -162,7 +187,8 @@ export function DateTimePicker({
                                             onClick={() =>
                                                 handleHourClick(hour)
                                             }
-                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
+                                            disabled={isDisabled}
+                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition disabled:cursor-not-allowed disabled:opacity-30 ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
                                             {hour}
                                         </button>
@@ -186,6 +212,10 @@ export function DateTimePicker({
                                 {MINUTES.map((minute, index) => {
                                     const isSelected =
                                         minute === selectedMinute;
+                                    const isDisabled = !isTimeAllowed(
+                                        selectedHour || '06',
+                                        minute,
+                                    );
 
                                     return (
                                         <button
@@ -199,7 +229,8 @@ export function DateTimePicker({
                                             onClick={() =>
                                                 handleMinuteClick(minute)
                                             }
-                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
+                                            disabled={isDisabled}
+                                            className={`flex h-10 w-full items-center justify-center rounded-[10px] px-3 text-base transition disabled:cursor-not-allowed disabled:opacity-30 ${isSelected ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`.trim()}
                                         >
                                             {minute}
                                         </button>

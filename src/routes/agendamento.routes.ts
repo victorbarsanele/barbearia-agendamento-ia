@@ -16,6 +16,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                         servicoId: { type: 'string', minLength: 1 },
                         pacoteClienteId: { type: 'string', minLength: 1 },
                         dataHoraInicio: { type: 'string', format: 'date-time' },
+                        registroRetroativo: { type: 'boolean', default: false },
                     },
                 },
             },
