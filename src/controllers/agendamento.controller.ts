@@ -8,6 +8,7 @@ interface CriarAgendamentoBody {
     servicoId: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
+    registroRetroativo?: boolean;
 }
 
 interface AtualizarAgendamentoBody {
@@ -67,7 +68,13 @@ export async function criar(
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        const agendamento = await agendamentoService.criar(request.body);
+        const agendamento = await agendamentoService.criar({
+            clienteId: request.body.clienteId,
+            servicoId: request.body.servicoId,
+            pacoteClienteId: request.body.pacoteClienteId,
+            dataHoraInicio: request.body.dataHoraInicio,
+            registroRetroativo: request.body.registroRetroativo === true,
+        });
         void reply.status(201).send(agendamento);
     } catch (error) {
         handleError(error, reply);

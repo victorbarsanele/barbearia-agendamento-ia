@@ -32,6 +32,7 @@ export interface CriarAgendamentoPayload {
     servicoId: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
+    registroRetroativo?: boolean;
 }
 
 export interface AtualizarAgendamentoPayload {
