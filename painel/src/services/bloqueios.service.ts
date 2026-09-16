@@ -2,9 +2,14 @@ import { apiFetch } from './api';
 
 export interface BloqueioHorario {
     id: string;
-    dataHoraInicio: string;
-    dataHoraFim: string;
+    dataHoraInicio: string | null;
+    dataHoraFim: string | null;
     motivo: string;
+    escopo: 'TODOS' | 'SO_PAINEL';
+    recorrencia: 'PONTUAL' | 'SEMANAL';
+    diaSemana: number | null;
+    horaInicioMinutos: number | null;
+    horaFimMinutos: number | null;
     createdAt: string;
 }
 
@@ -29,9 +34,14 @@ export async function listarBloqueios(): Promise<BloqueioHorario[]> {
 }
 
 export async function criarBloqueio(payload: {
-    dataHoraInicio: string;
-    dataHoraFim: string;
+    dataHoraInicio?: string;
+    dataHoraFim?: string;
     motivo: string;
+    escopo: 'TODOS' | 'SO_PAINEL';
+    recorrencia: 'PONTUAL' | 'SEMANAL';
+    diaSemana?: number;
+    horaInicioMinutos?: number;
+    horaFimMinutos?: number;
 }): Promise<BloqueioHorario> {
     const response = await apiFetch('/api/bloqueios', {
         method: 'POST',

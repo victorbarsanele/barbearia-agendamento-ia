@@ -8,7 +8,7 @@ export async function bloqueioRoutes(app: FastifyInstance): Promise<void> {
             schema: {
                 body: {
                     type: 'object',
-                    required: ['dataHoraInicio', 'dataHoraFim', 'motivo'],
+                    required: ['motivo'],
                     additionalProperties: false,
                     properties: {
                         dataHoraInicio: { type: 'string', format: 'date-time' },
@@ -17,6 +17,25 @@ export async function bloqueioRoutes(app: FastifyInstance): Promise<void> {
                             type: 'string',
                             minLength: 1,
                             maxLength: 120,
+                        },
+                        escopo: {
+                            type: 'string',
+                            enum: ['TODOS', 'SO_PAINEL'],
+                        },
+                        recorrencia: {
+                            type: 'string',
+                            enum: ['PONTUAL', 'SEMANAL'],
+                        },
+                        diaSemana: { type: 'integer', minimum: 1, maximum: 6 },
+                        horaInicioMinutos: {
+                            type: 'integer',
+                            minimum: 0,
+                            maximum: 1439,
+                        },
+                        horaFimMinutos: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 1440,
                         },
                     },
                 },

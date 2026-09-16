@@ -12,11 +12,11 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as agendamentoService from './agendamento.service';
 import {
-    DIAS_FUNCIONAMENTO,
     ehDiaDeFuncionamento,
     obterHorarioFuncionamento,
     estaDentroDoHorarioDoAgendamento,
 } from './horario-funcionamento';
+import { carregarConfiguracao } from './horario-funcionamento.service';
 import { normalizarTelefone } from '../utils/telefone';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
@@ -607,8 +607,11 @@ function parseDateOnly(date: string): Date | null {
     return parsed;
 }
 
-function isWorkingDay(date: Date): boolean {
-    return ehDiaDeFuncionamento(date);
+function isWorkingDay(
+    configuracao: Awaited<ReturnType<typeof carregarConfiguracao>>,
+    date: Date,
+): boolean {
+    return ehDiaDeFuncionamento(configuracao, date);
 }
 
 function getDateKeyInBrasilia(date: Date): string {
@@ -834,7 +837,9 @@ async function buscarHorariosDisponiveisTool(
         };
     }
 
-    if (!isWorkingDay(date)) {
+    const configuracao = await carregarConfiguracao();
+
+    if (!isWorkingDay(configuracao, date)) {
         return {
             data: args.data,
             horarios: [],
@@ -878,12 +883,33 @@ async function buscarHorariosDisponiveisTool(
             end: getMinutesInBrasilia(new Date(agendamento.dataHoraFim)),
         }));
 
-    const bloqueioIntervals = bloqueios.map((bloqueio) => ({
-        start: getMinutesInBrasilia(new Date(bloqueio.dataHoraInicio)),
-        end: getMinutesInBrasilia(new Date(bloqueio.dataHoraFim)),
-    }));
+    const bloqueioIntervals = bloqueios.flatMap((bloqueio) => {
+        if (
+            bloqueio.recorrencia === 'SEMANAL' &&
+            bloqueio.horaInicioMinutos !== null &&
+            bloqueio.horaFimMinutos !== null
+        ) {
+            return [
+                {
+                    start: bloqueio.horaInicioMinutos,
+                    end: bloqueio.horaFimMinutos,
+                },
+            ];
+        }
 
-    const horario = obterHorarioFuncionamento(date);
+        if (bloqueio.dataHoraInicio === null || bloqueio.dataHoraFim === null) {
+            return [];
+        }
+
+        return [
+            {
+                start: getMinutesInBrasilia(bloqueio.dataHoraInicio),
+                end: getMinutesInBrasilia(bloqueio.dataHoraFim),
+            },
+        ];
+    });
+
+    const horario = obterHorarioFuncionamento(configuracao, date);
     if (!horario) {
         return {
             data: args.data,
@@ -895,10 +921,11 @@ async function buscarHorariosDisponiveisTool(
 
     const permiteExtensaoFechamento =
         servicoSelecionado?.permiteExtensaoFechamento ?? false;
-    const openMinutes = horario.abertura * 60;
+    const openMinutes = horario.horaAberturaMinutos;
     const closeMinutes =
-        horario.fechamento * 60 +
-        (permiteExtensaoFechamento && [4, 5].includes(date.getDay()) ? 30 : 0);
+        permiteExtensaoFechamento && horario.limiteExtensaoMinutos !== null
+            ? horario.limiteExtensaoMinutos
+            : horario.horaFechamentoMinutos;
     const freeSlots: string[] = [];
     const earliestAllowedStart = new Date(
         Date.now() + agendamentoService.MIN_ANTECEDENCIA_MS,
@@ -916,6 +943,7 @@ async function buscarHorariosDisponiveisTool(
 
         if (
             !estaDentroDoHorarioDoAgendamento(
+                configuracao,
                 slotStartDate,
                 slotEndDate,
                 permiteExtensaoFechamento,
@@ -947,11 +975,23 @@ async function buscarHorariosDisponiveisTool(
     return {
         data: args.data,
         horarios: freeSlots,
-        bloqueios: bloqueios.map((bloqueio) => ({
-            inicio: formatInBrasilia(new Date(bloqueio.dataHoraInicio)),
-            fim: formatInBrasilia(new Date(bloqueio.dataHoraFim)),
-            motivo: bloqueio.motivo,
-        })),
+        bloqueios: bloqueios.flatMap((bloqueio) => {
+            if (
+                bloqueio.escopo === 'SO_PAINEL' ||
+                bloqueio.dataHoraInicio === null ||
+                bloqueio.dataHoraFim === null
+            ) {
+                return [];
+            }
+
+            return [
+                {
+                    inicio: formatInBrasilia(bloqueio.dataHoraInicio),
+                    fim: formatInBrasilia(bloqueio.dataHoraFim),
+                    motivo: bloqueio.motivo,
+                },
+            ];
+        }),
     };
 }
 
@@ -994,6 +1034,7 @@ async function criarAgendamentoTool(args: CriarAgendamentoArgs): Promise<{
             clienteId: cliente.id,
             servicoId: servicoIdResolvido,
             dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
+            origem: 'GEMINI',
         });
 
         return {
@@ -1181,6 +1222,7 @@ async function atualizarAgendamentoTool(
                 servicoId: servicoIdParaAtualizar,
                 dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
                 status: StatusAgendamento.AGENDADO,
+                origem: 'GEMINI',
             },
         );
 

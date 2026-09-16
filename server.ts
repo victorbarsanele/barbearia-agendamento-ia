@@ -22,6 +22,7 @@ import { clienteRoutes } from './src/routes/cliente.routes';
 import { pacoteRoutes } from './src/routes/pacote.routes';
 import { servicoRoutes } from './src/routes/servico.routes';
 import { webhookRoutes } from './src/routes/webhook.routes';
+import { horarioFuncionamentoRoutes } from './src/routes/horario-funcionamento.routes';
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 
 const app = Fastify({
@@ -82,6 +83,7 @@ void app.register(servicoRoutes);
 void app.register(pacoteRoutes);
 void app.register(agendamentoRoutes);
 void app.register(bloqueioRoutes);
+void app.register(horarioFuncionamentoRoutes);
 void app.register(webhookRoutes);
 
 app.get('/health', async () => {

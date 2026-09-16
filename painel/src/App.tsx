@@ -5,6 +5,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { AgendamentosPage } from './pages/AgendamentosPage';
 import { LoginPage } from './pages/LoginPage';
 import { BloqueiosPage } from './pages/BloqueiosPage';
+import { HorariosFuncionamentoPage } from './pages/HorariosFuncionamentoPage';
 
 const NovoAgendamentoPage = lazy(() =>
     import('./pages/NovoAgendamentoPage').then((module) => ({
@@ -125,6 +126,14 @@ function App() {
                     element={
                         <ProtectedRoute>
                             <BloqueiosPage />
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/horarios"
+                    element={
+                        <ProtectedRoute>
+                            <HorariosFuncionamentoPage />
                         </ProtectedRoute>
                     }
                 />

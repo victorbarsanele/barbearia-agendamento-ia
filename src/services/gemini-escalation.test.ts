@@ -36,6 +36,30 @@ vi.mock('../repositories/servico.repository', () => ({
     listarTodos: mocks.listarTodosServicos,
 }));
 
+vi.mock('../repositories/horarioFuncionamento.repository', () => ({
+    listarTodos: vi.fn().mockResolvedValue(
+        [1, 2, 3, 4, 5]
+            .map((diaSemana) => ({
+                id: `horario-${diaSemana}`,
+                diaSemana,
+                horaAberturaMinutos: 540,
+                horaFechamentoMinutos: 1200,
+                limiteExtensaoMinutos: null,
+                ultimoInicioExtensaoMinutos: null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }))
+            .concat({
+                id: 'horario-6',
+                diaSemana: 6,
+                horaAberturaMinutos: 480,
+                horaFechamentoMinutos: 1020,
+                limiteExtensaoMinutos: null,
+                ultimoInicioExtensaoMinutos: null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }),
+    ),
+}));
+
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,

@@ -38,6 +38,10 @@ vi.mock('../repositories/pacoteCliente.repository', () => ({
     buscarPorId: vi.fn(),
 }));
 
+vi.mock('../repositories/horarioFuncionamento.repository', () => ({
+    listarTodos: vi.fn(),
+}));
+
 vi.mock('./gemini.service', () => ({
     sendWhatsAppText: vi.fn(),
     addToHistory: vi.fn(),
@@ -49,6 +53,7 @@ import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
+import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
 import * as geminiService from './gemini.service';
 import * as agendamentoService from './agendamento.service';
 
@@ -88,6 +93,29 @@ function mockarDependenciasPadrao() {
     vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(servicoBase);
     vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue(null);
     vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue(null);
+    vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValue(
+        [1, 2, 3, 4, 5]
+            .map((diaSemana) => ({
+                id: `horario-${diaSemana}`,
+                diaSemana,
+                horaAberturaMinutos: 540,
+                horaFechamentoMinutos: 1200,
+                limiteExtensaoMinutos: [4, 5].includes(diaSemana) ? 1230 : null,
+                ultimoInicioExtensaoMinutos: [4, 5].includes(diaSemana)
+                    ? 1170
+                    : null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }))
+            .concat({
+                id: 'horario-6',
+                diaSemana: 6,
+                horaAberturaMinutos: 480,
+                horaFechamentoMinutos: 1020,
+                limiteExtensaoMinutos: null,
+                ultimoInicioExtensaoMinutos: null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }),
+    );
 }
 
 beforeEach(() => {
@@ -171,6 +199,11 @@ describe('agendamento.service.criar', () => {
             dataHoraInicio: new Date('2026-07-20T10:00:00-03:00'),
             dataHoraFim: new Date('2026-07-20T11:00:00-03:00'),
             motivo: 'Consulta médica',
+            escopo: 'TODOS',
+            recorrencia: 'PONTUAL',
+            diaSemana: null,
+            horaInicioMinutos: null,
+            horaFimMinutos: null,
             createdAt: new Date('2026-07-19T00:00:00Z'),
         });
 

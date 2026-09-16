@@ -3,9 +3,14 @@ import { AppError } from '../lib/app-error';
 import * as bloqueioService from '../services/bloqueio.service';
 
 interface CriarBloqueioBody {
-    dataHoraInicio: string;
-    dataHoraFim: string;
+    dataHoraInicio?: string;
+    dataHoraFim?: string;
     motivo: string;
+    escopo?: 'TODOS' | 'SO_PAINEL';
+    recorrencia?: 'PONTUAL' | 'SEMANAL';
+    diaSemana?: number;
+    horaInicioMinutos?: number;
+    horaFimMinutos?: number;
 }
 
 interface ListarBloqueiosQuery {

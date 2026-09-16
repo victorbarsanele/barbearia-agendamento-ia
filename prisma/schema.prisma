@@ -19,6 +19,16 @@ enum StatusPacoteCliente {
   CANCELADO
 }
 
+enum EscopoBloqueio {
+  TODOS
+  SO_PAINEL
+}
+
+enum RecorrenciaBloqueio {
+  PONTUAL
+  SEMANAL
+}
+
 model Cliente {
   id           String        @id @default(cuid())
   nome         String
@@ -133,12 +143,29 @@ model PacoteCliente {
 }
 
 model BloqueioHorario {
-  id             String   @id @default(cuid())
-  dataHoraInicio DateTime @db.Timestamptz(3)
-  dataHoraFim    DateTime @db.Timestamptz(3)
-  motivo         String
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  id                  String             @id @default(cuid())
+  dataHoraInicio     DateTime?          @db.Timestamptz(3)
+  dataHoraFim        DateTime?          @db.Timestamptz(3)
+  motivo             String
+  escopo             EscopoBloqueio     @default(TODOS)
+  recorrencia        RecorrenciaBloqueio @default(PONTUAL)
+  diaSemana          Int?
+  horaInicioMinutos  Int?
+  horaFimMinutos     Int?
+  createdAt           DateTime           @default(now()) @db.Timestamptz(3)
 
   @@index([dataHoraInicio, dataHoraFim])
   @@map("bloqueios_horario")
+}
+
+model HorarioFuncionamento {
+  id                          String   @id @default(cuid())
+  diaSemana                  Int      @unique
+  horaAberturaMinutos        Int
+  horaFechamentoMinutos      Int
+  limiteExtensaoMinutos      Int?
+  ultimoInicioExtensaoMinutos Int?
+  updatedAt                  DateTime @updatedAt
+
+  @@map("horarios_funcionamento")
 }
