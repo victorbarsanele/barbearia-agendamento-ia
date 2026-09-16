@@ -7,6 +7,7 @@ import {
     Scissors,
     Package,
     CircleMinus,
+    Clock3,
 } from 'lucide-react';
 
 interface SubNavItem {
@@ -19,6 +20,7 @@ const maisItems: SubNavItem[] = [
     { label: 'Serviços', to: '/servicos', icon: Scissors },
     { label: 'Pacotes', to: '/pacotes', icon: Package },
     { label: 'Bloqueios', to: '/bloqueios', icon: CircleMinus },
+    { label: 'Horários', to: '/horarios', icon: Clock3 },
 ];
 
 export function BottomNav() {

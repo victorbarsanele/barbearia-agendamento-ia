@@ -18,6 +18,10 @@ vi.mock('../repositories/servico.repository', () => ({
     listarTodos: vi.fn(),
 }));
 
+vi.mock('../repositories/horarioFuncionamento.repository', () => ({
+    listarTodos: vi.fn(),
+}));
+
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
@@ -30,6 +34,7 @@ import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
 import * as agendamentoService from './agendamento.service';
 import { __testables } from './gemini.service';
 
@@ -73,6 +78,27 @@ beforeEach(() => {
     );
     vi.mocked(clienteRepository.listarTodos).mockResolvedValue([clienteBase]);
     vi.mocked(servicoRepository.listarTodos).mockResolvedValue([servicoBase]);
+    vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValue(
+        [1, 2, 3, 4, 5]
+            .map((diaSemana) => ({
+                id: `horario-${diaSemana}`,
+                diaSemana,
+                horaAberturaMinutos: 540,
+                horaFechamentoMinutos: 1200,
+                limiteExtensaoMinutos: null,
+                ultimoInicioExtensaoMinutos: null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }))
+            .concat({
+                id: 'horario-6',
+                diaSemana: 6,
+                horaAberturaMinutos: 480,
+                horaFechamentoMinutos: 1020,
+                limiteExtensaoMinutos: null,
+                ultimoInicioExtensaoMinutos: null,
+                updatedAt: new Date('2026-07-20T00:00:00Z'),
+            }),
+    );
 });
 
 afterEach(() => {
@@ -179,6 +205,11 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
                 dataHoraFim: new Date('2026-07-22T11:00:00-03:00'),
                 motivo: 'Natal',
+                escopo: 'TODOS',
+                recorrencia: 'PONTUAL',
+                diaSemana: null,
+                horaInicioMinutos: null,
+                horaFimMinutos: null,
                 createdAt: new Date('2026-07-20T00:00:00Z'),
             },
         ]);
@@ -213,6 +244,11 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
                 dataHoraFim: new Date('2026-07-22T11:00:00-03:00'),
                 motivo: 'Compromisso pessoal',
+                escopo: 'TODOS',
+                recorrencia: 'PONTUAL',
+                diaSemana: null,
+                horaInicioMinutos: null,
+                horaFimMinutos: null,
                 createdAt: new Date('2026-07-20T00:00:00Z'),
             },
         ]);
@@ -281,6 +317,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.objectContaining({
                 servicoId: 'corte-simples-id-real',
+                origem: 'GEMINI',
             }),
         );
 
@@ -524,6 +561,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
                 servicoId: servicoBase.id,
                 dataHoraInicio: '2026-07-22T11:00:00-03:00',
                 status: StatusAgendamento.AGENDADO,
+                origem: 'GEMINI',
             },
         );
         expect(resultado).toMatchObject({

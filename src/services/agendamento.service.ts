@@ -7,11 +7,8 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
-import {
-    ehDiaDeFuncionamento,
-    estaDentroDoHorarioDoAgendamento,
-    TIME_ZONE as HORARIO_TIME_ZONE,
-} from './horario-funcionamento';
+import { TIME_ZONE as HORARIO_TIME_ZONE } from './horario-funcionamento.service';
+import * as horarioFuncionamentoService from './horario-funcionamento.service';
 
 export const TIME_ZONE = HORARIO_TIME_ZONE;
 export const MIN_ANTECEDENCIA_MS = 60 * 60 * 1000;
@@ -35,6 +32,7 @@ interface CriarAgendamentoData {
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+    origem?: 'PAINEL' | 'GEMINI';
 }
 
 interface SlotLote {
@@ -47,6 +45,7 @@ interface LoteAgendamentoData {
     servicoId: string;
     pacoteClienteId?: string;
     slots: SlotLote[];
+    origem?: 'PAINEL' | 'GEMINI';
 }
 
 function montarDataHoraInicio(slot: SlotLote): string {
@@ -59,6 +58,7 @@ interface AtualizarAgendamentoData {
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
+    origem?: 'PAINEL' | 'GEMINI';
 }
 
 function converterParaData(valor: string): Date {
@@ -185,12 +185,20 @@ function validarAntecedenciaMinima(dataHoraInicio: Date): void {
     }
 }
 
-function validarHorarioFuncionamento(
+async function validarHorarioFuncionamento(
     dataHoraInicio: Date,
     dataHoraFim: Date,
     permiteExtensaoFechamento: boolean,
-): void {
-    if (!ehDiaDeFuncionamento(dataHoraInicio)) {
+): Promise<void> {
+    const configuracao =
+        await horarioFuncionamentoService.carregarConfiguracao();
+
+    if (
+        !horarioFuncionamentoService.ehDiaDeFuncionamentoComConfiguracao(
+            configuracao,
+            dataHoraInicio,
+        )
+    ) {
         throw new AppError(
             'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             422,
@@ -198,7 +206,8 @@ function validarHorarioFuncionamento(
     }
 
     if (
-        !estaDentroDoHorarioDoAgendamento(
+        !horarioFuncionamentoService.estaDentroDoHorarioDoAgendamentoComConfiguracao(
+            configuracao,
             dataHoraInicio,
             dataHoraFim,
             permiteExtensaoFechamento,
@@ -269,10 +278,12 @@ async function validarConflito(
 async function validarNaoInterceptaBloqueio(
     dataHoraInicio: Date,
     dataHoraFim: Date,
+    origem: 'PAINEL' | 'GEMINI' = 'PAINEL',
 ): Promise<void> {
     const bloqueio = await bloqueioRepository.buscarConflito(
         dataHoraInicio,
         dataHoraFim,
+        origem,
     );
 
     if (bloqueio) {
@@ -340,6 +351,7 @@ async function validarDisponibilidade(
     duracaoMinutos: number,
     permiteExtensaoFechamento: boolean,
     registroRetroativo = false,
+    origem: 'PAINEL' | 'GEMINI' = 'PAINEL',
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
@@ -347,13 +359,13 @@ async function validarDisponibilidade(
     if (!registroRetroativo) {
         validarAntecedenciaMinima(dataHoraInicio);
     }
-    validarHorarioFuncionamento(
+    await validarHorarioFuncionamento(
         dataHoraInicio,
         dataHoraFim,
         permiteExtensaoFechamento,
     );
     validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
-    await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
+    await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim, origem);
     await validarConflito(dataHoraInicio, dataHoraFim);
 
     return { dataHoraInicio, dataHoraFim };
@@ -371,6 +383,7 @@ export async function criar(data: CriarAgendamentoData) {
             servico.duracaoMinutos,
             servico.permiteExtensaoFechamento,
             data.registroRetroativo,
+            data.origem,
         );
 
         return await agendamentoRepository.criar({
@@ -407,6 +420,8 @@ export async function simularLote(data: LoteAgendamentoData) {
                     montarDataHoraInicio(slot),
                     servico.duracaoMinutos,
                     servico.permiteExtensaoFechamento,
+                    false,
+                    data.origem,
                 );
                 disponiveis.push(slot);
             } catch (error) {
@@ -458,6 +473,8 @@ export async function criarLote(data: LoteAgendamentoData) {
                         montarDataHoraInicio(slot),
                         servico.duracaoMinutos,
                         servico.permiteExtensaoFechamento,
+                        false,
+                        data.origem,
                     );
 
                 const agendamento = await agendamentoRepository.criar({
@@ -544,14 +561,18 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         );
 
         validarAntecedenciaMinima(dataHoraInicio);
-        validarHorarioFuncionamento(
+        await validarHorarioFuncionamento(
             dataHoraInicio,
             dataHoraFim,
             servico.permiteExtensaoFechamento,
         );
         if (data.status !== StatusAgendamento.CANCELADO) {
             validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
-            await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim);
+            await validarNaoInterceptaBloqueio(
+                dataHoraInicio,
+                dataHoraFim,
+                data.origem,
+            );
             await validarConflito(dataHoraInicio, dataHoraFim, id);
         }
 
