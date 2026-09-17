@@ -125,7 +125,9 @@ function App() {
                     path="/bloqueios"
                     element={
                         <ProtectedRoute>
-                            <BloqueiosPage />
+                            <MainRouteLayout>
+                                <BloqueiosPage />
+                            </MainRouteLayout>
                         </ProtectedRoute>
                     }
                 />
@@ -133,7 +135,9 @@ function App() {
                     path="/horarios"
                     element={
                         <ProtectedRoute>
-                            <HorariosFuncionamentoPage />
+                            <MainRouteLayout>
+                                <HorariosFuncionamentoPage />
+                            </MainRouteLayout>
                         </ProtectedRoute>
                     }
                 />

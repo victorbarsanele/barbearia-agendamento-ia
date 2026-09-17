@@ -5,7 +5,6 @@ import { AgendamentoItem } from '../components/AgendamentoItem';
 import { CalendarGrid } from '../components/CalendarGrid.tsx';
 import { LoteAgendamentoModal } from '../components/LoteAgendamentoModal/LoteAgendamentoModal';
 import { SkeletonCard } from '../components/SkeletonCard';
-import { useAuth } from '../contexts/AuthContext';
 import { Button } from '../components/ui/Button';
 import {
     cancelarAgendamento,
@@ -87,7 +86,6 @@ function isDateKeyValida(value: string | null): value is string {
 
 export function AgendamentosPage() {
     const navigate = useNavigate();
-    const { logout } = useAuth();
     const [searchParams] = useSearchParams();
 
     const dataParam = searchParams.get('data');
@@ -259,15 +257,6 @@ export function AgendamentosPage() {
                                 onClick={() => setLoteModalAberto(true)}
                             >
                                 Lote
-                            </Button>
-                            <Button
-                                variant="ghost"
-                                className="min-h-8 rounded-lg px-4 text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                                onClick={() => {
-                                    void logout();
-                                }}
-                            >
-                                Sair
                             </Button>
                         </div>
                     </div>

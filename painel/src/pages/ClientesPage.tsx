@@ -241,7 +241,7 @@ export function ClientesPage() {
                                 </p>
                             </div>
 
-                            <div className="ml-auto flex gap-1">
+                            <div className="grid w-full grid-cols-4 gap-1 sm:ml-auto sm:flex sm:w-auto">
                                 <Button
                                     type="button"
                                     variant="ghost"
@@ -250,13 +250,14 @@ export function ClientesPage() {
                                     }
                                     title={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
                                     aria-label={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
-                                    className="relative h-8 min-h-8 w-8 p-0"
+                                    className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
                                 >
                                     <Calendar size={16} aria-hidden="true" />
                                     <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[#0a0a0a]">
                                         {agendamentosPorCliente[cliente.id] ??
                                             0}
                                     </span>
+                                    <span>Agenda</span>
                                 </Button>
                                 <Button
                                     type="button"
@@ -266,9 +267,10 @@ export function ClientesPage() {
                                     }
                                     title="Gerenciar pacote do cliente"
                                     aria-label="Gerenciar pacote do cliente"
-                                    className="h-8 min-h-8 w-8 p-0"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
                                 >
                                     <Package size={16} aria-hidden="true" />
+                                    <span>Pacote</span>
                                 </Button>
                                 <Button
                                     type="button"
@@ -280,9 +282,10 @@ export function ClientesPage() {
                                     }
                                     title="Editar cliente"
                                     aria-label="Editar cliente"
-                                    className="h-8 min-h-8 w-8 p-0"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
                                 >
                                     <Pencil size={16} aria-hidden="true" />
+                                    <span>Editar</span>
                                 </Button>
                                 <Button
                                     type="button"
@@ -293,9 +296,10 @@ export function ClientesPage() {
                                     disabled={excluindoId === cliente.id}
                                     title="Excluir cliente"
                                     aria-label="Excluir cliente"
-                                    className="h-8 min-h-8 w-8 p-0"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
                                 >
                                     <Trash2 size={16} aria-hidden="true" />
+                                    <span>Excluir</span>
                                 </Button>
                             </div>
                         </Card>
