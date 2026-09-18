@@ -163,6 +163,8 @@ model HorarioFuncionamento {
   diaSemana                  Int      @unique
   horaAberturaMinutos        Int
   horaFechamentoMinutos      Int
+  almocoInicioMinutos        Int?
+  almocoFimMinutos            Int?
   limiteExtensaoMinutos      Int?
   ultimoInicioExtensaoMinutos Int?
   updatedAt                  DateTime @updatedAt

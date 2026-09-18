@@ -12,6 +12,8 @@ const configuracao = [1, 2, 3, 4, 5, 6].map((diaSemana) => ({
     diaSemana,
     horaAberturaMinutos: diaSemana === 6 ? 480 : 540,
     horaFechamentoMinutos: diaSemana === 6 ? 1020 : 1200,
+    almocoInicioMinutos: 690,
+    almocoFimMinutos: 720,
     limiteExtensaoMinutos: [4, 5].includes(diaSemana) ? 1230 : null,
     ultimoInicioExtensaoMinutos: [4, 5].includes(diaSemana) ? 1170 : null,
 }));
@@ -50,5 +52,45 @@ describe('horario-funcionamento.service.atualizarConfiguracao', () => {
         expect(
             horarioFuncionamentoRepository.atualizarTodos,
         ).toHaveBeenCalledWith(configuracao);
+    });
+
+    it('rejeita almoço parcialmente configurado', async () => {
+        const invalida = configuracao.map((item, indice) =>
+            indice === 0 ? { ...item, almocoFimMinutos: null } : item,
+        );
+
+        await expect(
+            horarioFuncionamentoService.atualizarConfiguracao([
+                null,
+                ...invalida,
+            ]),
+        ).rejects.toMatchObject({
+            message:
+                'Horário de início e fim do almoço devem ser informados juntos.',
+            statusCode: 400,
+        });
+    });
+
+    it('rejeita almoço fora do funcionamento', async () => {
+        const invalida = configuracao.map((item, indice) =>
+            indice === 0
+                ? {
+                      ...item,
+                      almocoInicioMinutos: 1200,
+                      almocoFimMinutos: 1260,
+                  }
+                : item,
+        );
+
+        await expect(
+            horarioFuncionamentoService.atualizarConfiguracao([
+                null,
+                ...invalida,
+            ]),
+        ).rejects.toMatchObject({
+            message:
+                'Horário de almoço deve estar dentro do funcionamento e ter início antes do fim.',
+            statusCode: 400,
+        });
     });
 });

@@ -12,6 +12,8 @@ export async function atualizarTodos(
         diaSemana: number;
         horaAberturaMinutos: number;
         horaFechamentoMinutos: number;
+        almocoInicioMinutos: number | null;
+        almocoFimMinutos: number | null;
         limiteExtensaoMinutos: number | null;
         ultimoInicioExtensaoMinutos: number | null;
     }>,

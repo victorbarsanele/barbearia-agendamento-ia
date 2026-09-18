@@ -10,6 +10,8 @@ const configuracaoSchema = {
                 'diaSemana',
                 'horaAberturaMinutos',
                 'horaFechamentoMinutos',
+                'almocoInicioMinutos',
+                'almocoFimMinutos',
                 'limiteExtensaoMinutos',
                 'ultimoInicioExtensaoMinutos',
             ],
@@ -25,6 +27,18 @@ const configuracaoSchema = {
                     type: 'integer',
                     minimum: 0,
                     maximum: 1440,
+                },
+                almocoInicioMinutos: {
+                    anyOf: [
+                        { type: 'null' },
+                        { type: 'integer', minimum: 0, maximum: 1440 },
+                    ],
+                },
+                almocoFimMinutos: {
+                    anyOf: [
+                        { type: 'null' },
+                        { type: 'integer', minimum: 0, maximum: 1440 },
+                    ],
                 },
                 limiteExtensaoMinutos: {
                     anyOf: [

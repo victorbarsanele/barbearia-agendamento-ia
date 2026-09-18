@@ -53,6 +53,40 @@ const servicoBase = {
     permiteExtensaoFechamento: false,
 };
 
+function criarConfiguracoesHorario(
+    almocoPorDia: Partial<Record<number, [number, number] | null>> = {},
+) {
+    return [1, 2, 3, 4, 5]
+        .map((diaSemana) => ({
+            id: `horario-${diaSemana}`,
+            diaSemana,
+            horaAberturaMinutos: 540,
+            horaFechamentoMinutos: 1200,
+            almocoInicioMinutos:
+                almocoPorDia[diaSemana] === null
+                    ? null
+                    : (almocoPorDia[diaSemana]?.[0] ?? 690),
+            almocoFimMinutos:
+                almocoPorDia[diaSemana] === null
+                    ? null
+                    : (almocoPorDia[diaSemana]?.[1] ?? 720),
+            limiteExtensaoMinutos: null,
+            ultimoInicioExtensaoMinutos: null,
+            updatedAt: new Date('2026-07-20T00:00:00Z'),
+        }))
+        .concat({
+            id: 'horario-6',
+            diaSemana: 6,
+            horaAberturaMinutos: 480,
+            horaFechamentoMinutos: 1020,
+            almocoInicioMinutos: 690,
+            almocoFimMinutos: 720,
+            limiteExtensaoMinutos: null,
+            ultimoInicioExtensaoMinutos: null,
+            updatedAt: new Date('2026-07-20T00:00:00Z'),
+        });
+}
+
 const agendamentoAtivoProximo = {
     id: 'agendamento-1',
     clienteId: clienteBase.id,
@@ -79,25 +113,7 @@ beforeEach(() => {
     vi.mocked(clienteRepository.listarTodos).mockResolvedValue([clienteBase]);
     vi.mocked(servicoRepository.listarTodos).mockResolvedValue([servicoBase]);
     vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValue(
-        [1, 2, 3, 4, 5]
-            .map((diaSemana) => ({
-                id: `horario-${diaSemana}`,
-                diaSemana,
-                horaAberturaMinutos: 540,
-                horaFechamentoMinutos: 1200,
-                limiteExtensaoMinutos: null,
-                ultimoInicioExtensaoMinutos: null,
-                updatedAt: new Date('2026-07-20T00:00:00Z'),
-            }))
-            .concat({
-                id: 'horario-6',
-                diaSemana: 6,
-                horaAberturaMinutos: 480,
-                horaFechamentoMinutos: 1020,
-                limiteExtensaoMinutos: null,
-                ultimoInicioExtensaoMinutos: null,
-                updatedAt: new Date('2026-07-20T00:00:00Z'),
-            }),
+        criarConfiguracoesHorario(),
     );
 });
 
@@ -195,6 +211,40 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('11:30');
         expect(resultado.horarios).toContain('10:30');
         expect(resultado.horarios).toContain('12:00');
+    });
+
+    it('buscarHorariosDisponiveis usa almoço configurado para o dia', async () => {
+        vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValueOnce(
+            criarConfiguracoesHorario({ 5: [720, 780] }),
+        );
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            {
+                id: 'servico-60min',
+                nome: 'Corte e Barba',
+                duracaoMinutos: 60,
+                preco: null,
+                permiteExtensaoFechamento: true,
+            },
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = (await __testables.executeToolCall(
+            {
+                name: 'buscarHorariosDisponiveis',
+                args: {
+                    data: '2026-07-24',
+                    servicoId: 'servico-60min',
+                },
+            } as any,
+            '5511999999999',
+            '5511999999999@s.whatsapp.net',
+        )) as { horarios: string[] };
+
+        expect(resultado.horarios).toContain('11:00');
+        expect(resultado.horarios).not.toContain('11:30');
+        expect(resultado.horarios).not.toContain('12:00');
+        expect(resultado.horarios).toContain('13:00');
     });
 
     it('remove horários dentro de bloqueio e retorna motivo', async () => {

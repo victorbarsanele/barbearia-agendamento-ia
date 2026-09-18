@@ -5,6 +5,8 @@ export interface HorarioFuncionamentoConfig {
     diaSemana: number;
     horaAberturaMinutos: number;
     horaFechamentoMinutos: number;
+    almocoInicioMinutos: number | null;
+    almocoFimMinutos: number | null;
     limiteExtensaoMinutos: number | null;
     ultimoInicioExtensaoMinutos: number | null;
 }
@@ -82,5 +84,30 @@ export function estaDentroDoHorarioDoAgendamento(
         minutosInicio >= horario.horaAberturaMinutos &&
         minutosInicio <= limiteInicioExtensao &&
         minutosFim <= limiteFechamento
+    );
+}
+
+export function estaDentroDoHorarioDeAlmoco(
+    horario: HorarioFuncionamentoConfig,
+    inicio: Date,
+    fim: Date,
+): boolean {
+    if (
+        horario.almocoInicioMinutos === null ||
+        horario.almocoFimMinutos === null
+    ) {
+        return false;
+    }
+
+    const inicioEmBrasilia = toZonedTime(inicio, TIME_ZONE);
+    const fimEmBrasilia = toZonedTime(fim, TIME_ZONE);
+    const minutosInicio =
+        inicioEmBrasilia.getHours() * 60 + inicioEmBrasilia.getMinutes();
+    const minutosFim =
+        fimEmBrasilia.getHours() * 60 + fimEmBrasilia.getMinutes();
+
+    return (
+        minutosInicio < horario.almocoFimMinutos &&
+        minutosFim > horario.almocoInicioMinutos
     );
 }

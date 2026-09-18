@@ -15,14 +15,13 @@ import {
     ehDiaDeFuncionamento,
     obterHorarioFuncionamento,
     estaDentroDoHorarioDoAgendamento,
+    estaDentroDoHorarioDeAlmoco,
 } from './horario-funcionamento';
 import { carregarConfiguracao } from './horario-funcionamento.service';
 import { normalizarTelefone } from '../utils/telefone';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const TIME_ZONE = agendamentoService.TIME_ZONE;
-const HORA_ALMOCO_INICIO = 11 * 60 + 30;
-const HORA_ALMOCO_FIM = 12 * 60;
 const MAX_HISTORY_ITEMS = 20;
 const SLOT_MINUTOS = 30;
 const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
@@ -964,8 +963,11 @@ async function buscarHorariosDisponiveisTool(
             (interval) => interval.start < slotEnd && interval.end > slotStart,
         );
 
-        const sobrepoeAlmoco =
-            slotStart < HORA_ALMOCO_FIM && slotEnd > HORA_ALMOCO_INICIO;
+        const sobrepoeAlmoco = estaDentroDoHorarioDeAlmoco(
+            horario,
+            slotStartDate,
+            slotEndDate,
+        );
 
         if (!hasConflict && !hasBlockedTime && !sobrepoeAlmoco) {
             freeSlots.push(formatSlot(minute));
