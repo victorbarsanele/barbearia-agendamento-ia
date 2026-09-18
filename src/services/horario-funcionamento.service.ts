@@ -126,7 +126,8 @@ export async function atualizarConfiguracao(
         if (
             configuracao.almocoInicioMinutos !== null &&
             configuracao.almocoFimMinutos !== null &&
-            (configuracao.almocoInicioMinutos < configuracao.horaAberturaMinutos ||
+            (configuracao.almocoInicioMinutos <
+                configuracao.horaAberturaMinutos ||
                 configuracao.almocoFimMinutos >
                     configuracao.horaFechamentoMinutos ||
                 configuracao.almocoInicioMinutos >=

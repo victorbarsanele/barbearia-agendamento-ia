@@ -133,7 +133,11 @@ export function HorariosFuncionamentoPage() {
             'almocoInicioMinutos',
             habilitado ? 11 * 60 + 30 : null,
         );
-        atualizarCampo(diaSemana, 'almocoFimMinutos', habilitado ? 12 * 60 : null);
+        atualizarCampo(
+            diaSemana,
+            'almocoFimMinutos',
+            habilitado ? 12 * 60 : null,
+        );
     };
 
     const validar = (): string | null => {
@@ -309,7 +313,8 @@ export function HorariosFuncionamentoPage() {
                                         checked={
                                             configuracao.almocoInicioMinutos ===
                                                 null &&
-                                            configuracao.almocoFimMinutos === null
+                                            configuracao.almocoFimMinutos ===
+                                                null
                                         }
                                         onChange={(semAlmoco) =>
                                             alternarAlmoco(
@@ -321,14 +326,18 @@ export function HorariosFuncionamentoPage() {
                                         Sem horário de almoço nesse dia
                                     </Checkbox>
 
-                                    {configuracao.almocoInicioMinutos !== null &&
-                                        configuracao.almocoFimMinutos !== null && (
+                                    {configuracao.almocoInicioMinutos !==
+                                        null &&
+                                        configuracao.almocoFimMinutos !==
+                                            null && (
                                             <div className="mt-3 grid grid-cols-2 gap-3">
                                                 <label className="text-sm text-[var(--color-text-secondary)]">
                                                     Início do almoço
                                                     <TimeTextInput
                                                         key={`${diaSemana}-almocoInicio-${configuracao.almocoInicioMinutos}`}
-                                                        value={configuracao.almocoInicioMinutos}
+                                                        value={
+                                                            configuracao.almocoInicioMinutos
+                                                        }
                                                         onChange={(valor) =>
                                                             atualizarCampo(
                                                                 diaSemana,
@@ -343,7 +352,9 @@ export function HorariosFuncionamentoPage() {
                                                     Fim do almoço
                                                     <TimeTextInput
                                                         key={`${diaSemana}-almocoFim-${configuracao.almocoFimMinutos}`}
-                                                        value={configuracao.almocoFimMinutos}
+                                                        value={
+                                                            configuracao.almocoFimMinutos
+                                                        }
                                                         onChange={(valor) =>
                                                             atualizarCampo(
                                                                 diaSemana,

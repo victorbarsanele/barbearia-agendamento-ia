@@ -214,9 +214,9 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
     });
 
     it('buscarHorariosDisponiveis usa almoço configurado para o dia', async () => {
-        vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValueOnce(
-            criarConfiguracoesHorario({ 5: [720, 780] }),
-        );
+        vi.mocked(
+            horarioFuncionamentoRepository.listarTodos,
+        ).mockResolvedValueOnce(criarConfiguracoesHorario({ 5: [720, 780] }));
         vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
             {
                 id: 'servico-60min',

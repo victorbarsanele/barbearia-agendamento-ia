@@ -203,9 +203,7 @@ async function validarHorarioFuncionamento(
             dataHoraInicio,
         );
 
-    if (
-        !horario
-    ) {
+    if (!horario) {
         throw new AppError(
             'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             422,
