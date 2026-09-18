@@ -88,7 +88,9 @@ const agendamentoAtual = {
     servico: servicoBase,
 };
 
-function mockarDependenciasPadrao() {
+function mockarDependenciasPadrao(
+    almocoPorDia: Partial<Record<number, [number, number] | null>> = {},
+) {
     vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(clienteBase);
     vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(servicoBase);
     vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue(null);
@@ -100,6 +102,14 @@ function mockarDependenciasPadrao() {
                 diaSemana,
                 horaAberturaMinutos: 540,
                 horaFechamentoMinutos: 1200,
+                almocoInicioMinutos:
+                    almocoPorDia[diaSemana] === null
+                        ? null
+                        : (almocoPorDia[diaSemana]?.[0] ?? 690),
+                almocoFimMinutos:
+                    almocoPorDia[diaSemana] === null
+                        ? null
+                        : (almocoPorDia[diaSemana]?.[1] ?? 720),
                 limiteExtensaoMinutos: [4, 5].includes(diaSemana) ? 1230 : null,
                 ultimoInicioExtensaoMinutos: [4, 5].includes(diaSemana)
                     ? 1170
@@ -111,6 +121,8 @@ function mockarDependenciasPadrao() {
                 diaSemana: 6,
                 horaAberturaMinutos: 480,
                 horaFechamentoMinutos: 1020,
+                almocoInicioMinutos: 690,
+                almocoFimMinutos: 720,
                 limiteExtensaoMinutos: null,
                 ultimoInicioExtensaoMinutos: null,
                 updatedAt: new Date('2026-07-20T00:00:00Z'),
@@ -126,6 +138,52 @@ beforeEach(() => {
 });
 
 describe('agendamento.service.criar', () => {
+    it('usa almoço configurado para dia específico', async () => {
+        mockarDependenciasPadrao({ 5: [720, 780] });
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-24T11:30:00-03:00'),
+            dataHoraFim: new Date('2026-07-24T12:00:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T11:30:00-03:00',
+            }),
+        ).resolves.toBeDefined();
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T12:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            message:
+                'Agendamento não pode ocorrer no horário de almoço (12h00 às 13h00).',
+            statusCode: 422,
+        });
+    });
+
+    it('não bloqueia almoço quando dia não possui intervalo configurado', async () => {
+        mockarDependenciasPadrao({ 5: null });
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-24T12:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-24T12:30:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T12:00:00-03:00',
+            }),
+        ).resolves.toBeDefined();
+    });
+
     it('rejeita agendamento com conflito de horário no mesmo barbeiro', async () => {
         vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue({
             ...agendamentoAtual,

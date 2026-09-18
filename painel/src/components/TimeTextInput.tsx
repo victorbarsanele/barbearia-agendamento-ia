@@ -1,12 +1,14 @@
 import { useState } from 'react';
 
 interface TimeTextInputProps {
-    value: number;
+    value: number | null;
     onChange: (value: number) => void;
     className?: string;
 }
 
-function formatarHora(minutos: number): string {
+function formatarHora(minutos: number | null): string {
+    if (minutos === null || !Number.isFinite(minutos)) return '';
+
     const horas = Math.floor(minutos / 60);
     const minutosRestantes = minutos % 60;
     return `${String(horas).padStart(2, '0')}:${String(minutosRestantes).padStart(2, '0')}`;

@@ -33,6 +33,8 @@ function criarPayloadPadrao(
         diaSemana,
         horaAberturaMinutos: 9 * 60,
         horaFechamentoMinutos: 20 * 60,
+        almocoInicioMinutos: 11 * 60 + 30,
+        almocoFimMinutos: 12 * 60,
         limiteExtensaoMinutos: null,
         ultimoInicioExtensaoMinutos: null,
     };
@@ -45,6 +47,8 @@ function paraPayload(
         diaSemana: configuracao.diaSemana,
         horaAberturaMinutos: configuracao.horaAberturaMinutos,
         horaFechamentoMinutos: configuracao.horaFechamentoMinutos,
+        almocoInicioMinutos: configuracao.almocoInicioMinutos ?? null,
+        almocoFimMinutos: configuracao.almocoFimMinutos ?? null,
         limiteExtensaoMinutos: configuracao.limiteExtensaoMinutos,
         ultimoInicioExtensaoMinutos: configuracao.ultimoInicioExtensaoMinutos,
     };
@@ -123,6 +127,19 @@ export function HorariosFuncionamentoPage() {
         );
     };
 
+    const alternarAlmoco = (diaSemana: number, habilitado: boolean) => {
+        atualizarCampo(
+            diaSemana,
+            'almocoInicioMinutos',
+            habilitado ? 11 * 60 + 30 : null,
+        );
+        atualizarCampo(
+            diaSemana,
+            'almocoFimMinutos',
+            habilitado ? 12 * 60 : null,
+        );
+    };
+
     const validar = (): string | null => {
         for (const configuracao of configuracoes) {
             if (!configuracao) continue;
@@ -132,6 +149,29 @@ export function HorariosFuncionamentoPage() {
                 configuracao.horaFechamentoMinutos
             ) {
                 return `Abertura deve ser antes do fechamento em ${nomesDias[configuracao.diaSemana]}.`;
+            }
+
+            const temAlmoco =
+                configuracao.almocoInicioMinutos !== null ||
+                configuracao.almocoFimMinutos !== null;
+            if (
+                temAlmoco &&
+                (configuracao.almocoInicioMinutos === null ||
+                    configuracao.almocoFimMinutos === null)
+            ) {
+                return `Início e fim do almoço devem ser informados em ${nomesDias[configuracao.diaSemana]}.`;
+            }
+            if (
+                configuracao.almocoInicioMinutos !== null &&
+                configuracao.almocoFimMinutos !== null &&
+                (configuracao.almocoInicioMinutos <
+                    configuracao.horaAberturaMinutos ||
+                    configuracao.almocoFimMinutos >
+                        configuracao.horaFechamentoMinutos ||
+                    configuracao.almocoInicioMinutos >=
+                        configuracao.almocoFimMinutos)
+            ) {
+                return `Almoço deve ficar dentro do funcionamento em ${nomesDias[configuracao.diaSemana]}.`;
             }
 
             if (
@@ -267,6 +307,66 @@ export function HorariosFuncionamentoPage() {
                                             </label>
                                         ))}
                                     </div>
+
+                                    <Checkbox
+                                        className="mt-4"
+                                        checked={
+                                            configuracao.almocoInicioMinutos ===
+                                                null &&
+                                            configuracao.almocoFimMinutos ===
+                                                null
+                                        }
+                                        onChange={(semAlmoco) =>
+                                            alternarAlmoco(
+                                                diaSemana,
+                                                !semAlmoco,
+                                            )
+                                        }
+                                    >
+                                        Sem horário de almoço nesse dia
+                                    </Checkbox>
+
+                                    {configuracao.almocoInicioMinutos !==
+                                        null &&
+                                        configuracao.almocoFimMinutos !==
+                                            null && (
+                                            <div className="mt-3 grid grid-cols-2 gap-3">
+                                                <label className="text-sm text-[var(--color-text-secondary)]">
+                                                    Início do almoço
+                                                    <TimeTextInput
+                                                        key={`${diaSemana}-almocoInicio-${configuracao.almocoInicioMinutos}`}
+                                                        value={
+                                                            configuracao.almocoInicioMinutos
+                                                        }
+                                                        onChange={(valor) =>
+                                                            atualizarCampo(
+                                                                diaSemana,
+                                                                'almocoInicioMinutos',
+                                                                valor,
+                                                            )
+                                                        }
+                                                        className="mt-1 h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-gold)]"
+                                                    />
+                                                </label>
+                                                <label className="text-sm text-[var(--color-text-secondary)]">
+                                                    Fim do almoço
+                                                    <TimeTextInput
+                                                        key={`${diaSemana}-almocoFim-${configuracao.almocoFimMinutos}`}
+                                                        value={
+                                                            configuracao.almocoFimMinutos
+                                                        }
+                                                        onChange={(valor) =>
+                                                            atualizarCampo(
+                                                                diaSemana,
+                                                                'almocoFimMinutos',
+                                                                valor,
+                                                            )
+                                                        }
+                                                        className="mt-1 h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)] outline-none focus:border-[var(--color-gold)]"
+                                                    />
+                                                </label>
+                                            </div>
+                                        )}
 
                                     <Checkbox
                                         className="mt-4"

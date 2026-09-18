@@ -8,12 +8,11 @@ import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repo
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import { TIME_ZONE as HORARIO_TIME_ZONE } from './horario-funcionamento.service';
+import { estaDentroDoHorarioDeAlmoco } from './horario-funcionamento';
 import * as horarioFuncionamentoService from './horario-funcionamento.service';
 
 export const TIME_ZONE = HORARIO_TIME_ZONE;
 export const MIN_ANTECEDENCIA_MS = 60 * 60 * 1000;
-const HORA_ALMOCO_INICIO = 11 * 60 + 30;
-const HORA_ALMOCO_FIM = 12 * 60;
 
 function formatarAntecedenciaMinima(ms: number): string {
     const minutos = ms / (60 * 1000);
@@ -114,6 +113,12 @@ function formatarHorarioBrasilia(data: Date): string {
     }).format(data);
 }
 
+function formatarMinutosComoHorario(minutos: number): string {
+    const horas = Math.floor(minutos / 60);
+    const minutosRestantes = minutos % 60;
+    return `${String(horas).padStart(2, '0')}h${String(minutosRestantes).padStart(2, '0')}`;
+}
+
 async function enviarMensagemRemarcacao(
     telefone: string | null,
     nomeCliente: string,
@@ -189,16 +194,16 @@ async function validarHorarioFuncionamento(
     dataHoraInicio: Date,
     dataHoraFim: Date,
     permiteExtensaoFechamento: boolean,
-): Promise<void> {
+): Promise<horarioFuncionamentoService.HorarioFuncionamentoConfig> {
     const configuracao =
         await horarioFuncionamentoService.carregarConfiguracao();
-
-    if (
-        !horarioFuncionamentoService.ehDiaDeFuncionamentoComConfiguracao(
+    const horario =
+        horarioFuncionamentoService.obterHorarioFuncionamentoComConfiguracao(
             configuracao,
             dataHoraInicio,
-        )
-    ) {
+        );
+
+    if (!horario) {
         throw new AppError(
             'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).',
             422,
@@ -207,7 +212,7 @@ async function validarHorarioFuncionamento(
 
     if (
         !horarioFuncionamentoService.estaDentroDoHorarioDoAgendamentoComConfiguracao(
-            configuracao,
+            [horario],
             dataHoraInicio,
             dataHoraFim,
             permiteExtensaoFechamento,
@@ -218,26 +223,18 @@ async function validarHorarioFuncionamento(
             422,
         );
     }
+
+    return horario;
 }
 
 function validarNaoInterceptaAlmoco(
     dataHoraInicio: Date,
     dataHoraFim: Date,
+    horario: horarioFuncionamentoService.HorarioFuncionamentoConfig,
 ): void {
-    const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
-    const fimEmBrasilia = toZonedTime(dataHoraFim, TIME_ZONE);
-
-    const minutosInicio =
-        inicioEmBrasilia.getHours() * 60 + inicioEmBrasilia.getMinutes();
-    const minutosFim =
-        fimEmBrasilia.getHours() * 60 + fimEmBrasilia.getMinutes();
-
-    const sobrepoeAlmoco =
-        minutosInicio < HORA_ALMOCO_FIM && minutosFim > HORA_ALMOCO_INICIO;
-
-    if (sobrepoeAlmoco) {
+    if (estaDentroDoHorarioDeAlmoco(horario, dataHoraInicio, dataHoraFim)) {
         throw new AppError(
-            'Agendamento não pode ocorrer no horário de almoço (11h30 às 12h00).',
+            `Agendamento não pode ocorrer no horário de almoço (${formatarMinutosComoHorario(horario.almocoInicioMinutos!)} às ${formatarMinutosComoHorario(horario.almocoFimMinutos!)}).`,
             422,
         );
     }
@@ -359,12 +356,12 @@ async function validarDisponibilidade(
     if (!registroRetroativo) {
         validarAntecedenciaMinima(dataHoraInicio);
     }
-    await validarHorarioFuncionamento(
+    const horario = await validarHorarioFuncionamento(
         dataHoraInicio,
         dataHoraFim,
         permiteExtensaoFechamento,
     );
-    validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
+    validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim, horario);
     await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim, origem);
     await validarConflito(dataHoraInicio, dataHoraFim);
 
@@ -561,13 +558,13 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         );
 
         validarAntecedenciaMinima(dataHoraInicio);
-        await validarHorarioFuncionamento(
+        const horario = await validarHorarioFuncionamento(
             dataHoraInicio,
             dataHoraFim,
             servico.permiteExtensaoFechamento,
         );
         if (data.status !== StatusAgendamento.CANCELADO) {
-            validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim);
+            validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim, horario);
             await validarNaoInterceptaBloqueio(
                 dataHoraInicio,
                 dataHoraFim,

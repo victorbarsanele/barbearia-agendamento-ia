@@ -97,12 +97,44 @@ export async function atualizarConfiguracao(
     for (const configuracao of validas) {
         if (
             configuracao.horaAberturaMinutos < 0 ||
+            configuracao.horaAberturaMinutos > 24 * 60 ||
+            configuracao.horaFechamentoMinutos < 0 ||
             configuracao.horaFechamentoMinutos > 24 * 60 ||
             configuracao.horaAberturaMinutos >=
                 configuracao.horaFechamentoMinutos
         ) {
             throw new AppError(
                 'Horário de abertura e fechamento inválido.',
+                400,
+            );
+        }
+
+        const temAlmoco =
+            configuracao.almocoInicioMinutos !== null ||
+            configuracao.almocoFimMinutos !== null;
+        if (
+            temAlmoco &&
+            (configuracao.almocoInicioMinutos === null ||
+                configuracao.almocoFimMinutos === null)
+        ) {
+            throw new AppError(
+                'Horário de início e fim do almoço devem ser informados juntos.',
+                400,
+            );
+        }
+
+        if (
+            configuracao.almocoInicioMinutos !== null &&
+            configuracao.almocoFimMinutos !== null &&
+            (configuracao.almocoInicioMinutos <
+                configuracao.horaAberturaMinutos ||
+                configuracao.almocoFimMinutos >
+                    configuracao.horaFechamentoMinutos ||
+                configuracao.almocoInicioMinutos >=
+                    configuracao.almocoFimMinutos)
+        ) {
+            throw new AppError(
+                'Horário de almoço deve estar dentro do funcionamento e ter início antes do fim.',
                 400,
             );
         }
