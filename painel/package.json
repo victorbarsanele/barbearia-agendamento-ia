@@ -7,7 +7,7 @@
         "dev": "vite",
         "build": "tsc -b && vite build",
         "lint": "eslint .",
-        "test:unit": "vitest run --config vitest.config.ts",
+        "test:unit": "playwright test --config playwright.unit.config.ts",
         "preview": "vite preview"
     },
     "dependencies": {
