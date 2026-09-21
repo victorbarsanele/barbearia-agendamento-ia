@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { createBrazilDate, getBrazilDateParts } from '../utils/dateTime';
+import {
+    createBrazilDate,
+    getBrazilDateParts,
+    normalizeMonthYear,
+} from '../utils/dateTime';
 
 type CalendarGridLabels = {
     title: string;
@@ -147,10 +151,15 @@ export function CalendarGrid({
             return;
         }
 
+        const previousMonth = normalizeMonthYear(
+            displayParts.year,
+            displayParts.monthIndex - 1,
+        );
+
         setViewDate(
             createBrazilDate(
-                displayParts.year,
-                displayParts.monthIndex - 1,
+                previousMonth.year,
+                previousMonth.monthIndex,
                 1,
                 12,
                 0,
@@ -163,14 +172,13 @@ export function CalendarGrid({
             return;
         }
 
+        const nextMonth = normalizeMonthYear(
+            displayParts.year,
+            displayParts.monthIndex + 1,
+        );
+
         setViewDate(
-            createBrazilDate(
-                displayParts.year,
-                displayParts.monthIndex + 1,
-                1,
-                12,
-                0,
-            ),
+            createBrazilDate(nextMonth.year, nextMonth.monthIndex, 1, 12, 0),
         );
     };
 
