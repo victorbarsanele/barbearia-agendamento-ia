@@ -304,7 +304,11 @@ export function LoteAgendamentoModal({
                         )}
 
                         {temRecorrencia && (
-                            <GeradorRepeticao onGerar={setSlotsSelecionados} />
+                            <GeradorRepeticao
+                                onGerar={setSlotsSelecionados}
+                                onAlterar={() => setSlotsSelecionados([])}
+                                onErro={setErro}
+                            />
                         )}
 
                         <div className="flex gap-2">
