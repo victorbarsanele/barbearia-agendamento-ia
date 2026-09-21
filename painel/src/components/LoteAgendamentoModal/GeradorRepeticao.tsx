@@ -2,11 +2,10 @@ import { useMemo, useState } from 'react';
 import { DateKeyPicker } from '../DateKeyPicker';
 import { TimePicker } from '../TimePicker';
 import { Radio } from '../ui/Radio';
-
-interface SlotLote {
-    data: string;
-    horario: string;
-}
+import {
+    expandirRecorrencia,
+    type SlotLote,
+} from './expandirRecorrencia';
 
 interface GeradorRepeticaoProps {
     onGerar: (slots: SlotLote[]) => void;
@@ -21,8 +20,6 @@ const DIAS_SEMANA = [
     { valor: 6, label: 'Sáb' },
 ];
 
-const MAX_DIAS_VARREDURA = 365;
-
 const fieldClassName =
     'h-10 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1 text-sm text-[var(--color-text-primary)] outline-none transition focus:border-[var(--color-gold)]';
 
@@ -31,17 +28,6 @@ function getHojeEmBrasiliaParaInput(): string {
         timeZone: 'America/Sao_Paulo',
     }).format(new Date());
     return parts;
-}
-
-function proximaData(dataKey: string, dias: number): string {
-    const [year, month, day] = dataKey.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day + dias));
-    return date.toISOString().slice(0, 10);
-}
-
-function diaDaSemana(dataKey: string): number {
-    const [year, month, day] = dataKey.split('-').map(Number);
-    return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
 export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
@@ -98,31 +84,16 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
     ]);
 
     const gerarSlots = () => {
-        const slots: SlotLote[] = [];
-        let dataAtual = dataInicial;
-
-        for (let i = 0; i < MAX_DIAS_VARREDURA; i += 1) {
-            const dia = diaDaSemana(dataAtual);
-
-            if (diasSelecionados.has(dia) && horarioPorDia[dia]) {
-                slots.push({ data: dataAtual, horario: horarioPorDia[dia] });
-
-                if (
-                    criterioParada === 'ocorrencias' &&
-                    slots.length >= numeroOcorrencias
-                ) {
-                    break;
-                }
-            }
-
-            dataAtual = proximaData(dataAtual, 1);
-
-            if (criterioParada === 'data' && dataAtual > dataFinal) {
-                break;
-            }
-        }
-
-        onGerar(slots);
+        onGerar(
+            expandirRecorrencia({
+                dataInicial,
+                diasSelecionados,
+                horarioPorDia,
+                criterioParada,
+                dataFinal,
+                numeroOcorrencias,
+            }),
+        );
     };
 
     return (
