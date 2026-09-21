@@ -8,6 +8,18 @@ export interface BrazilDateParts {
     minute: string;
 }
 
+export function normalizeMonthYear(
+    year: number,
+    monthIndex: number,
+): { year: number; monthIndex: number } {
+    const monthOffset = Math.floor(monthIndex / 12);
+
+    return {
+        year: year + monthOffset,
+        monthIndex: monthIndex - monthOffset * 12,
+    };
+}
+
 export function getBrazilDateParts(date: Date): BrazilDateParts {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: TIME_ZONE,
@@ -61,7 +73,9 @@ export function createBrazilDate(
     hour = 12,
     minute = 0,
 ): Date {
+    const normalized = normalizeMonthYear(year, monthIndex);
+
     return new Date(
-        `${String(year).padStart(4, '0')}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00-03:00`,
+        `${String(normalized.year).padStart(4, '0')}-${String(normalized.monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00-03:00`,
     );
 }
