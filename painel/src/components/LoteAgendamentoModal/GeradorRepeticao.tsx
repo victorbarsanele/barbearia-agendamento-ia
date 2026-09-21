@@ -2,10 +2,7 @@ import { useMemo, useState } from 'react';
 import { DateKeyPicker } from '../DateKeyPicker';
 import { TimePicker } from '../TimePicker';
 import { Radio } from '../ui/Radio';
-import {
-    expandirRecorrencia,
-    type SlotLote,
-} from './expandirRecorrencia';
+import { expandirRecorrencia, type SlotLote } from './expandirRecorrencia';
 
 interface GeradorRepeticaoProps {
     onGerar: (slots: SlotLote[]) => void;
@@ -92,7 +89,7 @@ export function GeradorRepeticao({ onGerar }: GeradorRepeticaoProps) {
                 criterioParada,
                 dataFinal,
                 numeroOcorrencias,
-            }),
+            }).slots,
         );
     };
 
