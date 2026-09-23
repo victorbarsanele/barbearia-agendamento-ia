@@ -46,9 +46,14 @@ const pacoteBase = {
     id: 'pacote-1',
     nome: 'Pacote 5 cortes',
     duracaoDias: 60,
-    quantidade: 5,
     createdAt: new Date('2026-07-20T00:00:00Z'),
-    servicos: [],
+    servicos: [
+        {
+            pacoteId: 'pacote-1',
+            servicoId: 'servico-1',
+            quantidadeTotal: 5,
+        },
+    ],
 };
 
 const servicoBase = {
@@ -87,7 +92,7 @@ describe('pacote.service.vincularCliente', () => {
         expect(pacoteClienteRepository.criar).not.toHaveBeenCalled();
     });
 
-    it('cria PacoteCliente com quantidadeTotal e quantidadeRestante copiados do pacote', async () => {
+    it('cria saldos por serviço copiados do pacote', async () => {
         vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(clienteBase);
         vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
             pacoteBase as never,
@@ -108,8 +113,12 @@ describe('pacote.service.vincularCliente', () => {
             expect.objectContaining({
                 clienteId: clienteBase.id,
                 pacoteId: pacoteBase.id,
-                quantidadeTotal: pacoteBase.quantidade,
-                quantidadeRestante: pacoteBase.quantidade,
+                servicos: [
+                    {
+                        servicoId: 'servico-1',
+                        quantidadeTotal: 5,
+                    },
+                ],
             }),
         );
     });
@@ -174,8 +183,9 @@ describe('pacote.service.criar', () => {
             pacoteService.criar({
                 nome: 'Pacote inválido',
                 duracaoDias: 30,
-                quantidade: 3,
-                servicoIds: ['servico-inexistente'],
+                servicos: [
+                    { servicoId: 'servico-inexistente', quantidade: 3 },
+                ],
             }),
         ).rejects.toMatchObject({
             name: 'AppError',
@@ -196,11 +206,54 @@ describe('pacote.service.criar', () => {
         await pacoteService.criar({
             nome: pacoteBase.nome,
             duracaoDias: pacoteBase.duracaoDias,
-            quantidade: pacoteBase.quantidade,
-            servicoIds: [servicoBase.id],
+            servicos: [{ servicoId: servicoBase.id, quantidade: 5 }],
         });
 
         expect(pacoteRepository.criar).toHaveBeenCalled();
+    });
+
+    it('aceita múltiplos serviços com quantidades próprias', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoBase as never,
+        );
+        vi.mocked(pacoteRepository.criar).mockResolvedValue(
+            pacoteBase as never,
+        );
+
+        await pacoteService.criar({
+            nome: 'Pacote misto',
+            duracaoDias: 30,
+            servicos: [
+                { servicoId: 'servico-1', quantidade: 5 },
+                { servicoId: 'servico-2', quantidade: 2 },
+            ],
+        });
+
+        expect(pacoteRepository.criar).toHaveBeenCalledWith({
+            nome: 'Pacote misto',
+            duracaoDias: 30,
+            servicos: [
+                { servicoId: 'servico-1', quantidade: 5 },
+                { servicoId: 'servico-2', quantidade: 2 },
+            ],
+        });
+    });
+
+    it('rejeita serviço duplicado', async () => {
+        await expect(
+            pacoteService.criar({
+                nome: 'Pacote duplicado',
+                duracaoDias: 30,
+                servicos: [
+                    { servicoId: 'servico-1', quantidade: 5 },
+                    { servicoId: 'servico-1', quantidade: 2 },
+                ],
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote não pode conter serviço duplicado.',
+            statusCode: 400,
+        });
     });
 });
 

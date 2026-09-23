@@ -45,43 +45,47 @@ function isForeignKeyConflict(error: unknown): boolean {
     return false;
 }
 
-async function validarServicoIds(servicoIds: string[]): Promise<void> {
-    if (servicoIds.length === 0) {
+async function validarServicos(
+    servicos: { servicoId: string; quantidade: number }[],
+): Promise<void> {
+    if (servicos.length === 0) {
         throw new AppError('Pacote deve conter ao menos um serviço.', 400);
     }
 
-    for (const servicoId of servicoIds) {
-        const servico = await servicoRepository.buscarPorId(servicoId);
+    const ids = new Set<string>();
+    for (const item of servicos) {
+        if (ids.has(item.servicoId)) {
+            throw new AppError('Pacote não pode conter serviço duplicado.', 400);
+        }
+        ids.add(item.servicoId);
+
+        if (!Number.isInteger(item.quantidade) || item.quantidade <= 0) {
+            throw new AppError(
+                'A quantidade do serviço deve ser um inteiro maior que zero.',
+                400,
+            );
+        }
+
+        const servico = await servicoRepository.buscarPorId(item.servicoId);
         if (!servico) {
-            throw new AppError(`Serviço não encontrado: ${servicoId}.`, 404);
+            throw new AppError(`Serviço não encontrado: ${item.servicoId}.`, 404);
         }
     }
 }
 
-function validarDadosPacote(data: {
-    duracaoDias: number;
-    quantidade: number;
-}): void {
+function validarDadosPacote(data: { duracaoDias: number }): void {
     if (data.duracaoDias <= 0) {
         throw new AppError('A duração do pacote deve ser maior que zero.', 400);
-    }
-
-    if (data.quantidade <= 0) {
-        throw new AppError(
-            'A quantidade do pacote deve ser maior que zero.',
-            400,
-        );
     }
 }
 
 export async function criar(data: {
     nome: string;
     duracaoDias: number;
-    quantidade: number;
-    servicoIds: string[];
+    servicos: { servicoId: string; quantidade: number }[];
 }) {
     validarDadosPacote(data);
-    await validarServicoIds(data.servicoIds);
+    await validarServicos(data.servicos);
 
     return pacoteRepository.criar(data);
 }
@@ -104,8 +108,7 @@ export async function atualizar(
     data: {
         nome: string;
         duracaoDias: number;
-        quantidade: number;
-        servicoIds: string[];
+        servicos: { servicoId: string; quantidade: number }[];
     },
 ) {
     const existente = await pacoteRepository.buscarPorId(id);
@@ -114,7 +117,7 @@ export async function atualizar(
     }
 
     validarDadosPacote(data);
-    await validarServicoIds(data.servicoIds);
+    await validarServicos(data.servicos);
 
     return pacoteRepository.atualizar(id, data);
 }
@@ -169,8 +172,10 @@ export async function vincularCliente(data: {
     return pacoteClienteRepository.criar({
         clienteId: data.clienteId,
         pacoteId: data.pacoteId,
-        quantidadeTotal: pacote.quantidade,
-        quantidadeRestante: pacote.quantidade,
+        servicos: pacote.servicos.map((servico) => ({
+            servicoId: servico.servicoId,
+            quantidadeTotal: servico.quantidadeTotal,
+        })),
         dataInicio: new Date(),
     });
 }

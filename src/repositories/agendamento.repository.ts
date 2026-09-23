@@ -316,32 +316,51 @@ export async function contarPendentesPorPacoteClienteId(
 export async function concluirComPacote(
     agendamentoId: string,
     pacoteClienteId: string,
+    servicoId: string,
 ): Promise<{
     agendamento: AgendamentoComRelacoes;
     pacoteCliente: PacoteCliente;
 }> {
     return prisma.$transaction(async (tx) => {
-        const pacoteCliente = await tx.pacoteCliente.findUnique({
-            where: { id: pacoteClienteId },
+        const saldo = await tx.pacoteClienteServico.updateMany({
+            where: {
+                pacoteClienteId,
+                servicoId,
+                quantidadeRestante: { gt: 0 },
+            },
+            data: { quantidadeRestante: { decrement: 1 } },
         });
 
-        if (!pacoteCliente) {
-            throw new AppError('Pacote do cliente não encontrado.', 404);
+        if (saldo.count === 0) {
+            const saldoExistente = await tx.pacoteClienteServico.findUnique({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId,
+                        servicoId,
+                    },
+                },
+                select: { id: true },
+            });
+
+            throw new AppError(
+                saldoExistente
+                    ? 'Pacote do cliente está esgotado.'
+                    : 'Pacote do cliente não encontrado.',
+                saldoExistente ? 400 : 404,
+            );
         }
 
-        const quantidadeRestante = Math.max(
-            0,
-            pacoteCliente.quantidadeRestante - 1,
-        );
+        const saldosRestantes = await tx.pacoteClienteServico.count({
+            where: { pacoteClienteId, quantidadeRestante: { gt: 0 } },
+        });
 
         const pacoteClienteAtualizado = await tx.pacoteCliente.update({
             where: { id: pacoteClienteId },
             data: {
-                quantidadeRestante,
                 status:
-                    quantidadeRestante === 0
+                    saldosRestantes === 0
                         ? StatusPacoteCliente.FINALIZADO
-                        : pacoteCliente.status,
+                        : StatusPacoteCliente.ATIVO,
             },
         });
 

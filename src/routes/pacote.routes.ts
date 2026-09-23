@@ -1,10 +1,18 @@
 import { FastifyInstance } from 'fastify';
 import * as pacoteController from '../controllers/pacote.controller';
 
-const servicoIdsSchema = {
+const servicosSchema = {
     type: 'array',
     minItems: 1,
-    items: { type: 'string', minLength: 1 },
+    items: {
+        type: 'object',
+        required: ['servicoId', 'quantidade'],
+        additionalProperties: false,
+        properties: {
+            servicoId: { type: 'string', minLength: 1 },
+            quantidade: { type: 'integer', minimum: 1 },
+        },
+    },
 };
 
 export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
@@ -17,15 +25,13 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
                     required: [
                         'nome',
                         'duracaoDias',
-                        'quantidade',
-                        'servicoIds',
+                        'servicos',
                     ],
                     additionalProperties: false,
                     properties: {
                         nome: { type: 'string', minLength: 1 },
                         duracaoDias: { type: 'integer', minimum: 1 },
-                        quantidade: { type: 'integer', minimum: 1 },
-                        servicoIds: servicoIdsSchema,
+                        servicos: servicosSchema,
                     },
                 },
             },
@@ -121,15 +127,13 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
                     required: [
                         'nome',
                         'duracaoDias',
-                        'quantidade',
-                        'servicoIds',
+                        'servicos',
                     ],
                     additionalProperties: false,
                     properties: {
                         nome: { type: 'string', minLength: 1 },
                         duracaoDias: { type: 'integer', minimum: 1 },
-                        quantidade: { type: 'integer', minimum: 1 },
-                        servicoIds: servicoIdsSchema,
+                        servicos: servicosSchema,
                     },
                 },
             },

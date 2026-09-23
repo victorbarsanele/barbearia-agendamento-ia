@@ -310,10 +310,6 @@ async function validarPacoteCliente(
         throw new AppError('Pacote do cliente não está ativo.', 400);
     }
 
-    if (pacoteCliente.quantidadeRestante <= 0) {
-        throw new AppError('Pacote do cliente está esgotado.', 400);
-    }
-
     const servicoIncluso = pacoteCliente.pacote?.servicos?.some(
         (item) => item.servicoId === servicoId,
     );
@@ -322,6 +318,13 @@ async function validarPacoteCliente(
             'Este serviço não está incluso no pacote selecionado.',
             400,
         );
+    }
+
+    const saldoServico = pacoteCliente.servicos.find(
+        (item) => item.servicoId === servicoId,
+    );
+    if (!saldoServico || saldoServico.quantidadeRestante <= 0) {
+        throw new AppError('Pacote do cliente está esgotado.', 400);
     }
 
     return pacoteCliente;
@@ -724,6 +727,7 @@ async function concluirInterno(id: string) {
     const resultado = await agendamentoRepository.concluirComPacote(
         id,
         agendamento.pacoteClienteId,
+        agendamento.servicoId,
     );
 
     return { agendamento, resultado };
