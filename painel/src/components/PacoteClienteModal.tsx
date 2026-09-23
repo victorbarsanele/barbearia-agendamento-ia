@@ -222,10 +222,15 @@ export function PacoteClienteModal({
                             <p className="text-base font-bold text-[var(--color-text-primary)]">
                                 {pacoteAtivo.pacote.nome}
                             </p>
-                            <p className="mt-2 text-sm font-semibold text-[var(--color-gold)]">
-                                {pacoteAtivo.quantidadeRestante} de{' '}
-                                {pacoteAtivo.quantidadeTotal} usos restantes
-                            </p>
+                            <ul className="mt-2 space-y-1 text-sm font-semibold text-[var(--color-gold)]">
+                                {pacoteAtivo.servicos.map((saldo) => (
+                                    <li key={saldo.servicoId}>
+                                        {saldo.quantidadeRestante} de{' '}
+                                        {saldo.quantidadeTotal} usos de{' '}
+                                        {saldo.servico.nome}
+                                    </li>
+                                ))}
+                            </ul>
                             <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                                 Início:{' '}
                                 {formatarDataEmBrasilia(pacoteAtivo.dataInicio)}
@@ -293,7 +298,12 @@ export function PacoteClienteModal({
                                                         value={pacote.id}
                                                     >
                                                         {pacote.nome} (
-                                                        {pacote.quantidade}{' '}
+                                                        {pacote.servicos
+                                                            .map(
+                                                                (item) =>
+                                                                    `${item.servico.nome}: ${item.quantidadeTotal}`,
+                                                            )
+                                                            .join(', ')}{' '}
                                                         usos,{' '}
                                                         {pacote.duracaoDias}{' '}
                                                         dias)

@@ -18,7 +18,10 @@ import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
-import { filtrarServicosPorPacoteAtivo } from '../utils/pacoteCliente';
+import {
+    buscarSaldoPorServico,
+    filtrarServicosPorPacoteAtivo,
+} from '../utils/pacoteCliente';
 
 const DEBOUNCE_MS = 300;
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
@@ -270,6 +273,11 @@ export function NovoAgendamentoPage() {
         );
     }, [pacoteAtivo, servicos, usarPacoteAtivo]);
 
+    const saldoServicoSelecionado = useMemo(
+        () => buscarSaldoPorServico(pacoteAtivo, servicoId),
+        [pacoteAtivo, servicoId],
+    );
+
     useEffect(() => {
         if (servicosDisponiveis.length === 0) {
             setServicoId('');
@@ -292,6 +300,9 @@ export function NovoAgendamentoPage() {
             !!data &&
             !!hora &&
             (!dataHoraNoPassado || registroRetroativo) &&
+            (!usarPacoteAtivo ||
+                (saldoServicoSelecionado !== null &&
+                    saldoServicoSelecionado.quantidadeRestante > 0)) &&
             !submetendo &&
             !loadingServicos
         );
@@ -302,8 +313,10 @@ export function NovoAgendamentoPage() {
         hora,
         loadingServicos,
         registroRetroativo,
+        saldoServicoSelecionado,
         servicoId,
         submetendo,
+        usarPacoteAtivo,
     ]);
 
     const handleSelecionarCliente = (cliente: Cliente) => {
@@ -388,6 +401,15 @@ export function NovoAgendamentoPage() {
 
         if (!servicoId || !data || !hora) {
             setErro('Preencha todos os campos obrigatórios.');
+            return;
+        }
+
+        if (
+            usarPacoteAtivo &&
+            (!saldoServicoSelecionado ||
+                saldoServicoSelecionado.quantidadeRestante <= 0)
+        ) {
+            setErro('Serviço selecionado não possui saldo no pacote.');
             return;
         }
 
@@ -503,17 +525,27 @@ export function NovoAgendamentoPage() {
 
                         {!carregandoPacoteAtivo &&
                             pacoteAtivo &&
-                            pacoteAtivo.quantidadeRestante > 0 && (
+                            pacoteAtivo.servicos.some(
+                                (saldo) => saldo.quantidadeRestante > 0,
+                            ) && (
                                 <Checkbox
                                     checked={usarPacoteAtivo}
                                     onChange={setUsarPacoteAtivo}
                                     className="mt-3 items-start gap-3 rounded-[8px] border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] p-3 text-[var(--color-text-primary)]"
                                 >
                                     <span>
-                                        Usar pacote ativo (
-                                        {pacoteAtivo.quantidadeRestante} de{' '}
-                                        {pacoteAtivo.quantidadeTotal} usos
-                                        restantes) —{' '}
+                                        Usar pacote ativo ({' '}
+                                        {pacoteAtivo.servicos
+                                            .filter(
+                                                (saldo) =>
+                                                    saldo.quantidadeRestante > 0,
+                                            )
+                                            .map(
+                                                (saldo) =>
+                                                    `${saldo.quantidadeRestante} de ${saldo.quantidadeTotal} ${saldo.servico.nome}`,
+                                            )
+                                            .join(', ')}{' '}
+                                        ) —{' '}
                                         <span className="font-semibold text-[var(--color-gold)]">
                                             {pacoteAtivo.pacote.nome}
                                         </span>
@@ -587,6 +619,19 @@ export function NovoAgendamentoPage() {
                                 ))
                             )}
                         </select>
+                        {usarPacoteAtivo && pacoteAtivo && (
+                            <p
+                                className={`mt-2 text-sm ${
+                                    saldoServicoSelecionado?.quantidadeRestante
+                                        ? 'text-[var(--color-gold)]'
+                                        : 'text-[var(--color-danger)]'
+                                }`}
+                            >
+                                {saldoServicoSelecionado
+                                    ? `${saldoServicoSelecionado.quantidadeRestante} de ${saldoServicoSelecionado.quantidadeTotal} usos de ${saldoServicoSelecionado.servico.nome}`
+                                    : 'Serviço não incluso no pacote.'}
+                            </p>
+                        )}
                     </div>
 
                     <div>

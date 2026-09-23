@@ -1,6 +1,16 @@
 import type { PacoteClienteAtivo } from '../services/pacoteCliente.service';
 import type { Servico } from '../services/servicos.service';
 
+export function buscarSaldoPorServico(
+    pacoteAtivo: PacoteClienteAtivo | null,
+    servicoId: string,
+) {
+    return (
+        pacoteAtivo?.servicos.find((saldo) => saldo.servicoId === servicoId) ??
+        null
+    );
+}
+
 export function filtrarServicosPorPacoteAtivo(
     servicos: Servico[],
     pacoteAtivo: PacoteClienteAtivo | null,

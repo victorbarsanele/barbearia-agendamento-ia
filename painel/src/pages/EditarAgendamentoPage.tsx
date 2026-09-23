@@ -17,6 +17,7 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
+import { buscarSaldoPorServico } from '../utils/pacoteCliente';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
@@ -221,18 +222,18 @@ export function EditarAgendamentoPage() {
         agendamento.status !== 'CANCELADO';
 
     const pacoteCompativelComServico = useMemo(() => {
-        if (
-            !pacoteAtivo ||
-            pacoteAtivo.status !== 'ATIVO' ||
-            pacoteAtivo.quantidadeRestante <= 0
-        ) {
-            return false;
-        }
-
-        return pacoteAtivo.pacote.servicos.some(
-            (item) => item.servicoId === servicoId,
+        const saldo = buscarSaldoPorServico(pacoteAtivo, servicoId);
+        return (
+            pacoteAtivo?.status === 'ATIVO' &&
+            saldo !== null &&
+            saldo.quantidadeRestante > 0
         );
     }, [pacoteAtivo, servicoId]);
+
+    const saldoServicoSelecionado = useMemo(
+        () => buscarSaldoPorServico(pacoteAtivo, servicoId),
+        [pacoteAtivo, servicoId],
+    );
 
     const handleVincularPacote = async () => {
         if (!id || !pacoteAtivo) {
@@ -380,7 +381,7 @@ export function EditarAgendamentoPage() {
                                                 {pacoteAtivo &&
                                                 pacoteAtivo.id ===
                                                     agendamento.pacoteClienteId
-                                                    ? `${pacoteAtivo.pacote.nome} — ${pacoteAtivo.quantidadeRestante} de ${pacoteAtivo.quantidadeTotal} usos restantes`
+                                                    ? `${pacoteAtivo.pacote.nome} — ${saldoServicoSelecionado?.quantidadeRestante ?? 0} de ${saldoServicoSelecionado?.quantidadeTotal ?? 0} usos de ${saldoServicoSelecionado?.servico.nome ?? 'serviço selecionado'}`
                                                     : 'O uso será debitado do pacote ao concluir o agendamento.'}
                                             </p>
                                             <Button
@@ -404,9 +405,9 @@ export function EditarAgendamentoPage() {
                                             </p>
                                             <p className="mt-1 text-[var(--color-text-secondary)]">
                                                 {pacoteAtivo.pacote.nome} —{' '}
-                                                {pacoteAtivo.quantidadeRestante}{' '}
-                                                de {pacoteAtivo.quantidadeTotal}{' '}
-                                                usos restantes
+                                                {saldoServicoSelecionado
+                                                    ? `${saldoServicoSelecionado.quantidadeRestante} de ${saldoServicoSelecionado.quantidadeTotal} usos de ${saldoServicoSelecionado.servico.nome}`
+                                                    : 'serviço não incluso'}
                                             </p>
                                             {pacoteCompativelComServico ? (
                                                 <Button
@@ -424,7 +425,8 @@ export function EditarAgendamentoPage() {
                                                 </Button>
                                             ) : (
                                                 <p className="mt-2 text-[var(--color-text-secondary)]">
-                                                    {pacoteAtivo.quantidadeRestante <=
+                                                    {!saldoServicoSelecionado ||
+                                                    saldoServicoSelecionado.quantidadeRestante <=
                                                     0
                                                         ? 'Pacote esgotado.'
                                                         : 'O serviço selecionado não está incluso neste pacote.'}
@@ -474,6 +476,13 @@ export function EditarAgendamentoPage() {
                                     ))
                                 )}
                             </select>
+                            {pacoteAtivo && (
+                                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                                    {saldoServicoSelecionado
+                                        ? `${saldoServicoSelecionado.quantidadeRestante} de ${saldoServicoSelecionado.quantidadeTotal} usos de ${saldoServicoSelecionado.servico.nome}`
+                                        : 'Serviço selecionado não está incluso no pacote.'}
+                                </p>
+                            )}
                         </div>
 
                         <div>

@@ -4,6 +4,7 @@ import type { Servico } from './servicos.service';
 export interface PacoteServicoIncluso {
     pacoteId: string;
     servicoId: string;
+    quantidadeTotal: number;
     servico: Servico;
 }
 
@@ -11,7 +12,6 @@ export interface Pacote {
     id: string;
     nome: string;
     duracaoDias: number;
-    quantidade: number;
     createdAt: string;
     servicos: PacoteServicoIncluso[];
 }
@@ -19,8 +19,7 @@ export interface Pacote {
 export interface PacotePayload {
     nome: string;
     duracaoDias: number;
-    quantidade: number;
-    servicoIds: string[];
+    servicos: { servicoId: string; quantidade: number }[];
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {

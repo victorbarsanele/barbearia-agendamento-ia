@@ -8,7 +8,10 @@ import {
     type PacoteClienteAtivo,
 } from '../../services/pacoteCliente.service';
 import { listarServicos, type Servico } from '../../services/servicos.service';
-import { filtrarServicosPorPacoteAtivo } from '../../utils/pacoteCliente';
+import {
+    buscarSaldoPorServico,
+    filtrarServicosPorPacoteAtivo,
+} from '../../utils/pacoteCliente';
 import { Checkbox } from '../ui/Checkbox';
 
 const DEBOUNCE_MS = 300;
@@ -112,6 +115,11 @@ export function SeletorClienteServico({
         [pacoteAtivo, pacoteClienteId, servicos],
     );
 
+    const saldoServicoSelecionado = buscarSaldoPorServico(
+        pacoteAtivo,
+        servicoId,
+    );
+
     useEffect(() => {
         if (servicosDisponiveis.length === 0) {
             if (servicoId) {
@@ -182,9 +190,10 @@ export function SeletorClienteServico({
                 </select>
             </div>
 
-            {pacoteAtivo && (
+            {pacoteAtivo && saldoServicoSelecionado && (
                 <Checkbox
                     checked={pacoteClienteId === pacoteAtivo.id}
+                    disabled={saldoServicoSelecionado.quantidadeRestante <= 0}
                     onChange={(checked) =>
                         onPacoteClienteChange(
                             checked ? pacoteAtivo.id : undefined,
@@ -192,7 +201,9 @@ export function SeletorClienteServico({
                     }
                 >
                     Vincular ao pacote ativo deste cliente (
-                    {pacoteAtivo.quantidadeRestante} sessões restantes)
+                    {saldoServicoSelecionado.quantidadeRestante} de{' '}
+                    {saldoServicoSelecionado.quantidadeTotal} usos de{' '}
+                    {saldoServicoSelecionado.servico.nome})
                 </Checkbox>
             )}
         </div>
