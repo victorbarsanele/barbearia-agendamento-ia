@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ServicosMultiSelect } from '../components/ServicosMultiSelect';
+import {
+    PacoteServicosEditor,
+    type PacoteServicoFormRow,
+} from '../components/PacoteServicosEditor';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import {
@@ -13,15 +16,16 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 
 function buildPayload(
     nome: string,
-    quantidade: string,
     duracaoDias: string,
-    servicoIds: string[],
+    linhas: PacoteServicoFormRow[],
 ): PacotePayload {
     return {
         nome: nome.trim(),
-        quantidade: Number(quantidade),
         duracaoDias: Number(duracaoDias),
-        servicoIds,
+        servicos: linhas.map((linha) => ({
+            servicoId: linha.servicoId,
+            quantidade: Number(linha.quantidade),
+        })),
     };
 }
 
@@ -31,9 +35,10 @@ export function EditarPacotePage() {
 
     const [pacote, setPacote] = useState<Pacote | null>(null);
     const [nome, setNome] = useState('');
-    const [quantidade, setQuantidade] = useState('');
     const [duracaoDias, setDuracaoDias] = useState('');
-    const [servicoIds, setServicoIds] = useState<string[]>([]);
+    const [linhas, setLinhas] = useState<PacoteServicoFormRow[]>([
+        { servicoId: '', quantidade: '' },
+    ]);
 
     const [servicos, setServicos] = useState<Servico[]>([]);
     const [carregandoServicos, setCarregandoServicos] = useState(true);
@@ -117,9 +122,13 @@ export function EditarPacotePage() {
 
                 setPacote(response);
                 setNome(response.nome);
-                setQuantidade(String(response.quantidade));
                 setDuracaoDias(String(response.duracaoDias));
-                setServicoIds(response.servicos.map((item) => item.servicoId));
+                setLinhas(
+                    response.servicos.map((item) => ({
+                        servicoId: item.servicoId,
+                        quantidade: String(item.quantidadeTotal),
+                    })),
+                );
             } catch (error) {
                 if (!ativo) {
                     return;
@@ -148,20 +157,11 @@ export function EditarPacotePage() {
         return (
             !!pacote &&
             !!nome.trim() &&
-            !!quantidade.trim() &&
             !!duracaoDias.trim() &&
-            servicoIds.length > 0 &&
+            linhas.length > 0 &&
             !submetendo
         );
-    }, [pacote, nome, quantidade, duracaoDias, servicoIds, submetendo]);
-
-    const handleToggleServico = (servicoId: string) => {
-        setServicoIds((current) =>
-            current.includes(servicoId)
-                ? current.filter((itemId) => itemId !== servicoId)
-                : [...current, servicoId],
-        );
-    };
+    }, [pacote, nome, duracaoDias, linhas, submetendo]);
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -171,16 +171,10 @@ export function EditarPacotePage() {
             return;
         }
 
-        const quantidadeNumero = Number(quantidade);
         const duracaoDiasNumero = Number(duracaoDias);
 
-        if (!nome.trim() || !quantidade.trim() || !duracaoDias.trim()) {
-            setErro('Nome, quantidade e duração são obrigatórios.');
-            return;
-        }
-
-        if (!Number.isInteger(quantidadeNumero) || quantidadeNumero <= 0) {
-            setErro('Quantidade deve ser um número inteiro maior que zero.');
+        if (!nome.trim() || !duracaoDias.trim()) {
+            setErro('Nome e duração são obrigatórios.');
             return;
         }
 
@@ -189,8 +183,30 @@ export function EditarPacotePage() {
             return;
         }
 
-        if (servicoIds.length === 0) {
-            setErro('Selecione ao menos um serviço.');
+        if (linhas.length === 0) {
+            setErro('Adicione ao menos um serviço.');
+            return;
+        }
+
+        if (
+            linhas.some(
+                (linha) =>
+                    !linha.servicoId ||
+                    !Number.isInteger(Number(linha.quantidade)) ||
+                    Number(linha.quantidade) <= 0,
+            )
+        ) {
+            setErro(
+                'Cada serviço deve ter quantidade inteira maior que zero.',
+            );
+            return;
+        }
+
+        if (
+            new Set(linhas.map((linha) => linha.servicoId)).size !==
+            linhas.length
+        ) {
+            setErro('O pacote não pode conter serviço duplicado.');
             return;
         }
 
@@ -201,7 +217,7 @@ export function EditarPacotePage() {
         try {
             await atualizarPacote(
                 id,
-                buildPayload(nome, quantidade, duracaoDias, servicoIds),
+                buildPayload(nome, duracaoDias, linhas),
             );
             setSucesso('Pacote atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -270,27 +286,6 @@ export function EditarPacotePage() {
 
                         <div>
                             <label
-                                htmlFor="quantidade"
-                                className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
-                            >
-                                Quantidade *
-                            </label>
-                            <input
-                                id="quantidade"
-                                type="number"
-                                min={1}
-                                step={1}
-                                value={quantidade}
-                                onChange={(event) =>
-                                    setQuantidade(event.target.value)
-                                }
-                                placeholder="Ex: 4"
-                                className={fieldClassName}
-                            />
-                        </div>
-
-                        <div>
-                            <label
                                 htmlFor="duracaoDias"
                                 className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
                             >
@@ -319,10 +314,10 @@ export function EditarPacotePage() {
                                     Carregando serviços...
                                 </p>
                             ) : (
-                                <ServicosMultiSelect
+                                <PacoteServicosEditor
                                     servicos={servicos}
-                                    selecionados={servicoIds}
-                                    onToggle={handleToggleServico}
+                                    linhas={linhas}
+                                    onChange={setLinhas}
                                     disabled={submetendo}
                                 />
                             )}

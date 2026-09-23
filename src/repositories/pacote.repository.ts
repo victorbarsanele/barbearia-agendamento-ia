@@ -12,16 +12,17 @@ const includeServicos = {
 export async function criar(data: {
     nome: string;
     duracaoDias: number;
-    quantidade: number;
-    servicoIds: string[];
+    servicos: { servicoId: string; quantidade: number }[];
 }): Promise<PacoteComServicos> {
     return prisma.pacote.create({
         data: {
             nome: data.nome,
             duracaoDias: data.duracaoDias,
-            quantidade: data.quantidade,
             servicos: {
-                create: data.servicoIds.map((servicoId) => ({ servicoId })),
+                create: data.servicos.map((servico) => ({
+                    servicoId: servico.servicoId,
+                    quantidadeTotal: servico.quantidade,
+                })),
             },
         },
         include: includeServicos,
@@ -49,8 +50,7 @@ export async function atualizar(
     data: {
         nome: string;
         duracaoDias: number;
-        quantidade: number;
-        servicoIds: string[];
+        servicos: { servicoId: string; quantidade: number }[];
     },
 ): Promise<PacoteComServicos> {
     return prisma.$transaction(async (tx) => {
@@ -61,10 +61,10 @@ export async function atualizar(
             data: {
                 nome: data.nome,
                 duracaoDias: data.duracaoDias,
-                quantidade: data.quantidade,
                 servicos: {
-                    create: data.servicoIds.map((servicoId) => ({
-                        servicoId,
+                    create: data.servicos.map((servico) => ({
+                        servicoId: servico.servicoId,
+                        quantidadeTotal: servico.quantidade,
                     })),
                 },
             },

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ServicosMultiSelect } from '../components/ServicosMultiSelect';
+import {
+    PacoteServicosEditor,
+    type PacoteServicoFormRow,
+} from '../components/PacoteServicosEditor';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { criarPacote, type PacotePayload } from '../services/pacotes.service';
@@ -8,15 +11,16 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 
 function buildPayload(
     nome: string,
-    quantidade: string,
     duracaoDias: string,
-    servicoIds: string[],
+    linhas: PacoteServicoFormRow[],
 ): PacotePayload {
     return {
         nome: nome.trim(),
-        quantidade: Number(quantidade),
         duracaoDias: Number(duracaoDias),
-        servicoIds,
+        servicos: linhas.map((linha) => ({
+            servicoId: linha.servicoId,
+            quantidade: Number(linha.quantidade),
+        })),
     };
 }
 
@@ -24,9 +28,10 @@ export function NovoPacotePage() {
     const navigate = useNavigate();
 
     const [nome, setNome] = useState('');
-    const [quantidade, setQuantidade] = useState('');
     const [duracaoDias, setDuracaoDias] = useState('');
-    const [servicoIds, setServicoIds] = useState<string[]>([]);
+    const [linhas, setLinhas] = useState<PacoteServicoFormRow[]>([
+        { servicoId: '', quantidade: '' },
+    ]);
 
     const [servicos, setServicos] = useState<Servico[]>([]);
     const [carregandoServicos, setCarregandoServicos] = useState(true);
@@ -88,34 +93,19 @@ export function NovoPacotePage() {
     const podeSalvar = useMemo(() => {
         return (
             !!nome.trim() &&
-            !!quantidade.trim() &&
             !!duracaoDias.trim() &&
-            servicoIds.length > 0 &&
+            linhas.length > 0 &&
             !submetendo
         );
-    }, [nome, quantidade, duracaoDias, servicoIds, submetendo]);
-
-    const handleToggleServico = (servicoId: string) => {
-        setServicoIds((current) =>
-            current.includes(servicoId)
-                ? current.filter((id) => id !== servicoId)
-                : [...current, servicoId],
-        );
-    };
+    }, [nome, duracaoDias, linhas, submetendo]);
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
-        const quantidadeNumero = Number(quantidade);
         const duracaoDiasNumero = Number(duracaoDias);
 
-        if (!nome.trim() || !quantidade.trim() || !duracaoDias.trim()) {
-            setErro('Nome, quantidade e duração são obrigatórios.');
-            return;
-        }
-
-        if (!Number.isInteger(quantidadeNumero) || quantidadeNumero <= 0) {
-            setErro('Quantidade deve ser um número inteiro maior que zero.');
+        if (!nome.trim() || !duracaoDias.trim()) {
+            setErro('Nome e duração são obrigatórios.');
             return;
         }
 
@@ -124,8 +114,30 @@ export function NovoPacotePage() {
             return;
         }
 
-        if (servicoIds.length === 0) {
-            setErro('Selecione ao menos um serviço.');
+        if (linhas.length === 0) {
+            setErro('Adicione ao menos um serviço.');
+            return;
+        }
+
+        if (
+            linhas.some(
+                (linha) =>
+                    !linha.servicoId ||
+                    !Number.isInteger(Number(linha.quantidade)) ||
+                    Number(linha.quantidade) <= 0,
+            )
+        ) {
+            setErro(
+                'Cada serviço deve ter quantidade inteira maior que zero.',
+            );
+            return;
+        }
+
+        if (
+            new Set(linhas.map((linha) => linha.servicoId)).size !==
+            linhas.length
+        ) {
+            setErro('O pacote não pode conter serviço duplicado.');
             return;
         }
 
@@ -135,7 +147,7 @@ export function NovoPacotePage() {
 
         try {
             await criarPacote(
-                buildPayload(nome, quantidade, duracaoDias, servicoIds),
+                buildPayload(nome, duracaoDias, linhas),
             );
             setSucesso('Pacote cadastrado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -193,27 +205,6 @@ export function NovoPacotePage() {
 
                     <div>
                         <label
-                            htmlFor="quantidade"
-                            className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
-                        >
-                            Quantidade *
-                        </label>
-                        <input
-                            id="quantidade"
-                            type="number"
-                            min={1}
-                            step={1}
-                            value={quantidade}
-                            onChange={(event) =>
-                                setQuantidade(event.target.value)
-                            }
-                            placeholder="Ex: 4"
-                            className={fieldClassName}
-                        />
-                    </div>
-
-                    <div>
-                        <label
                             htmlFor="duracaoDias"
                             className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
                         >
@@ -242,10 +233,10 @@ export function NovoPacotePage() {
                                 Carregando serviços...
                             </p>
                         ) : (
-                            <ServicosMultiSelect
+                            <PacoteServicosEditor
                                 servicos={servicos}
-                                selecionados={servicoIds}
-                                onToggle={handleToggleServico}
+                                linhas={linhas}
+                                onChange={setLinhas}
                                 disabled={submetendo}
                             />
                         )}

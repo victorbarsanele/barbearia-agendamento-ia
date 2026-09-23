@@ -825,7 +825,7 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
             id: 'pacote-cliente-1',
             status: 'FINALIZADO',
-            quantidadeRestante: 3,
+            servicos: [],
         } as never);
 
         await expect(
@@ -844,11 +844,15 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         expect(agendamentoRepository.criar).not.toHaveBeenCalled();
     });
 
-    it('rejeita quando pacoteCliente está esgotado', async () => {
+    it('rejeita serviço esgotado mesmo com outro serviço ainda disponível', async () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
             id: 'pacote-cliente-1',
             status: 'ATIVO',
-            quantidadeRestante: 0,
+            pacote: { servicos: [{ servicoId: servicoBase.id }] },
+            servicos: [
+                { servicoId: servicoBase.id, quantidadeRestante: 0 },
+                { servicoId: 'outro-servico', quantidadeRestante: 2 },
+            ],
         } as never);
 
         await expect(
@@ -871,10 +875,12 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
             id: 'pacote-cliente-1',
             status: 'ATIVO',
-            quantidadeRestante: 2,
             pacote: {
                 servicos: [{ servicoId: servicoBase.id }],
             },
+            servicos: [
+                { servicoId: servicoBase.id, quantidadeRestante: 2 },
+            ],
         } as never);
         vi.mocked(agendamentoRepository.criar).mockResolvedValue({
             ...agendamentoAtual,
@@ -897,10 +903,10 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
             id: 'pacote-cliente-1',
             status: 'ATIVO',
-            quantidadeRestante: 2,
             pacote: {
                 servicos: [{ servicoId: 'outro-servico' }],
             },
+            servicos: [],
         } as never);
 
         await expect(
@@ -986,7 +992,6 @@ describe('agendamento.service.concluir', () => {
             },
             pacoteCliente: {
                 id: 'pacote-cliente-1',
-                quantidadeRestante: 1,
                 status: 'ATIVO',
             } as never,
         });
@@ -996,6 +1001,7 @@ describe('agendamento.service.concluir', () => {
         expect(agendamentoRepository.concluirComPacote).toHaveBeenCalledWith(
             'agendamento-1',
             'pacote-cliente-1',
+            servicoBase.id,
         );
         expect(resultado).toMatchObject({ concluido: true });
     });
@@ -1029,10 +1035,12 @@ describe('agendamento.service.vincularPacote', () => {
         id: 'pacote-cliente-1',
         clienteId: clienteBase.id,
         status: 'ATIVO',
-        quantidadeRestante: 5,
         pacote: {
             servicos: [{ servicoId: servicoBase.id }],
         },
+        servicos: [
+            { servicoId: servicoBase.id, quantidadeRestante: 5 },
+        ],
     };
 
     it('vincula pacote a agendamento existente sem vínculo prévio', async () => {

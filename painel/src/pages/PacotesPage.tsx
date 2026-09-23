@@ -152,17 +152,19 @@ export function PacotesPage() {
                                     {pacote.nome}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Quantidade: {pacote.quantidade}
-                                </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
                                     Duração: {pacote.duracaoDias} dias
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Serviços:{' '}
-                                    {pacote.servicos
-                                        .map((item) => item.servico.nome)
-                                        .join(', ') || '—'}
+                                    Serviços:
                                 </p>
+                                <ul className="mt-1 space-y-1 text-sm text-[var(--color-text-secondary)]">
+                                    {pacote.servicos.map((item) => (
+                                        <li key={item.servicoId}>
+                                            {item.servico.nome}: {item.quantidadeTotal}{' '}
+                                            uso{item.quantidadeTotal === 1 ? '' : 's'}
+                                        </li>
+                                    ))}
+                                </ul>
                             </div>
 
                             <div className="ml-auto flex gap-2">

@@ -42,13 +42,14 @@ model Cliente {
 }
 
 model Servico {
-  id                        String          @id @default(cuid())
+  id                        String                  @id @default(cuid())
   nome                      String
   duracaoMinutos            Int
-  preco                     Decimal?        @db.Decimal(10, 2)
-  permiteExtensaoFechamento Boolean         @default(false)
+  preco                     Decimal?                @db.Decimal(10, 2)
+  permiteExtensaoFechamento Boolean                 @default(false)
   agendamentos              Agendamento[]
   pacotes                   PacoteServico[]
+  pacotesClientes           PacoteClienteServico[]
   lotes                     LoteAgendamento[]
 
   @@map("servicos")
@@ -100,7 +101,6 @@ model Pacote {
   id          String          @id @default(cuid())
   nome        String
   duracaoDias Int
-  quantidade  Int
   createdAt   DateTime        @default(now()) @db.Timestamptz(3)
   servicos    PacoteServico[]
   clientes    PacoteCliente[]
@@ -108,12 +108,14 @@ model Pacote {
   @@map("pacotes")
 }
 
+// quantidadeTotal e a quantidade "de fabrica" desse servico dentro do pacote.
 model PacoteServico {
-  pacoteId  String
-  servicoId String
+  pacoteId        String
+  servicoId       String
+  quantidadeTotal Int
 
-  pacote    Pacote  @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
-  servico   Servico @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+  pacote          Pacote  @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
+  servico         Servico @relation(fields: [servicoId], references: [id], onDelete: Restrict)
 
   @@id([pacoteId, servicoId])
   @@index([servicoId])
@@ -122,24 +124,40 @@ model PacoteServico {
 
 // Regra de negocio (validar em service/controller, nao no banco):
 // um Cliente so pode ter um PacoteCliente com status ATIVO por vez.
+// Saldo por servico fica em PacoteClienteServico; este modelo nao guarda mais quantidade agregada.
 model PacoteCliente {
-  id                 String              @id @default(cuid())
-  clienteId          String
-  pacoteId           String
-  quantidadeTotal    Int
-  quantidadeRestante Int
-  dataInicio         DateTime            @db.Timestamptz(3)
-  status             StatusPacoteCliente @default(ATIVO)
-  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  id           String                @id @default(cuid())
+  clienteId    String
+  pacoteId     String
+  dataInicio   DateTime              @db.Timestamptz(3)
+  status       StatusPacoteCliente   @default(ATIVO)
+  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
 
-  cliente            Cliente             @relation(fields: [clienteId], references: [id], onDelete: Restrict)
-  pacote             Pacote              @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
-  agendamentos       Agendamento[]
+  cliente      Cliente               @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  pacote       Pacote                @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
+  agendamentos Agendamento[]
+  servicos     PacoteClienteServico[]
 
   @@index([clienteId])
   @@index([pacoteId])
   @@index([clienteId, status])
   @@map("pacotes_clientes")
+}
+
+// Saldo de uso por servico dentro de um PacoteCliente vendido.
+model PacoteClienteServico {
+  id                 String        @id @default(cuid())
+  pacoteClienteId    String
+  servicoId          String
+  quantidadeTotal    Int
+  quantidadeRestante Int
+
+  pacoteCliente      PacoteCliente @relation(fields: [pacoteClienteId], references: [id], onDelete: Cascade)
+  servico            Servico       @relation(fields: [servicoId], references: [id], onDelete: Restrict)
+
+  @@unique([pacoteClienteId, servicoId])
+  @@index([servicoId])
+  @@map("pacotes_clientes_servicos")
 }
 
 model BloqueioHorario {

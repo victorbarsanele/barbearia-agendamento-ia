@@ -5,12 +5,20 @@ export interface PacoteClienteAtivo {
     id: string;
     clienteId: string;
     pacoteId: string;
-    quantidadeTotal: number;
-    quantidadeRestante: number;
     dataInicio: string;
     status: 'ATIVO' | 'FINALIZADO' | 'CANCELADO';
     createdAt: string;
     pacote: Pacote;
+    servicos: PacoteClienteServicoSaldo[];
+}
+
+export interface PacoteClienteServicoSaldo {
+    id: string;
+    pacoteClienteId: string;
+    servicoId: string;
+    quantidadeTotal: number;
+    quantidadeRestante: number;
+    servico: PacoteClienteAtivo['pacote']['servicos'][number]['servico'];
 }
 
 export interface VincularPacotePayload {
