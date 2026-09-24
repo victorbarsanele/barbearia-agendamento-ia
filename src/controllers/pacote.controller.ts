@@ -5,12 +5,14 @@ import * as pacoteService from '../services/pacote.service';
 interface CriarPacoteBody {
     nome: string;
     duracaoDias: number;
+    preco: number;
     servicos: { servicoId: string; quantidade: number }[];
 }
 
 interface AtualizarPacoteBody {
     nome: string;
     duracaoDias: number;
+    preco: number;
     servicos: { servicoId: string; quantidade: number }[];
 }
 

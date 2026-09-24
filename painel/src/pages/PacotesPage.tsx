@@ -9,6 +9,7 @@ import {
     listarPacotes,
     type Pacote,
 } from '../services/pacotes.service';
+import { formatPrecoNumberToInputBR } from '../utils/preco';
 
 export function PacotesPage() {
     const navigate = useNavigate();
@@ -153,6 +154,9 @@ export function PacotesPage() {
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
                                     Duração: {pacote.duracaoDias} dias
+                                </p>
+                                <p className="text-sm text-[var(--color-text-secondary)]">
+                                    Preço: R$ {formatPrecoNumberToInputBR(pacote.preco)}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
                                     Serviços:

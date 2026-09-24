@@ -291,7 +291,7 @@ export function AgendamentoItem({
 
                         <p className="text-sm text-[var(--color-text-secondary)]">
                             Marcar agendamento como concluído? Isso irá
-                            decrementar 1 crédito do pacote de{' '}
+                            descontar 1 crédito do pacote de{' '}
                             <span className="font-semibold text-[var(--color-text-primary)]">
                                 {agendamento.cliente.nome}
                             </span>

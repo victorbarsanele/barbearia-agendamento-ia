@@ -12,6 +12,7 @@ export interface Pacote {
     id: string;
     nome: string;
     duracaoDias: number;
+    preco: string;
     createdAt: string;
     servicos: PacoteServicoIncluso[];
 }
@@ -19,6 +20,7 @@ export interface Pacote {
 export interface PacotePayload {
     nome: string;
     duracaoDias: number;
+    preco: number;
     servicos: { servicoId: string; quantidade: number }[];
 }
 

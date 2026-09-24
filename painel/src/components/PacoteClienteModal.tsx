@@ -9,6 +9,7 @@ import {
 } from '../services/pacoteCliente.service';
 import { Button } from './ui/Button';
 import { ConfirmDialog } from './ConfirmDialog';
+import { formatPrecoNumberToInputBR } from '../utils/preco';
 
 interface PacoteClienteModalProps {
     open: boolean;
@@ -222,6 +223,9 @@ export function PacoteClienteModal({
                             <p className="text-base font-bold text-[var(--color-text-primary)]">
                                 {pacoteAtivo.pacote.nome}
                             </p>
+                            <p className="text-sm text-[var(--color-text-secondary)]">
+                                Preço: R$ {formatPrecoNumberToInputBR(pacoteAtivo.pacote.preco)}
+                            </p>
                             <ul className="mt-2 space-y-1 text-sm font-semibold text-[var(--color-gold)]">
                                 {pacoteAtivo.servicos.map((saldo) => (
                                     <li key={saldo.servicoId}>
@@ -306,7 +310,7 @@ export function PacoteClienteModal({
                                                             .join(', ')}{' '}
                                                         usos,{' '}
                                                         {pacote.duracaoDias}{' '}
-                                                        dias)
+                                                        dias, R$ {formatPrecoNumberToInputBR(pacote.preco)})
                                                     </option>
                                                 ),
                                             )}

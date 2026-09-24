@@ -101,6 +101,7 @@ model Pacote {
   id          String          @id @default(cuid())
   nome        String
   duracaoDias Int
+  preco       Decimal         @default(0) @db.Decimal(10, 2)
   createdAt   DateTime        @default(now()) @db.Timestamptz(3)
   servicos    PacoteServico[]
   clientes    PacoteCliente[]

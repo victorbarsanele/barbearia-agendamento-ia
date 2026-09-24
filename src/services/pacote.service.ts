@@ -73,15 +73,30 @@ async function validarServicos(
     }
 }
 
-function validarDadosPacote(data: { duracaoDias: number }): void {
+function validarDadosPacote(data: {
+    duracaoDias: number;
+    preco: number;
+}): void {
     if (data.duracaoDias <= 0) {
         throw new AppError('A duração do pacote deve ser maior que zero.', 400);
+    }
+
+    if (
+        !Number.isFinite(data.preco) ||
+        data.preco <= 0 ||
+        Number(data.preco.toFixed(2)) !== data.preco
+    ) {
+        throw new AppError(
+            'O preço do pacote deve ser um número positivo com até duas casas decimais.',
+            400,
+        );
     }
 }
 
 export async function criar(data: {
     nome: string;
     duracaoDias: number;
+    preco: number;
     servicos: { servicoId: string; quantidade: number }[];
 }) {
     validarDadosPacote(data);
@@ -108,6 +123,7 @@ export async function atualizar(
     data: {
         nome: string;
         duracaoDias: number;
+        preco: number;
         servicos: { servicoId: string; quantidade: number }[];
     },
 ) {

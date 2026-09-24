@@ -13,15 +13,22 @@ import {
     type PacotePayload,
 } from '../services/pacotes.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
+import {
+    formatPrecoNumberToInputBR,
+    normalizePrecoInputBR,
+    parsePrecoInputBR,
+} from '../utils/preco';
 
 function buildPayload(
     nome: string,
     duracaoDias: string,
+    preco: string,
     linhas: PacoteServicoFormRow[],
 ): PacotePayload {
     return {
         nome: nome.trim(),
         duracaoDias: Number(duracaoDias),
+        preco: parsePrecoInputBR(preco) as number,
         servicos: linhas.map((linha) => ({
             servicoId: linha.servicoId,
             quantidade: Number(linha.quantidade),
@@ -36,6 +43,7 @@ export function EditarPacotePage() {
     const [pacote, setPacote] = useState<Pacote | null>(null);
     const [nome, setNome] = useState('');
     const [duracaoDias, setDuracaoDias] = useState('');
+    const [preco, setPreco] = useState('');
     const [linhas, setLinhas] = useState<PacoteServicoFormRow[]>([
         { servicoId: '', quantidade: '' },
     ]);
@@ -123,6 +131,7 @@ export function EditarPacotePage() {
                 setPacote(response);
                 setNome(response.nome);
                 setDuracaoDias(String(response.duracaoDias));
+                setPreco(formatPrecoNumberToInputBR(response.preco));
                 setLinhas(
                     response.servicos.map((item) => ({
                         servicoId: item.servicoId,
@@ -172,6 +181,7 @@ export function EditarPacotePage() {
         }
 
         const duracaoDiasNumero = Number(duracaoDias);
+        const precoNumero = parsePrecoInputBR(preco);
 
         if (!nome.trim() || !duracaoDias.trim()) {
             setErro('Nome e duração são obrigatórios.');
@@ -180,6 +190,15 @@ export function EditarPacotePage() {
 
         if (!Number.isInteger(duracaoDiasNumero) || duracaoDiasNumero <= 0) {
             setErro('Duração deve ser um número inteiro maior que zero.');
+            return;
+        }
+
+        if (
+            precoNumero === undefined ||
+            !Number.isFinite(precoNumero) ||
+            precoNumero <= 0
+        ) {
+            setErro('Preço deve ser um número positivo.');
             return;
         }
 
@@ -217,7 +236,7 @@ export function EditarPacotePage() {
         try {
             await atualizarPacote(
                 id,
-                buildPayload(nome, duracaoDias, linhas),
+                buildPayload(nome, duracaoDias, preco, linhas),
             );
             setSucesso('Pacote atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -265,6 +284,26 @@ export function EditarPacotePage() {
                         }}
                         className="space-y-5"
                     >
+                        <div>
+                            <label
+                                htmlFor="preco"
+                                className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
+                            >
+                                Preço *
+                            </label>
+                            <input
+                                id="preco"
+                                type="text"
+                                inputMode="decimal"
+                                value={preco}
+                                onChange={(event) =>
+                                    setPreco(normalizePrecoInputBR(event.target.value))
+                                }
+                                placeholder="Ex: 150,00"
+                                className={fieldClassName}
+                            />
+                        </div>
+
                         <div>
                             <label
                                 htmlFor="nome"

@@ -46,6 +46,7 @@ const pacoteBase = {
     id: 'pacote-1',
     nome: 'Pacote 5 cortes',
     duracaoDias: 60,
+    preco: 120,
     createdAt: new Date('2026-07-20T00:00:00Z'),
     servicos: [
         {
@@ -183,6 +184,7 @@ describe('pacote.service.criar', () => {
             pacoteService.criar({
                 nome: 'Pacote inválido',
                 duracaoDias: 30,
+                preco: 100,
                 servicos: [
                     { servicoId: 'servico-inexistente', quantidade: 3 },
                 ],
@@ -206,6 +208,7 @@ describe('pacote.service.criar', () => {
         await pacoteService.criar({
             nome: pacoteBase.nome,
             duracaoDias: pacoteBase.duracaoDias,
+            preco: pacoteBase.preco,
             servicos: [{ servicoId: servicoBase.id, quantidade: 5 }],
         });
 
@@ -223,6 +226,7 @@ describe('pacote.service.criar', () => {
         await pacoteService.criar({
             nome: 'Pacote misto',
             duracaoDias: 30,
+            preco: 150,
             servicos: [
                 { servicoId: 'servico-1', quantidade: 5 },
                 { servicoId: 'servico-2', quantidade: 2 },
@@ -232,10 +236,40 @@ describe('pacote.service.criar', () => {
         expect(pacoteRepository.criar).toHaveBeenCalledWith({
             nome: 'Pacote misto',
             duracaoDias: 30,
+            preco: 150,
             servicos: [
                 { servicoId: 'servico-1', quantidade: 5 },
                 { servicoId: 'servico-2', quantidade: 2 },
             ],
+        });
+    });
+
+    it('rejeita preço negativo', async () => {
+        await expect(
+            pacoteService.criar({
+                nome: 'Pacote inválido',
+                duracaoDias: 30,
+                preco: -1,
+                servicos: [{ servicoId: 'servico-1', quantidade: 1 }],
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'O preço do pacote deve ser um número positivo com até duas casas decimais.',
+            statusCode: 400,
+        });
+    });
+
+    it('rejeita preço com formato inválido', async () => {
+        await expect(
+            pacoteService.criar({
+                nome: 'Pacote inválido',
+                duracaoDias: 30,
+                preco: 10.001,
+                servicos: [{ servicoId: 'servico-1', quantidade: 1 }],
+            }),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            statusCode: 400,
         });
     });
 
@@ -244,6 +278,7 @@ describe('pacote.service.criar', () => {
             pacoteService.criar({
                 nome: 'Pacote duplicado',
                 duracaoDias: 30,
+                preco: 100,
                 servicos: [
                     { servicoId: 'servico-1', quantidade: 5 },
                     { servicoId: 'servico-1', quantidade: 2 },
