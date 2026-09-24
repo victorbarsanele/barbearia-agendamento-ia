@@ -55,7 +55,10 @@ async function validarServicos(
     const ids = new Set<string>();
     for (const item of servicos) {
         if (ids.has(item.servicoId)) {
-            throw new AppError('Pacote não pode conter serviço duplicado.', 400);
+            throw new AppError(
+                'Pacote não pode conter serviço duplicado.',
+                400,
+            );
         }
         ids.add(item.servicoId);
 
@@ -68,7 +71,10 @@ async function validarServicos(
 
         const servico = await servicoRepository.buscarPorId(item.servicoId);
         if (!servico) {
-            throw new AppError(`Serviço não encontrado: ${item.servicoId}.`, 404);
+            throw new AppError(
+                `Serviço não encontrado: ${item.servicoId}.`,
+                404,
+            );
         }
     }
 }

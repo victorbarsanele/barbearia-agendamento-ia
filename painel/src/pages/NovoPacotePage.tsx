@@ -141,9 +141,7 @@ export function NovoPacotePage() {
                     Number(linha.quantidade) <= 0,
             )
         ) {
-            setErro(
-                'Cada serviço deve ter quantidade inteira maior que zero.',
-            );
+            setErro('Cada serviço deve ter quantidade inteira maior que zero.');
             return;
         }
 
@@ -160,9 +158,7 @@ export function NovoPacotePage() {
         setSucesso(null);
 
         try {
-            await criarPacote(
-                buildPayload(nome, duracaoDias, preco, linhas),
-            );
+            await criarPacote(buildPayload(nome, duracaoDias, preco, linhas));
             setSucesso('Pacote cadastrado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
                 navigate('/pacotes');
@@ -213,7 +209,9 @@ export function NovoPacotePage() {
                             inputMode="decimal"
                             value={preco}
                             onChange={(event) =>
-                                setPreco(normalizePrecoInputBR(event.target.value))
+                                setPreco(
+                                    normalizePrecoInputBR(event.target.value),
+                                )
                             }
                             placeholder="Ex: 150,00"
                             className={fieldClassName}

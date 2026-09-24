@@ -156,7 +156,8 @@ export function PacotesPage() {
                                     Duração: {pacote.duracaoDias} dias
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Preço: R$ {formatPrecoNumberToInputBR(pacote.preco)}
+                                    Preço: R${' '}
+                                    {formatPrecoNumberToInputBR(pacote.preco)}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
                                     Serviços:
@@ -164,8 +165,11 @@ export function PacotesPage() {
                                 <ul className="mt-1 space-y-1 text-sm text-[var(--color-text-secondary)]">
                                     {pacote.servicos.map((item) => (
                                         <li key={item.servicoId}>
-                                            {item.servico.nome}: {item.quantidadeTotal}{' '}
-                                            uso{item.quantidadeTotal === 1 ? '' : 's'}
+                                            {item.servico.nome}:{' '}
+                                            {item.quantidadeTotal} uso
+                                            {item.quantidadeTotal === 1
+                                                ? ''
+                                                : 's'}
                                         </li>
                                     ))}
                                 </ul>

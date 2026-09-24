@@ -185,9 +185,7 @@ describe('pacote.service.criar', () => {
                 nome: 'Pacote inválido',
                 duracaoDias: 30,
                 preco: 100,
-                servicos: [
-                    { servicoId: 'servico-inexistente', quantidade: 3 },
-                ],
+                servicos: [{ servicoId: 'servico-inexistente', quantidade: 3 }],
             }),
         ).rejects.toMatchObject({
             name: 'AppError',
@@ -254,7 +252,8 @@ describe('pacote.service.criar', () => {
             }),
         ).rejects.toMatchObject({
             name: 'AppError',
-            message: 'O preço do pacote deve ser um número positivo com até duas casas decimais.',
+            message:
+                'O preço do pacote deve ser um número positivo com até duas casas decimais.',
             statusCode: 400,
         });
     });

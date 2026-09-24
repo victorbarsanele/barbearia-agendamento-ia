@@ -224,7 +224,10 @@ export function PacoteClienteModal({
                                 {pacoteAtivo.pacote.nome}
                             </p>
                             <p className="text-sm text-[var(--color-text-secondary)]">
-                                Preço: R$ {formatPrecoNumberToInputBR(pacoteAtivo.pacote.preco)}
+                                Preço: R${' '}
+                                {formatPrecoNumberToInputBR(
+                                    pacoteAtivo.pacote.preco,
+                                )}
                             </p>
                             <ul className="mt-2 space-y-1 text-sm font-semibold text-[var(--color-gold)]">
                                 {pacoteAtivo.servicos.map((saldo) => (
@@ -310,7 +313,11 @@ export function PacoteClienteModal({
                                                             .join(', ')}{' '}
                                                         usos,{' '}
                                                         {pacote.duracaoDias}{' '}
-                                                        dias, R$ {formatPrecoNumberToInputBR(pacote.preco)})
+                                                        dias, R${' '}
+                                                        {formatPrecoNumberToInputBR(
+                                                            pacote.preco,
+                                                        )}
+                                                        )
                                                     </option>
                                                 ),
                                             )}

@@ -22,17 +22,16 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
             schema: {
                 body: {
                     type: 'object',
-                    required: [
-                        'nome',
-                        'duracaoDias',
-                        'preco',
-                        'servicos',
-                    ],
+                    required: ['nome', 'duracaoDias', 'preco', 'servicos'],
                     additionalProperties: false,
                     properties: {
                         nome: { type: 'string', minLength: 1 },
                         duracaoDias: { type: 'integer', minimum: 1 },
-                        preco: { type: 'number', exclusiveMinimum: 0, multipleOf: 0.01 },
+                        preco: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            multipleOf: 0.01,
+                        },
                         servicos: servicosSchema,
                     },
                 },
@@ -126,17 +125,16 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
                 },
                 body: {
                     type: 'object',
-                    required: [
-                        'nome',
-                        'duracaoDias',
-                        'preco',
-                        'servicos',
-                    ],
+                    required: ['nome', 'duracaoDias', 'preco', 'servicos'],
                     additionalProperties: false,
                     properties: {
                         nome: { type: 'string', minLength: 1 },
                         duracaoDias: { type: 'integer', minimum: 1 },
-                        preco: { type: 'number', exclusiveMinimum: 0, multipleOf: 0.01 },
+                        preco: {
+                            type: 'number',
+                            exclusiveMinimum: 0,
+                            multipleOf: 0.01,
+                        },
                         servicos: servicosSchema,
                     },
                 },

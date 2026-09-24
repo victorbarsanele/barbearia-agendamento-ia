@@ -215,9 +215,7 @@ export function EditarPacotePage() {
                     Number(linha.quantidade) <= 0,
             )
         ) {
-            setErro(
-                'Cada serviço deve ter quantidade inteira maior que zero.',
-            );
+            setErro('Cada serviço deve ter quantidade inteira maior que zero.');
             return;
         }
 
@@ -297,7 +295,11 @@ export function EditarPacotePage() {
                                 inputMode="decimal"
                                 value={preco}
                                 onChange={(event) =>
-                                    setPreco(normalizePrecoInputBR(event.target.value))
+                                    setPreco(
+                                        normalizePrecoInputBR(
+                                            event.target.value,
+                                        ),
+                                    )
                                 }
                                 placeholder="Ex: 150,00"
                                 className={fieldClassName}
