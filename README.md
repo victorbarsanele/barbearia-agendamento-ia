@@ -46,6 +46,8 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Notificação em caso de reagendamento.
 - Escalonamento automático para atendimento humano em casos de confusão, limite de uso da API ou solicitações fora do escopo automatizado (ex.: pacotes de agendamento recorrente).
 
+> **Nota sobre o piloto atual:** o cliente está usando o painel administrativo para cadastro manual de clientes/serviços/agendamentos. A automação via WhatsApp está pronta e coberta por testes, mas ainda não foi conectada ao número real da barbearia.
+
 ### 4. Demonstração
 
 **Agendamento via WhatsApp (IA)**
@@ -144,7 +146,7 @@ Cobertura atual:
 
 ### 8. Status do projeto
 
-MVP validado com um cliente real, em preparação para deploy.
+Sistema totalmente implantado em produção (backend, frontend, banco e WhatsApp). Piloto em andamento com um cliente real: o painel administrativo já está em uso ativo para cadastro de clientes, serviços e agendamentos. A automação via WhatsApp está implementada, testada e aguardando a conexão do número da barbearia para entrar em operação com o cliente.
 
 ### 9. Autor
 
@@ -192,6 +194,8 @@ During appointments, the barber was losing time by manually answering scheduling
 - Schedule conflict prevention during booking.
 - Rescheduling notification flow.
 - Automatic escalation to human support for confusion, API rate limits, or requests outside the automated scope (e.g., recurring booking packages).
+
+> **Note on the current pilot:** the client is currently using the admin dashboard for manual registration of clients, services, and appointments. The WhatsApp automation is fully built and tested, but not yet connected to the barbershop's real number.
 
 ### 4. Demo
 
@@ -291,7 +295,7 @@ Current coverage:
 
 ### 8. Project status
 
-MVP validated with a real client, currently being prepared for deployment.
+System fully deployed to production (backend, frontend, database, and WhatsApp integration). Pilot underway with a real client: the admin dashboard is already in active use for registering clients, services, and appointments. The WhatsApp automation is implemented and tested, pending connection of the barbershop's number to go live with the client.
 
 ### 9. Author
 

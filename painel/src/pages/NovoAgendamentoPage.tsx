@@ -18,6 +18,7 @@ import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
+import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
 import {
     buscarSaldoPorServico,
     filtrarServicosPorPacoteAtivo,
@@ -439,7 +440,7 @@ export function NovoAgendamentoPage() {
             await criarAgendamento(payload);
             setSucesso('Agendamento criado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
-                navigate('/');
+                navigate(getAgendaUrlForAgendamento(payload.dataHoraInicio));
             }, 1200);
         } catch (error) {
             const message =
