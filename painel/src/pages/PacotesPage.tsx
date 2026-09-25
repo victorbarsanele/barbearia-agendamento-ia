@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, CircleX, Package } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SkeletonCard } from '../components/SkeletonCard';
@@ -146,41 +147,76 @@ export function PacotesPage() {
                     {pacotesOrdenados.map((pacote) => (
                         <Card
                             key={pacote.id}
-                            className="flex flex-col gap-3 bg-[var(--color-surface-elevated)]"
+                            className="flex flex-col gap-3 border border-[var(--color-border)] bg-[var(--color-surface-elevated)]"
                         >
-                            <div>
-                                <p className="text-base font-bold text-[var(--color-text-primary)]">
-                                    {pacote.nome}
-                                </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Duração: {pacote.duracaoDias} dias
-                                </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Preço: R${' '}
-                                    {formatPrecoNumberToInputBR(pacote.preco)}
-                                </p>
-                                <p
-                                    className={`text-sm font-medium ${pacote.liberadoParaGemini ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}
+                            <div className="space-y-2">
+                                <div className="relative">
+                                    <p className="min-w-0 pr-14 text-xl font-bold leading-tight text-[var(--color-text-primary)]">
+                                        {pacote.nome}
+                                    </p>
+                                    <span className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-full bg-[var(--color-gold-muted)] text-[var(--color-gold)]">
+                                        <Package size={23} aria-hidden="true" />
+                                    </span>
+                                </div>
+
+                                <div className="flex items-center gap-3 text-base">
+                                    <span className="text-[var(--color-text-secondary)]">
+                                        {pacote.duracaoDias} dias
+                                    </span>
+                                    <span
+                                        className="h-1 w-1 rounded-full bg-[var(--color-text-secondary)]"
+                                        aria-hidden="true"
+                                    />
+                                    <span className="text-xl font-bold text-[var(--color-gold)]">
+                                        R${' '}
+                                        {formatPrecoNumberToInputBR(
+                                            pacote.preco,
+                                        )}
+                                    </span>
+                                </div>
+
+                                <div
+                                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium ${pacote.liberadoParaGemini ? 'bg-[var(--color-success)]/15 text-[var(--color-success)]' : 'bg-[var(--color-border)]/55 text-[var(--color-text-secondary)]'}`}
                                 >
-                                    {pacote.liberadoParaGemini
-                                        ? 'Liberado para sugestão do Gemini'
-                                        : 'Não liberado para sugestão do Gemini'}
-                                </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Serviços:
-                                </p>
-                                <ul className="mt-1 space-y-1 text-sm text-[var(--color-text-secondary)]">
-                                    {pacote.servicos.map((item) => (
-                                        <li key={item.servicoId}>
-                                            {item.servico.nome}:{' '}
-                                            {item.quantidadeTotal} uso
-                                            {item.quantidadeTotal === 1
-                                                ? ''
-                                                : 's'}
-                                        </li>
-                                    ))}
-                                </ul>
+                                    {pacote.liberadoParaGemini ? (
+                                        <CheckCircle2
+                                            size={20}
+                                            aria-hidden="true"
+                                        />
+                                    ) : (
+                                        <CircleX size={20} aria-hidden="true" />
+                                    )}
+                                    <span>
+                                        {pacote.liberadoParaGemini
+                                            ? 'Liberado para sugestão do Gemini'
+                                            : 'Não liberado para sugestão do Gemini'}
+                                    </span>
+                                </div>
+
+                                <div>
+                                    <p className="text-sm font-bold uppercase text-[var(--color-text-secondary)]">
+                                        Consumo por serviço
+                                    </p>
+                                    <ul className="mt-2 flex flex-wrap gap-2">
+                                        {pacote.servicos.map((item) => (
+                                            <li
+                                                key={item.servicoId}
+                                                className="rounded-full border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)]"
+                                            >
+                                                {item.servico.nome}{' '}
+                                                <strong className="font-bold text-[var(--color-text-primary)]">
+                                                    {item.quantidadeTotal} usos
+                                                </strong>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
                             </div>
+
+                            <div
+                                className="border-t border-[var(--color-border)]"
+                                aria-hidden="true"
+                            />
 
                             <div className="ml-auto flex gap-2">
                                 <Button

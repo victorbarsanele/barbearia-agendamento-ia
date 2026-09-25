@@ -295,6 +295,25 @@ export function EditarPacotePage() {
                     >
                         <div>
                             <label
+                                htmlFor="nome"
+                                className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
+                            >
+                                Nome *
+                            </label>
+                            <input
+                                id="nome"
+                                type="text"
+                                value={nome}
+                                onChange={(event) =>
+                                    setNome(event.target.value)
+                                }
+                                placeholder="Nome do pacote"
+                                className={fieldClassName}
+                            />
+                        </div>
+
+                        <div>
+                            <label
                                 htmlFor="preco"
                                 className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
                             >
@@ -313,25 +332,6 @@ export function EditarPacotePage() {
                                     )
                                 }
                                 placeholder="Ex: 150,00"
-                                className={fieldClassName}
-                            />
-                        </div>
-
-                        <div>
-                            <label
-                                htmlFor="nome"
-                                className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
-                            >
-                                Nome *
-                            </label>
-                            <input
-                                id="nome"
-                                type="text"
-                                value={nome}
-                                onChange={(event) =>
-                                    setNome(event.target.value)
-                                }
-                                placeholder="Nome do pacote"
                                 className={fieldClassName}
                             />
                         </div>
