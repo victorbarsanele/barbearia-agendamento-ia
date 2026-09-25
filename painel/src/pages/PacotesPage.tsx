@@ -159,6 +159,13 @@ export function PacotesPage() {
                                     Preço: R${' '}
                                     {formatPrecoNumberToInputBR(pacote.preco)}
                                 </p>
+                                <p
+                                    className={`text-sm font-medium ${pacote.liberadoParaGemini ? 'text-[var(--color-success)]' : 'text-[var(--color-text-secondary)]'}`}
+                                >
+                                    {pacote.liberadoParaGemini
+                                        ? 'Liberado para sugestão do Gemini'
+                                        : 'Não liberado para sugestão do Gemini'}
+                                </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
                                     Serviços:
                                 </p>

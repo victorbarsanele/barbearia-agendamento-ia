@@ -1,6 +1,21 @@
 import { StatusAgendamento } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const geminiMocks = vi.hoisted(() => ({
+    generateContent: vi.fn(),
+}));
+
+vi.mock('@google/genai', () => ({
+    GoogleGenAI: class MockGoogleGenAI {
+        models = {
+            generateContent: geminiMocks.generateContent,
+        };
+    },
+    FunctionCallingConfigMode: {
+        AUTO: 'AUTO',
+    },
+}));
+
 vi.mock('../repositories/agendamento.repository', () => ({
     listarTodos: vi.fn(),
 }));
@@ -22,6 +37,10 @@ vi.mock('../repositories/horarioFuncionamento.repository', () => ({
     listarTodos: vi.fn(),
 }));
 
+vi.mock('../repositories/pacote.repository', () => ({
+    listarLiberadosParaGemini: vi.fn(),
+}));
+
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
@@ -35,8 +54,9 @@ import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
+import * as pacoteRepository from '../repositories/pacote.repository';
 import * as agendamentoService from './agendamento.service';
-import { __testables } from './gemini.service';
+import { __testables, processarMensagemWhatsapp } from './gemini.service';
 
 const clienteBase = {
     id: 'cliente-1',
@@ -820,6 +840,278 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         });
         expect(agendamentoService.atualizar).not.toHaveBeenCalled();
         expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+});
+
+describe('gemini.service tools de pacotes', () => {
+    const remoteJid = '5511999999999@s.whatsapp.net';
+
+    function prepararGemini() {
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        vi.stubEnv('EVOLUTION_API_KEY', 'evolution-test-key');
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                text: vi.fn().mockResolvedValue(''),
+            }),
+        );
+        geminiMocks.generateContent.mockReset();
+        vi.mocked(pacoteRepository.listarLiberadosParaGemini).mockReset();
+    }
+
+    it('consulta pacotes liberados e responde nome, preço e serviços corretos', async () => {
+        prepararGemini();
+        vi.mocked(pacoteRepository.listarLiberadosParaGemini).mockResolvedValue(
+            [
+                {
+                    nome: 'Pacote Completo',
+                    preco: 120,
+                    servicos: [
+                        { nome: 'Corte', quantidade: 2 },
+                        { nome: 'Barba', quantidade: 1 },
+                    ],
+                },
+            ],
+        );
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'consultarPacotesDisponiveis',
+                        args: {},
+                        id: 'call-consultar-pacotes',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Temos o Pacote Completo por R$ 120, com 2 cortes e 1 barba.',
+            });
+
+        await processarMensagemWhatsapp(remoteJid, 'Quais pacotes vocês têm?');
+
+        expect(
+            pacoteRepository.listarLiberadosParaGemini,
+        ).toHaveBeenCalledOnce();
+        expect(geminiMocks.generateContent.mock.calls[1][0].contents).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    parts: expect.arrayContaining([
+                        expect.objectContaining({
+                            functionResponse: expect.objectContaining({
+                                name: 'consultarPacotesDisponiveis',
+                                response: {
+                                    result: [
+                                        {
+                                            nome: 'Pacote Completo',
+                                            preco: 120,
+                                            servicos: [
+                                                {
+                                                    nome: 'Corte',
+                                                    quantidade: 2,
+                                                },
+                                                {
+                                                    nome: 'Barba',
+                                                    quantidade: 1,
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                },
+                            }),
+                        }),
+                    ]),
+                }),
+            ]),
+        );
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                body: expect.stringContaining(
+                    'Pacote Completo por R$ 120, com 2 cortes e 1 barba',
+                ),
+            }),
+        );
+    });
+
+    it('informa ausência de pacotes sem inventar pacote nem manifestar interesse', async () => {
+        prepararGemini();
+        vi.mocked(pacoteRepository.listarLiberadosParaGemini).mockResolvedValue(
+            [],
+        );
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'consultarPacotesDisponiveis',
+                        args: {},
+                        id: 'call-consultar-vazio',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Não há pacotes fixos no momento. O barbeiro pode montar um sob medida.',
+            });
+
+        await processarMensagemWhatsapp(remoteJid, 'Tem algum combo?');
+
+        expect(
+            pacoteRepository.listarLiberadosParaGemini,
+        ).toHaveBeenCalledOnce();
+        expect(geminiMocks.generateContent).toHaveBeenCalledTimes(2);
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                body: expect.stringContaining(
+                    'Não há pacotes fixos no momento',
+                ),
+            }),
+        );
+    });
+
+    it('manifesta combinação personalizada sem calcular preço e escala com motivo correto', async () => {
+        prepararGemini();
+        vi.stubEnv('BARBER_PHONE', '5511888888888');
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'manifestarInteresseEmPacote',
+                        args: {
+                            servicosDesejados: [
+                                { servico: 'Corte', quantidade: 3 },
+                                { servico: 'Barba', quantidade: 2 },
+                            ],
+                        },
+                        id: 'call-interesse-personalizado',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Vou encaminhar seu interesse ao barbeiro para ele montar essa combinação.',
+            });
+
+        await processarMensagemWhatsapp(
+            remoteJid,
+            'Quero 3 cortes e 2 barbas em um pacote personalizado.',
+        );
+
+        expect(geminiMocks.generateContent.mock.calls[1][0].contents).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    parts: expect.arrayContaining([
+                        expect.objectContaining({
+                            functionResponse: expect.objectContaining({
+                                name: 'manifestarInteresseEmPacote',
+                            }),
+                        }),
+                    ]),
+                }),
+            ]),
+        );
+        expect(global.fetch).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                body: expect.stringContaining(
+                    'cliente interessado em pacote de serviços',
+                ),
+            }),
+        );
+        expect(global.fetch).toHaveBeenLastCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                body: expect.not.stringMatching(/R\$\s*\d+/),
+            }),
+        );
+    });
+
+    it('manifesta interesse em pacote fixo pelo nome e escala com motivo correto', async () => {
+        prepararGemini();
+        vi.stubEnv('BARBER_PHONE', '5511888888888');
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'manifestarInteresseEmPacote',
+                        args: { pacoteNome: 'Pacote Completo' },
+                        id: 'call-interesse-fixo',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Vou avisar o barbeiro que você tem interesse no Pacote Completo.',
+            });
+
+        await processarMensagemWhatsapp(
+            '5511999999998@s.whatsapp.net',
+            'Quero fechar o Pacote Completo.',
+        );
+
+        expect(geminiMocks.generateContent.mock.calls[1][0].contents).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    parts: expect.arrayContaining([
+                        expect.objectContaining({
+                            functionResponse: expect.objectContaining({
+                                name: 'manifestarInteresseEmPacote',
+                            }),
+                        }),
+                    ]),
+                }),
+            ]),
+        );
+        expect(global.fetch).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.objectContaining({
+                body: expect.stringContaining(
+                    'cliente interessado em pacote de serviços',
+                ),
+            }),
+        );
+    });
+
+    it('não oferece pacote durante agendamento de corte avulso', async () => {
+        prepararGemini();
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarServicos',
+                        args: {},
+                        id: 'call-servicos',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Qual dia e horário você prefere para o corte?',
+            });
+
+        await processarMensagemWhatsapp(remoteJid, 'Quero agendar um corte.');
+
+        expect(
+            pacoteRepository.listarLiberadosParaGemini,
+        ).not.toHaveBeenCalled();
+        expect(
+            geminiMocks.generateContent.mock.calls.flatMap((call) =>
+                (
+                    call[0].contents as Array<{
+                        parts?: Array<{ functionResponse?: { name?: string } }>;
+                    }>
+                ).flatMap(
+                    (content) =>
+                        content.parts?.flatMap((part) =>
+                            part.functionResponse?.name
+                                ? [part.functionResponse.name]
+                                : [],
+                        ) ?? [],
+                ),
+            ),
+        ).not.toContain('manifestarInteresseEmPacote');
     });
 });
 

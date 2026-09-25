@@ -9,6 +9,7 @@ import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import * as pacoteRepository from '../repositories/pacote.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as agendamentoService from './agendamento.service';
 import {
@@ -56,6 +57,7 @@ function getEscalationCooldownMsPorMotivo(): Record<EscalationMotivo, number> {
         sem_progresso: getEscalationDefaultCooldownMs(),
         limite_de_cota: getEscalationDefaultCooldownMs(),
         agendamento_recorrente: 2 * 60 * 60 * 1000,
+        interesse_pacote: getEscalationDefaultCooldownMs(),
     };
 }
 const CONFUSION_STREAK_LIMIT = 2;
@@ -101,12 +103,21 @@ interface SolicitarAgendamentoRecorrenteArgs {
     duracaoMeses: number;
 }
 
+interface ManifestarInteresseEmPacoteArgs {
+    pacoteNome?: string;
+    servicosDesejados?: Array<{
+        servico: string;
+        quantidade: number;
+    }>;
+}
+
 type EscalationMotivo =
     | 'palavra_chave'
     | 'confusao_explicita'
     | 'sem_progresso'
     | 'limite_de_cota'
-    | 'agendamento_recorrente';
+    | 'agendamento_recorrente'
+    | 'interesse_pacote';
 
 type HistoricoRole = 'user' | 'model';
 
@@ -152,6 +163,17 @@ const BASE_SYSTEM_PROMPT = [
     'Se o cliente pedir para agendar cortes semanais recorrentes por 1 ou 2 meses, confirme explicitamente a intenção antes de agir (ex.: "Confirmando, você gostaria de agendar 1 mês de corte semanal com antecedência, certo?").',
     'Só chame solicitarAgendamentoRecorrente depois que o cliente confirmar explicitamente em uma mensagem separada.',
     'Se o cliente negar o pedido de recorrência, volte ao fluxo normal de agendamento de um único horário.',
+    `## Pacotes de serviço
+
+Se o cliente perguntar sobre pacotes, combos ou promoções, chame consultarPacotesDisponiveis e responda com base no resultado:
+
+- Se houver pacotes na lista: apresente cada um com nome, preço e os serviços inclusos (ex.: 'Temos o Pacote X por R$ 150 — inclui 4 cortes e 2 barbas.'). Depois pergunte se o cliente tem interesse em algum desses ou gostaria de algo diferente.
+- Se a lista vier vazia: informe que não há pacotes fixos no momento, mas que o barbeiro pode montar um sob medida, e pergunte quais serviços o cliente gostaria de incluir.
+- Se o cliente descrever uma combinação de serviços que não corresponde a nenhum pacote da lista: NUNCA calcule, estime ou invente um preço. Chame manifestarInteresseEmPacote com os serviços e quantidades desejados.
+- Se o cliente demonstrar interesse em fechar um pacote fixo já listado: chame manifestarInteresseEmPacote com o nome do pacote.
+- Após chamar manifestarInteresseEmPacote, informe ao cliente que o barbeiro vai dar continuidade. Não prometa nada sobre forma de pagamento, vínculo do pacote ou reserva de horário — isso é feito manualmente pelo barbeiro depois.
+- NUNCA ofereça um pacote sem o cliente ter perguntado primeiro. Não mencione pacotes durante uma conversa sobre outro assunto (ex.: marcar um corte avulso) a menos que o cliente pergunte.
+- Você nunca cria, edita nem vincula um pacote a um cliente. Essa ação é sempre manual, feita pelo barbeiro.`,
 ].join(' ');
 
 function getNowInBrasiliaIso(): string {
@@ -297,6 +319,42 @@ const functionDeclarations: FunctionDeclaration[] = [
                 },
             },
             required: ['duracaoMeses'],
+        },
+    },
+    {
+        name: 'consultarPacotesDisponiveis',
+        description:
+            "Retorna a lista de pacotes de serviços que o barbeiro liberou para serem informados aos clientes, incluindo nome, preço fixo e os serviços inclusos com suas respectivas quantidades. Use esta função SOMENTE quando o cliente perguntar espontaneamente sobre pacotes, combos, promoções ou 'pacotes de serviço'. Nunca chame esta função para oferecer um pacote sem o cliente ter perguntado antes. Esta função não cria, vincula, reserva nem confirma pacote algum — é apenas consulta informativa.",
+        parametersJsonSchema: {
+            type: 'object',
+            properties: {},
+        },
+    },
+    {
+        name: 'manifestarInteresseEmPacote',
+        description:
+            'Registra que o cliente demonstrou interesse em fechar um pacote fixo ou montar uma combinação personalizada e escala o atendimento para o barbeiro. Informe pacoteNome para pacote fixo ou servicosDesejados para combinação personalizada. Não cria nem vincula pacote.',
+        parametersJsonSchema: {
+            type: 'object',
+            properties: {
+                pacoteNome: {
+                    type: 'string',
+                    description: 'Nome do pacote fixo de interesse.',
+                },
+                servicosDesejados: {
+                    type: 'array',
+                    description:
+                        'Serviços e quantidades desejados em combinação personalizada.',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            servico: { type: 'string' },
+                            quantidade: { type: 'number' },
+                        },
+                        required: ['servico', 'quantidade'],
+                    },
+                },
+            },
         },
     },
 ];
@@ -729,7 +787,9 @@ export async function escalarParaHumano(
                     ? 'sistema atingiu limite de uso da API'
                     : motivo === 'agendamento_recorrente'
                       ? 'cliente quer pacote de cortes recorrentes'
-                      : `motivo: ${motivo}`;
+                      : motivo === 'interesse_pacote'
+                        ? 'cliente interessado em pacote de serviços'
+                        : `motivo: ${motivo}`;
 
             await sendWhatsAppText(
                 barberPhone,
@@ -1332,6 +1392,36 @@ async function solicitarAgendamentoRecorrenteTool(
     return { sucesso: true };
 }
 
+async function consultarPacotesDisponiveisTool() {
+    return pacoteRepository.listarLiberadosParaGemini();
+}
+
+async function manifestarInteresseEmPacoteTool(
+    remoteJid: string,
+    args: ManifestarInteresseEmPacoteArgs,
+): Promise<{ sucesso: true }> {
+    const pacoteNome = args.pacoteNome?.trim();
+    const servicosDesejados = args.servicosDesejados?.filter(
+        (item) =>
+            item &&
+            typeof item.servico === 'string' &&
+            item.servico.trim().length > 0 &&
+            Number.isInteger(item.quantidade) &&
+            item.quantidade > 0,
+    );
+
+    if (!pacoteNome && (!servicosDesejados || servicosDesejados.length === 0)) {
+        throw new AppError(
+            'Informe o nome do pacote ou ao menos um serviço desejado.',
+            400,
+        );
+    }
+
+    await escalarParaHumano(remoteJid, 'interesse_pacote');
+
+    return { sucesso: true };
+}
+
 async function executeToolCall(
     call: FunctionCall,
     phone: string,
@@ -1357,6 +1447,38 @@ async function executeToolCall(
             );
         case 'cancelarAgendamento':
             return cancelarAgendamentoTool(phone);
+        case 'consultarPacotesDisponiveis':
+            return consultarPacotesDisponiveisTool();
+        case 'manifestarInteresseEmPacote':
+            try {
+                return await manifestarInteresseEmPacoteTool(
+                    remoteJid,
+                    (call.args ??
+                        {}) as unknown as ManifestarInteresseEmPacoteArgs,
+                );
+            } catch (error) {
+                const message =
+                    error instanceof AppError
+                        ? error.message
+                        : error instanceof Error
+                          ? error.message
+                          : 'Não foi possível manifestar interesse no pacote.';
+
+                console.warn(
+                    '[GEMINI TOOL] manifestarInteresseEmPacote recusado',
+                    {
+                        remoteJid,
+                        args: call.args ?? {},
+                        motivo: message,
+                    },
+                );
+
+                return {
+                    sucesso: false,
+                    mensagem: message,
+                    motivoRecusa: message,
+                };
+            }
         case 'solicitarAgendamentoRecorrente':
             try {
                 return await solicitarAgendamentoRecorrenteTool(

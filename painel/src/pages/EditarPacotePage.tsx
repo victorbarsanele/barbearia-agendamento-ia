@@ -6,6 +6,7 @@ import {
 } from '../components/PacoteServicosEditor';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import {
     atualizarPacote,
     buscarPacotePorId,
@@ -23,12 +24,14 @@ function buildPayload(
     nome: string,
     duracaoDias: string,
     preco: string,
+    liberadoParaGemini: boolean,
     linhas: PacoteServicoFormRow[],
 ): PacotePayload {
     return {
         nome: nome.trim(),
         duracaoDias: Number(duracaoDias),
         preco: parsePrecoInputBR(preco) as number,
+        liberadoParaGemini,
         servicos: linhas.map((linha) => ({
             servicoId: linha.servicoId,
             quantidade: Number(linha.quantidade),
@@ -44,6 +47,7 @@ export function EditarPacotePage() {
     const [nome, setNome] = useState('');
     const [duracaoDias, setDuracaoDias] = useState('');
     const [preco, setPreco] = useState('');
+    const [liberadoParaGemini, setLiberadoParaGemini] = useState(false);
     const [linhas, setLinhas] = useState<PacoteServicoFormRow[]>([
         { servicoId: '', quantidade: '' },
     ]);
@@ -132,6 +136,7 @@ export function EditarPacotePage() {
                 setNome(response.nome);
                 setDuracaoDias(String(response.duracaoDias));
                 setPreco(formatPrecoNumberToInputBR(response.preco));
+                setLiberadoParaGemini(response.liberadoParaGemini);
                 setLinhas(
                     response.servicos.map((item) => ({
                         servicoId: item.servicoId,
@@ -234,7 +239,13 @@ export function EditarPacotePage() {
         try {
             await atualizarPacote(
                 id,
-                buildPayload(nome, duracaoDias, preco, linhas),
+                buildPayload(
+                    nome,
+                    duracaoDias,
+                    preco,
+                    liberadoParaGemini,
+                    linhas,
+                ),
             );
             setSucesso('Pacote atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
@@ -344,6 +355,16 @@ export function EditarPacotePage() {
                                 placeholder="Ex: 30"
                                 className={fieldClassName}
                             />
+                        </div>
+
+                        <div>
+                            <Checkbox
+                                checked={liberadoParaGemini}
+                                onChange={setLiberadoParaGemini}
+                                disabled={submetendo}
+                            >
+                                Liberar sugestão para Gemini
+                            </Checkbox>
                         </div>
 
                         <div>

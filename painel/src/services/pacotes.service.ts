@@ -13,6 +13,7 @@ export interface Pacote {
     nome: string;
     duracaoDias: number;
     preco: string;
+    liberadoParaGemini: boolean;
     createdAt: string;
     servicos: PacoteServicoIncluso[];
 }
@@ -21,6 +22,7 @@ export interface PacotePayload {
     nome: string;
     duracaoDias: number;
     preco: number;
+    liberadoParaGemini: boolean;
     servicos: { servicoId: string; quantidade: number }[];
 }
 

@@ -102,6 +102,7 @@ model Pacote {
   nome        String
   duracaoDias Int
   preco       Decimal         @default(0) @db.Decimal(10, 2)
+  liberadoParaGemini Boolean   @default(false)
   createdAt   DateTime        @default(now()) @db.Timestamptz(3)
   servicos    PacoteServico[]
   clientes    PacoteCliente[]
