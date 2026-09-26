@@ -5,6 +5,7 @@ vi.mock('../repositories/pacote.repository', () => ({
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
     atualizar: vi.fn(),
+    listarLiberadosParaGemini: vi.fn(),
     excluirPorId: vi.fn(),
     contarClientesVinculados: vi.fn(),
 }));
@@ -213,6 +214,38 @@ describe('pacote.service.criar', () => {
         expect(pacoteRepository.criar).toHaveBeenCalled();
     });
 
+    it('persiste liberação para Gemini e usa falso quando omitida', async () => {
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoBase as never,
+        );
+        vi.mocked(pacoteRepository.criar).mockResolvedValue(
+            pacoteBase as never,
+        );
+
+        await pacoteService.criar({
+            nome: 'Pacote liberado',
+            duracaoDias: 30,
+            preco: 100,
+            liberadoParaGemini: true,
+            servicos: [{ servicoId: servicoBase.id, quantidade: 1 }],
+        });
+        await pacoteService.criar({
+            nome: 'Pacote privado',
+            duracaoDias: 30,
+            preco: 100,
+            servicos: [{ servicoId: servicoBase.id, quantidade: 1 }],
+        });
+
+        expect(pacoteRepository.criar).toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({ liberadoParaGemini: true }),
+        );
+        expect(pacoteRepository.criar).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({ liberadoParaGemini: false }),
+        );
+    });
+
     it('aceita múltiplos serviços com quantidades próprias', async () => {
         vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
             servicoBase as never,
@@ -235,6 +268,7 @@ describe('pacote.service.criar', () => {
             nome: 'Pacote misto',
             duracaoDias: 30,
             preco: 150,
+            liberadoParaGemini: false,
             servicos: [
                 { servicoId: 'servico-1', quantidade: 5 },
                 { servicoId: 'servico-2', quantidade: 2 },
@@ -288,6 +322,33 @@ describe('pacote.service.criar', () => {
             message: 'Pacote não pode conter serviço duplicado.',
             statusCode: 400,
         });
+    });
+});
+
+describe('pacote.service.atualizar', () => {
+    it('persiste alteração da liberação para Gemini', async () => {
+        vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
+            pacoteBase as never,
+        );
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoBase as never,
+        );
+        vi.mocked(pacoteRepository.atualizar).mockResolvedValue(
+            pacoteBase as never,
+        );
+
+        await pacoteService.atualizar(pacoteBase.id, {
+            nome: pacoteBase.nome,
+            duracaoDias: pacoteBase.duracaoDias,
+            preco: pacoteBase.preco,
+            liberadoParaGemini: true,
+            servicos: [{ servicoId: servicoBase.id, quantidade: 5 }],
+        });
+
+        expect(pacoteRepository.atualizar).toHaveBeenCalledWith(
+            pacoteBase.id,
+            expect.objectContaining({ liberadoParaGemini: true }),
+        );
     });
 });
 

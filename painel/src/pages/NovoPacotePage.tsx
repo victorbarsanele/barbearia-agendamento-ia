@@ -6,6 +6,7 @@ import {
 } from '../components/PacoteServicosEditor';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import { criarPacote, type PacotePayload } from '../services/pacotes.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { normalizePrecoInputBR, parsePrecoInputBR } from '../utils/preco';
@@ -14,12 +15,14 @@ function buildPayload(
     nome: string,
     duracaoDias: string,
     preco: string,
+    liberadoParaGemini: boolean,
     linhas: PacoteServicoFormRow[],
 ): PacotePayload {
     return {
         nome: nome.trim(),
         duracaoDias: Number(duracaoDias),
         preco: parsePrecoInputBR(preco) as number,
+        liberadoParaGemini,
         servicos: linhas.map((linha) => ({
             servicoId: linha.servicoId,
             quantidade: Number(linha.quantidade),
@@ -33,6 +36,7 @@ export function NovoPacotePage() {
     const [nome, setNome] = useState('');
     const [duracaoDias, setDuracaoDias] = useState('');
     const [preco, setPreco] = useState('');
+    const [liberadoParaGemini, setLiberadoParaGemini] = useState(false);
     const [linhas, setLinhas] = useState<PacoteServicoFormRow[]>([
         { servicoId: '', quantidade: '' },
     ]);
@@ -158,7 +162,15 @@ export function NovoPacotePage() {
         setSucesso(null);
 
         try {
-            await criarPacote(buildPayload(nome, duracaoDias, preco, linhas));
+            await criarPacote(
+                buildPayload(
+                    nome,
+                    duracaoDias,
+                    preco,
+                    liberadoParaGemini,
+                    linhas,
+                ),
+            );
             setSucesso('Pacote cadastrado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
                 navigate('/pacotes');
@@ -198,6 +210,23 @@ export function NovoPacotePage() {
                 >
                     <div>
                         <label
+                            htmlFor="nome"
+                            className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
+                        >
+                            Nome *
+                        </label>
+                        <input
+                            id="nome"
+                            type="text"
+                            value={nome}
+                            onChange={(event) => setNome(event.target.value)}
+                            placeholder="Nome do pacote"
+                            className={fieldClassName}
+                        />
+                    </div>
+
+                    <div>
+                        <label
                             htmlFor="preco"
                             className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
                         >
@@ -214,23 +243,6 @@ export function NovoPacotePage() {
                                 )
                             }
                             placeholder="Ex: 150,00"
-                            className={fieldClassName}
-                        />
-                    </div>
-
-                    <div>
-                        <label
-                            htmlFor="nome"
-                            className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
-                        >
-                            Nome *
-                        </label>
-                        <input
-                            id="nome"
-                            type="text"
-                            value={nome}
-                            onChange={(event) => setNome(event.target.value)}
-                            placeholder="Nome do pacote"
                             className={fieldClassName}
                         />
                     </div>
@@ -254,6 +266,16 @@ export function NovoPacotePage() {
                             placeholder="Ex: 30"
                             className={fieldClassName}
                         />
+                    </div>
+
+                    <div>
+                        <Checkbox
+                            checked={liberadoParaGemini}
+                            onChange={setLiberadoParaGemini}
+                            disabled={submetendo}
+                        >
+                            Liberar sugestão para Gemini
+                        </Checkbox>
                     </div>
 
                     <div>

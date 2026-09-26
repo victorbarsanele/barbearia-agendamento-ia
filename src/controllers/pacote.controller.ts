@@ -6,6 +6,7 @@ interface CriarPacoteBody {
     nome: string;
     duracaoDias: number;
     preco: number;
+    liberadoParaGemini?: boolean;
     servicos: { servicoId: string; quantidade: number }[];
 }
 
@@ -13,6 +14,7 @@ interface AtualizarPacoteBody {
     nome: string;
     duracaoDias: number;
     preco: number;
+    liberadoParaGemini?: boolean;
     servicos: { servicoId: string; quantidade: number }[];
 }
 

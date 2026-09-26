@@ -13,6 +13,7 @@ export async function criar(data: {
     nome: string;
     duracaoDias: number;
     preco: number;
+    liberadoParaGemini: boolean;
     servicos: { servicoId: string; quantidade: number }[];
 }): Promise<PacoteComServicos> {
     return prisma.pacote.create({
@@ -20,6 +21,7 @@ export async function criar(data: {
             nome: data.nome,
             duracaoDias: data.duracaoDias,
             preco: data.preco,
+            liberadoParaGemini: data.liberadoParaGemini,
             servicos: {
                 create: data.servicos.map((servico) => ({
                     servicoId: servico.servicoId,
@@ -53,6 +55,7 @@ export async function atualizar(
         nome: string;
         duracaoDias: number;
         preco: number;
+        liberadoParaGemini: boolean;
         servicos: { servicoId: string; quantidade: number }[];
     },
 ): Promise<PacoteComServicos> {
@@ -65,6 +68,7 @@ export async function atualizar(
                 nome: data.nome,
                 duracaoDias: data.duracaoDias,
                 preco: data.preco,
+                liberadoParaGemini: data.liberadoParaGemini,
                 servicos: {
                     create: data.servicos.map((servico) => ({
                         servicoId: servico.servicoId,
@@ -75,6 +79,38 @@ export async function atualizar(
             include: includeServicos,
         });
     });
+}
+
+export async function listarLiberadosParaGemini(): Promise<
+    {
+        nome: string;
+        preco: number;
+        servicos: { nome: string; quantidade: number }[];
+    }[]
+> {
+    const pacotes = await prisma.pacote.findMany({
+        where: { liberadoParaGemini: true },
+        select: {
+            nome: true,
+            preco: true,
+            servicos: {
+                select: {
+                    quantidadeTotal: true,
+                    servico: { select: { nome: true } },
+                },
+            },
+        },
+        orderBy: { nome: 'asc' },
+    });
+
+    return pacotes.map((pacote) => ({
+        nome: pacote.nome,
+        preco: Number(pacote.preco),
+        servicos: pacote.servicos.map((item) => ({
+            nome: item.servico.nome,
+            quantidade: item.quantidadeTotal,
+        })),
+    }));
 }
 
 export async function excluirPorId(id: string): Promise<void> {

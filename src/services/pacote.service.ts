@@ -103,12 +103,16 @@ export async function criar(data: {
     nome: string;
     duracaoDias: number;
     preco: number;
+    liberadoParaGemini?: boolean;
     servicos: { servicoId: string; quantidade: number }[];
 }) {
     validarDadosPacote(data);
     await validarServicos(data.servicos);
 
-    return pacoteRepository.criar(data);
+    return pacoteRepository.criar({
+        ...data,
+        liberadoParaGemini: data.liberadoParaGemini ?? false,
+    });
 }
 
 export async function listarTodos() {
@@ -130,6 +134,7 @@ export async function atualizar(
         nome: string;
         duracaoDias: number;
         preco: number;
+        liberadoParaGemini?: boolean;
         servicos: { servicoId: string; quantidade: number }[];
     },
 ) {
@@ -141,7 +146,14 @@ export async function atualizar(
     validarDadosPacote(data);
     await validarServicos(data.servicos);
 
-    return pacoteRepository.atualizar(id, data);
+    return pacoteRepository.atualizar(id, {
+        ...data,
+        liberadoParaGemini: data.liberadoParaGemini ?? false,
+    });
+}
+
+export async function listarLiberadosParaGemini() {
+    return pacoteRepository.listarLiberadosParaGemini();
 }
 
 export async function excluirPorId(id: string): Promise<void> {
