@@ -1637,6 +1637,24 @@ export async function sendWhatsAppText(
         return;
     }
 
+    if (process.env.SIMULACAO_WEBHOOK === 'true') {
+        if (process.env.NODE_ENV === 'production') {
+            console.warn(
+                '[GEMINI SERVICE] SIMULACAO_WEBHOOK ignorada em produção.',
+            );
+        } else {
+            console.log(
+                '\n=== [SIMULACAO WEBHOOK] Mensagem que seria enviada ===',
+            );
+            console.log(`Para: ${remoteJid}`);
+            console.log(`Texto:\n${text}`);
+            console.log(
+                '=======================================================\n',
+            );
+            return;
+        }
+    }
+
     const evolutionApiKey = getEvolutionApiKey();
 
     if (!evolutionApiKey) {
