@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, CheckCircle2, Clock, Package } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
+import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
@@ -149,7 +150,7 @@ export function AgendamentoItem({
                 )}
 
                 {(podeEditar || podeCancelar) && (
-                    <div className="flex items-center gap-2 border-t border-white/10 pt-3">
+                    <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                         {podeEditar && (
                             <Button
                                 variant="outline"
@@ -170,6 +171,19 @@ export function AgendamentoItem({
                                 {cancelando ? 'Cancelando...' : 'Cancelar'}
                             </Button>
                         )}
+
+                        {agendamento.status !== 'CANCELADO' &&
+                            formatarNumeroNoPacote(
+                                agendamento.numeroNoPacote,
+                                agendamento.totalServicoNoPacote,
+                            ) && (
+                                <span className="ml-auto shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--color-gold)]">
+                                    {formatarNumeroNoPacote(
+                                        agendamento.numeroNoPacote,
+                                        agendamento.totalServicoNoPacote,
+                                    )}
+                                </span>
+                            )}
                     </div>
                 )}
             </Card>

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../repositories/agendamento.repository', () => ({
     criar: vi.fn(),
+    criarComNumeroNoPacote: vi.fn(),
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
     buscarConflito: vi.fn(),
@@ -15,6 +16,8 @@ vi.mock('../repositories/agendamento.repository', () => ({
     excluirCanceladosPorClienteId: vi.fn(),
     excluirCanceladosPorServicoId: vi.fn(),
     listarSiblingsEditaveisDoLote: vi.fn(),
+    atualizarComNumeroNoPacote: vi.fn(),
+    contarNaoCanceladosPorPacoteEServico: vi.fn(),
 }));
 
 vi.mock('../repositories/loteAgendamento.repository', () => ({
@@ -882,7 +885,7 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
                 { servicoId: servicoBase.id, quantidadeRestante: 2 },
             ],
         } as never);
-        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+        vi.mocked(agendamentoRepository.criarComNumeroNoPacote).mockResolvedValue({
             ...agendamentoAtual,
             pacoteClienteId: 'pacote-cliente-1',
         });
@@ -894,8 +897,10 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
             dataHoraInicio: '2026-07-20T10:00:00-03:00',
         });
 
-        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+        expect(agendamentoRepository.criarComNumeroNoPacote).toHaveBeenCalledWith(
             expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
+            'pacote-cliente-1',
+            servicoBase.id,
         );
     });
 
@@ -1388,6 +1393,44 @@ describe('agendamento.service.criarLote', () => {
 });
 
 describe('agendamento.service.simularLote', () => {
+    it('transforma slots além das vagas do pacote em conflitos', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            pacote: { servicos: [{ servicoId: servicoBase.id }] },
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeTotal: 4,
+                    quantidadeRestante: 4,
+                },
+            ],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.contarNaoCanceladosPorPacoteEServico,
+        ).mockResolvedValue(3);
+
+        const resultado = await agendamentoService.simularLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteClienteId: 'pacote-cliente-1',
+            slots: [
+                { data: '2026-07-21', horario: '10:00' },
+                { data: '2026-07-21', horario: '11:00' },
+            ],
+        });
+
+        expect(resultado.disponiveis).toHaveLength(1);
+        expect(resultado.conflitos).toMatchObject([
+            {
+                data: '2026-07-21',
+                horario: '11:00',
+                motivo:
+                    'Todos os 4 usos deste serviço no pacote já estão agendados ou concluídos.',
+            },
+        ]);
+    });
+
     it('retorna slots disponíveis e conflitos sem persistir nada', async () => {
         vi.mocked(agendamentoRepository.buscarConflito)
             .mockResolvedValueOnce(null)

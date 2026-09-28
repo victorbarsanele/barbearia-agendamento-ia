@@ -12,6 +12,8 @@ export interface Agendamento {
     dataHoraFim: string;
     status: StatusAgendamento;
     pacoteClienteId: string | null;
+    numeroNoPacote: number | null;
+    totalServicoNoPacote: number | null;
     loteId: string | null;
     concluido: boolean;
     cliente: {

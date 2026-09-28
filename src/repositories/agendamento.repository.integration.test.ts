@@ -81,6 +81,155 @@ afterEach(async () => {
 });
 
 describe('agendamento.repository integração concorrência', () => {
+    async function criarPacoteComQuatroUsos() {
+        const pacote = await prisma.pacote.create({
+            data: {
+                nome: `Pacote numeracao ${Date.now()}`,
+                duracaoDias: 30,
+                servicos: {
+                    create: [{ servicoId: entidades.servicoId, quantidadeTotal: 4 }],
+                },
+            },
+        });
+        entidades.pacoteId = pacote.id;
+
+        const pacoteCliente = await prisma.pacoteCliente.create({
+            data: {
+                clienteId: entidades.clienteId,
+                pacoteId: pacote.id,
+                dataInicio: new Date(),
+                servicos: {
+                    create: [
+                        {
+                            servicoId: entidades.servicoId,
+                            quantidadeTotal: 4,
+                            quantidadeRestante: 4,
+                        },
+                    ],
+                },
+            },
+        });
+        entidades.pacoteClienteId = pacoteCliente.id;
+        return pacoteCliente;
+    }
+
+    it('atribui números distintos em concorrência, reaproveita cancelado e mantém remarcação', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        const criar = (inicio: string) =>
+            agendamentoRepository.criarComNumeroNoPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date(inicio),
+                    dataHoraFim: new Date(
+                        new Date(inicio).getTime() + 30 * 60 * 1000,
+                    ),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+            );
+
+        const resultados = await Promise.all([
+            criar('2026-09-20T13:00:00.000Z'),
+            criar('2026-09-20T14:00:00.000Z'),
+        ]);
+
+        expect(
+            resultados.map((agendamento) => agendamento.numeroNoPacote).sort(),
+        ).toEqual([1, 2]);
+
+        await agendamentoRepository.cancelar(resultados[0].id);
+        const reaproveitado = await criar('2026-09-20T15:00:00.000Z');
+        expect(reaproveitado.numeroNoPacote).toBe(1);
+
+        const remarcado = await agendamentoRepository.atualizarComNumeroNoPacote(
+            resultados[1].id,
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: pacoteCliente.id,
+                dataHoraInicio: new Date('2026-09-20T16:00:00.000Z'),
+                dataHoraFim: new Date('2026-09-20T16:30:00.000Z'),
+                status: StatusAgendamento.AGENDADO,
+            },
+            pacoteCliente.id,
+            entidades.servicoId,
+            resultados[1].numeroNoPacote ?? null,
+            StatusAgendamento.AGENDADO,
+        );
+        expect(remarcado.numeroNoPacote).toBe(2);
+    });
+
+    it('faz backfill determinístico, preserva cancelado e permite rerun', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        const criar = (
+            inicio: string,
+            status: StatusAgendamento = StatusAgendamento.AGENDADO,
+        ) =>
+            prisma.agendamento.create({
+                data: {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date(inicio),
+                    dataHoraFim: new Date(
+                        new Date(inicio).getTime() + 30 * 60 * 1000,
+                    ),
+                    status,
+                },
+            });
+
+        await criar('2026-09-24T17:30:00.000Z');
+        await criar('2026-10-01T18:00:00.000Z');
+        await criar('2026-10-08T18:00:00.000Z', StatusAgendamento.CANCELADO);
+
+        const executarBackfill = () =>
+            prisma.$executeRaw`
+                WITH numerados AS (
+                    SELECT id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY "pacoteClienteId", "servicoId"
+                            ORDER BY "dataHoraInicio" ASC, id ASC
+                        )::INTEGER AS numero
+                    FROM "agendamentos"
+                    WHERE "pacoteClienteId" IS NOT NULL
+                      AND status <> 'CANCELADO'
+                )
+                UPDATE "agendamentos" AS a
+                SET "numeroNoPacote" = n.numero
+                FROM numerados AS n
+                WHERE a.id = n.id
+            `;
+
+        await executarBackfill();
+        await executarBackfill();
+
+        const agendamentos = await prisma.agendamento.findMany({
+            where: { pacoteClienteId: pacoteCliente.id },
+            orderBy: { dataHoraInicio: 'asc' },
+            select: { dataHoraInicio: true, status: true, numeroNoPacote: true },
+        });
+
+        expect(agendamentos).toEqual([
+            expect.objectContaining({
+                dataHoraInicio: new Date('2026-09-24T17:30:00.000Z'),
+                status: StatusAgendamento.AGENDADO,
+                numeroNoPacote: 1,
+            }),
+            expect.objectContaining({
+                dataHoraInicio: new Date('2026-10-01T18:00:00.000Z'),
+                status: StatusAgendamento.AGENDADO,
+                numeroNoPacote: 2,
+            }),
+            expect.objectContaining({
+                status: StatusAgendamento.CANCELADO,
+                numeroNoPacote: null,
+            }),
+        ]);
+    });
+
     it('permite apenas um agendamento para mesmo intervalo em criação paralela', async () => {
         const inicio = new Date('2026-08-10T13:00:00.000Z');
         const fim = new Date('2026-08-10T13:30:00.000Z');
