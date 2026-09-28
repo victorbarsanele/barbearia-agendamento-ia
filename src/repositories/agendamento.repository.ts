@@ -7,12 +7,19 @@ import {
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
 
-export type AgendamentoComRelacoes = Prisma.AgendamentoGetPayload<{
+type AgendamentoBase = Prisma.AgendamentoGetPayload<{
     include: {
         cliente: true;
         servico: true;
     };
 }>;
+
+export type AgendamentoComRelacoes = Omit<
+    AgendamentoBase,
+    'numeroNoPacote'
+> & {
+    numeroNoPacote?: number | null;
+};
 
 interface SalvarAgendamentoData {
     clienteId: string;
@@ -29,6 +36,8 @@ interface BuscarConflitoParams {
     dataHoraFim: Date;
     ignorarAgendamentoId?: string;
 }
+
+type Transacao = Prisma.TransactionClient;
 
 const includeRelacoes = {
     cliente: true,
@@ -130,12 +139,118 @@ export async function criar(
     }
 }
 
+async function reservarNumeroNoPacote(
+    tx: Transacao,
+    pacoteClienteId: string,
+    servicoId: string,
+    ignorarAgendamentoId?: string,
+): Promise<number> {
+    const saldos = await tx.$queryRaw<{ quantidadeTotal: number }[]>(
+        Prisma.sql`
+            SELECT "quantidadeTotal"
+            FROM "pacotes_clientes_servicos"
+            WHERE "pacoteClienteId" = ${pacoteClienteId}
+              AND "servicoId" = ${servicoId}
+            FOR UPDATE
+        `,
+    );
+    const saldo = saldos[0];
+
+    if (!saldo) {
+        throw new AppError('Pacote do cliente não encontrado.', 404);
+    }
+
+    const ocupados = await tx.$queryRaw<
+        { numeroNoPacote: number }[]
+    >(Prisma.sql`
+        SELECT "numeroNoPacote"
+        FROM "agendamentos"
+        WHERE "pacoteClienteId" = ${pacoteClienteId}
+          AND "servicoId" = ${servicoId}
+          AND status <> ${StatusAgendamento.CANCELADO}
+          AND "numeroNoPacote" IS NOT NULL
+          ${ignorarAgendamentoId ? Prisma.sql`AND id <> ${ignorarAgendamentoId}` : Prisma.empty}
+    `);
+    const ocupadosSet = new Set(ocupados.map(({ numeroNoPacote }) => numeroNoPacote));
+
+    for (let numero = 1; numero <= saldo.quantidadeTotal; numero += 1) {
+        if (!ocupadosSet.has(numero)) {
+            return numero;
+        }
+    }
+
+    throw new AppError(
+        `Todos os ${saldo.quantidadeTotal} usos deste serviço no pacote já estão agendados ou concluídos.`,
+        400,
+    );
+}
+
+export async function criarComNumeroNoPacote(
+    data: SalvarAgendamentoData,
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await prisma.$transaction(async (tx) => {
+            const numeroNoPacote = await reservarNumeroNoPacote(
+                tx,
+                pacoteClienteId,
+                servicoId,
+            );
+
+            return tx.agendamento.create({
+                data: { ...data, numeroNoPacote },
+                include: includeRelacoes,
+            });
+        });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
+        throw error;
+    }
+}
+
+export async function contarNaoCanceladosPorPacoteEServico(
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<number> {
+    return prisma.agendamento.count({
+        where: {
+            pacoteClienteId,
+            servicoId,
+            status: { not: StatusAgendamento.CANCELADO },
+        },
+    });
+}
+
 export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
     try {
-        return await prisma.agendamento.findMany({
-            include: includeRelacoes,
+        const agendamentos = await prisma.agendamento.findMany({
+            include: {
+                ...includeRelacoes,
+                pacoteCliente: {
+                    select: {
+                        servicos: {
+                            select: {
+                                servicoId: true,
+                                quantidadeTotal: true,
+                            },
+                        },
+                    },
+                },
+            },
             orderBy: { dataHoraInicio: 'asc' },
         });
+
+        return agendamentos.map(({ pacoteCliente, ...agendamento }) => ({
+            ...agendamento,
+            totalServicoNoPacote:
+                pacoteCliente?.servicos.find(
+                    (item) => item.servicoId === agendamento.servicoId,
+                )?.quantidadeTotal ?? null,
+        }));
     } catch (error) {
         throw error;
     }
@@ -193,11 +308,57 @@ export async function atualizar(
     }
 }
 
+export async function atualizarComNumeroNoPacote(
+    id: string,
+    data: SalvarAgendamentoData,
+    pacoteClienteId: string | null,
+    servicoId: string,
+    numeroNoPacoteAtual: number | null,
+    statusAtual: StatusAgendamento,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await prisma.$transaction(async (tx) => {
+            let numeroNoPacote: number | null = null;
+
+            if (pacoteClienteId && data.status !== StatusAgendamento.CANCELADO) {
+                const podeManterNumero =
+                    servicoId === data.servicoId &&
+                    statusAtual !== StatusAgendamento.CANCELADO &&
+                    numeroNoPacoteAtual !== null;
+
+                numeroNoPacote = podeManterNumero
+                    ? numeroNoPacoteAtual
+                    : await reservarNumeroNoPacote(
+                          tx,
+                          pacoteClienteId,
+                          data.servicoId,
+                          id,
+                      );
+            }
+
+            return tx.agendamento.update({
+                where: { id },
+                data: { ...data, numeroNoPacote },
+                include: includeRelacoes,
+            });
+        });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
+        throw error;
+    }
+}
+
 export async function cancelar(id: string): Promise<AgendamentoComRelacoes> {
     try {
         return await prisma.agendamento.update({
             where: { id },
-            data: { status: StatusAgendamento.CANCELADO },
+            data: {
+                status: StatusAgendamento.CANCELADO,
+                numeroNoPacote: null,
+            },
             include: includeRelacoes,
         });
     } catch (error) {
@@ -232,15 +393,40 @@ export async function atualizarPacoteClienteId(
     id: string,
     pacoteClienteId: string | null,
 ): Promise<AgendamentoComRelacoes> {
-    try {
-        return await prisma.agendamento.update({
+    return prisma.$transaction(async (tx) => {
+        const atual = await tx.agendamento.findUnique({
             where: { id },
-            data: { pacoteClienteId },
+            select: {
+                pacoteClienteId: true,
+                servicoId: true,
+                status: true,
+                numeroNoPacote: true,
+            },
+        });
+
+        if (!atual) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+                const numeroNoPacote = pacoteClienteId
+                        ? atual.pacoteClienteId === pacoteClienteId &&
+                            atual.status !== StatusAgendamento.CANCELADO &&
+                            atual.numeroNoPacote !== null
+                                ? atual.numeroNoPacote
+                                : await reservarNumeroNoPacote(
+                                            tx,
+                                            pacoteClienteId,
+                                            atual.servicoId,
+                                            id,
+                                    )
+                        : null;
+
+        return tx.agendamento.update({
+            where: { id },
+            data: { pacoteClienteId, numeroNoPacote },
             include: includeRelacoes,
         });
-    } catch (error) {
-        throw error;
-    }
+    });
 }
 
 export async function contarAtivosPorClienteId(id: string): Promise<number> {

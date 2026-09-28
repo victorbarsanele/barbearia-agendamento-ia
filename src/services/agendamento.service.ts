@@ -386,14 +386,22 @@ export async function criar(data: CriarAgendamentoData) {
             data.origem,
         );
 
-        return await agendamentoRepository.criar({
+        const dados = {
             clienteId: data.clienteId,
             servicoId: data.servicoId,
             pacoteClienteId: data.pacoteClienteId ?? null,
             dataHoraInicio,
             dataHoraFim,
             status: StatusAgendamento.AGENDADO,
-        });
+        };
+
+        return data.pacoteClienteId
+            ? await agendamentoRepository.criarComNumeroNoPacote(
+                  dados,
+                  data.pacoteClienteId,
+                  data.servicoId,
+              )
+            : await agendamentoRepository.criar(dados);
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -409,10 +417,25 @@ export async function simularLote(data: LoteAgendamentoData) {
             data.clienteId,
             data.servicoId,
         );
-        await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
+        const pacoteCliente = await validarPacoteCliente(
+            data.pacoteClienteId,
+            data.servicoId,
+        );
 
         const disponiveis: SlotLote[] = [];
         const conflitos: (SlotLote & { motivo: string })[] = [];
+        const saldoServico = data.pacoteClienteId
+            ? pacoteCliente?.servicos.find(
+                  (item) => item.servicoId === data.servicoId,
+              )
+            : null;
+        let vagasDePacote = saldoServico
+            ? saldoServico.quantidadeTotal -
+              (await agendamentoRepository.contarNaoCanceladosPorPacoteEServico(
+                  data.pacoteClienteId!,
+                  data.servicoId,
+              ))
+            : Number.POSITIVE_INFINITY;
 
         for (const slot of data.slots) {
             try {
@@ -423,7 +446,15 @@ export async function simularLote(data: LoteAgendamentoData) {
                     false,
                     data.origem,
                 );
-                disponiveis.push(slot);
+                if (vagasDePacote > 0) {
+                    disponiveis.push(slot);
+                    vagasDePacote -= 1;
+                } else {
+                    conflitos.push({
+                        ...slot,
+                        motivo: `Todos os ${saldoServico?.quantidadeTotal ?? 0} usos deste serviço no pacote já estão agendados ou concluídos.`,
+                    });
+                }
             } catch (error) {
                 const motivo =
                     error instanceof AppError
@@ -477,7 +508,7 @@ export async function criarLote(data: LoteAgendamentoData) {
                         data.origem,
                     );
 
-                const agendamento = await agendamentoRepository.criar({
+                const dados = {
                     clienteId: data.clienteId,
                     servicoId: data.servicoId,
                     pacoteClienteId: data.pacoteClienteId ?? null,
@@ -485,7 +516,14 @@ export async function criarLote(data: LoteAgendamentoData) {
                     dataHoraInicio,
                     dataHoraFim,
                     status: StatusAgendamento.AGENDADO,
-                });
+                };
+                const agendamento = data.pacoteClienteId
+                    ? await agendamentoRepository.criarComNumeroNoPacote(
+                          dados,
+                          data.pacoteClienteId,
+                          data.servicoId,
+                      )
+                    : await agendamentoRepository.criar(dados);
 
                 criados.push({
                     agendamentoId: agendamento.id,
@@ -581,16 +619,35 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             dataHoraInicio.getTime();
         const servicoMudou = agendamentoExistente.servicoId !== data.servicoId;
 
-        const agendamentoAtualizado = await agendamentoRepository.atualizar(
-            id,
-            {
-                clienteId: data.clienteId,
-                servicoId: data.servicoId,
-                dataHoraInicio,
-                dataHoraFim,
-                status: data.status,
-            },
-        );
+        if (
+            agendamentoExistente.pacoteClienteId &&
+            data.status !== StatusAgendamento.CANCELADO &&
+            (servicoMudou ||
+                agendamentoExistente.status === StatusAgendamento.CANCELADO)
+        ) {
+            await validarPacoteCliente(
+                agendamentoExistente.pacoteClienteId,
+                data.servicoId,
+            );
+        }
+
+        const dados = {
+            clienteId: data.clienteId,
+            servicoId: data.servicoId,
+            dataHoraInicio,
+            dataHoraFim,
+            status: data.status,
+        };
+        const agendamentoAtualizado = agendamentoExistente.pacoteClienteId
+            ? await agendamentoRepository.atualizarComNumeroNoPacote(
+                  id,
+                  dados,
+                  agendamentoExistente.pacoteClienteId,
+                  agendamentoExistente.servicoId,
+                  agendamentoExistente.numeroNoPacote ?? null,
+                  agendamentoExistente.status,
+              )
+            : await agendamentoRepository.atualizar(id, dados);
 
         if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
             try {

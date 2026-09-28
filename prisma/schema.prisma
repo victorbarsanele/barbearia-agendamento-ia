@@ -60,6 +60,7 @@ model Agendamento {
   clienteId       String
   servicoId       String
   pacoteClienteId String?
+  numeroNoPacote  Int?
   loteId          String?
   dataHoraInicio  DateTime          @db.Timestamptz(3)
   dataHoraFim     DateTime          @db.Timestamptz(3)
