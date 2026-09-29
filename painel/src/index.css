@@ -2,6 +2,10 @@
 @import 'tailwindcss';
 
 :root {
+    font-family: var(--font-body);
+}
+
+@theme static {
     --color-bg: #0a0a0a;
     --color-surface: #141414;
     --color-surface-elevated: #1e1e1e;
@@ -16,8 +20,6 @@
 
     --font-title: 'Playfair Display', serif;
     --font-body: 'Inter', sans-serif;
-
-    font-family: var(--font-body);
 }
 
 body {
