@@ -131,9 +131,7 @@ export function ServicosPage() {
                 }
             />
 
-            {loading && (
-                <SkeletonCard count={3} heightClassName="min-h-[88px]" />
-            )}
+            {loading && <SkeletonCard count={3} variant="row" />}
 
             {erro && (
                 <div className="mb-4 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">
@@ -167,10 +165,7 @@ export function ServicosPage() {
                                     {servico.nome}
                                 </p>
                                 <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                                    <Clock
-                                        size={14}
-                                        aria-hidden="true"
-                                    />
+                                    <Clock size={14} aria-hidden="true" />
                                     <span>{servico.duracaoMinutos} min</span>
                                     <span aria-hidden="true">·</span>
                                     <span className="text-base font-bold text-[var(--color-gold)]">
