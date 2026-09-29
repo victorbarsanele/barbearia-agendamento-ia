@@ -7,6 +7,7 @@ import { PacoteClienteModal } from '../components/PacoteClienteModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { PageHeader } from '../components/ui/PageHeader';
 import { listarAgendamentos } from '../services/agendamentos.service';
 import {
     excluirCliente,
@@ -166,27 +167,20 @@ export function ClientesPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
-            <header className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                    <h1
-                        className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
+            <PageHeader
+                variant="list"
+                title="Clientes"
+                subtitle="Gerencie os clientes cadastrados."
+                action={
+                    <Button
+                        variant="primary"
+                        className="px-3 text-xs"
+                        onClick={() => navigate('/clientes/novo')}
                     >
-                        Clientes
-                    </h1>
-                    <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Gerencie os clientes cadastrados.
-                    </p>
-                </div>
-
-                <Button
-                    variant="primary"
-                    className="px-3 text-xs"
-                    onClick={() => navigate('/clientes/novo')}
-                >
-                    Novo cliente
-                </Button>
-            </header>
+                        Novo cliente
+                    </Button>
+                }
+            />
 
             <div className="mb-4">
                 <input

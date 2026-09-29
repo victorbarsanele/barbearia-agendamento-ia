@@ -74,9 +74,9 @@ export function PacoteServicosEditor({
                                     <option
                                         key={servico.id}
                                         value={servico.id}
-                                        disabled={
-                                            outrosSelecionados.has(servico.id)
-                                        }
+                                        disabled={outrosSelecionados.has(
+                                            servico.id,
+                                        )}
                                     >
                                         {servico.nome}
                                     </option>
@@ -122,7 +122,7 @@ export function PacoteServicosEditor({
                 variant="ghost"
                 onClick={adicionarLinha}
                 disabled={disabled || linhas.length >= servicos.length}
-                        className="px-3 text-xs"
+                className="px-3 text-xs"
             >
                 <Plus size={16} aria-hidden="true" />
                 Adicionar serviço

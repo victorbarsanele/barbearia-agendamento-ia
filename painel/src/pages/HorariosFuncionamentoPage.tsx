@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
 import { TimeTextInput } from '../components/TimeTextInput';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
     atualizarHorariosFuncionamento,
     listarHorariosFuncionamento,
@@ -55,7 +54,6 @@ function paraPayload(
 }
 
 export function HorariosFuncionamentoPage() {
-    const navigate = useNavigate();
     const [configuracoes, setConfiguracoes] = useState<
         Array<HorarioFuncionamentoPayload | null>
     >([]);
@@ -222,26 +220,12 @@ export function HorariosFuncionamentoPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[700px] bg-[var(--color-bg)] p-4 pb-24 sm:p-6">
-            <header className="mb-6 flex items-center gap-3">
-                <Button
-                    variant="ghost"
-                    aria-label="Voltar"
-                    onClick={() => navigate('/')}
-                >
-                    <ArrowLeft className="h-4 w-4" />
-                </Button>
-                <div>
-                    <h1
-                        className="text-3xl font-bold text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
-                    >
-                        Horário de funcionamento
-                    </h1>
-                    <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                        Configure abertura, fechamento e extensão por dia.
-                    </p>
-                </div>
-            </header>
+            <PageHeader
+                title="Horário de funcionamento"
+                subtitle="Configure abertura, fechamento e extensão por dia."
+                backTo="/"
+                backStyle="icon"
+            />
 
             {loading && <Card>Carregando horários...</Card>}
             {erro && (

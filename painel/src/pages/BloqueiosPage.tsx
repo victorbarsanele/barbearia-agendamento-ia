@@ -6,6 +6,7 @@ import { TimeTextInput } from '../components/TimeTextInput';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
     criarBloqueio,
     excluirBloqueio,
@@ -243,26 +244,20 @@ export function BloqueiosPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
-            <header className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                    <h1
-                        className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
+            <PageHeader
+                variant="list"
+                title="Bloqueios"
+                subtitle="Horários indisponíveis para clientes."
+                action={
+                    <Button
+                        variant="ghost"
+                        className="px-3 text-xs"
+                        onClick={() => navigate('/')}
                     >
-                        Bloqueios
-                    </h1>
-                    <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Horários indisponíveis para clientes.
-                    </p>
-                </div>
-                <Button
-                    variant="ghost"
-                    className="px-3 text-xs"
-                    onClick={() => navigate('/')}
-                >
-                    Voltar
-                </Button>
-            </header>
+                        Voltar
+                    </Button>
+                }
+            />
 
             {!loading && bloqueiosOrdenados.length === 0 && (
                 <Card className="mb-5">

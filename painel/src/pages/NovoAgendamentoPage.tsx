@@ -16,6 +16,7 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { PageHeader } from '../components/ui/PageHeader';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
@@ -456,17 +457,7 @@ export function NovoAgendamentoPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 sm:p-6">
-            <header className="mb-6 flex items-center gap-3">
-                <Button variant="ghost" onClick={() => navigate('/')}>
-                    Voltar
-                </Button>
-                <h1
-                    className="text-3xl font-bold text-[var(--color-gold)]"
-                    style={{ fontFamily: 'var(--font-title)' }}
-                >
-                    Novo agendamento
-                </h1>
-            </header>
+            <PageHeader title="Novo agendamento" backTo="/" />
 
             <Card className="bg-[var(--color-surface-elevated)]">
                 <form
@@ -539,7 +530,8 @@ export function NovoAgendamentoPage() {
                                         {pacoteAtivo.servicos
                                             .filter(
                                                 (saldo) =>
-                                                    saldo.quantidadeRestante > 0,
+                                                    saldo.quantidadeRestante >
+                                                    0,
                                             )
                                             .map(
                                                 (saldo) =>

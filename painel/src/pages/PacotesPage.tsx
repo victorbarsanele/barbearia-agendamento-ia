@@ -5,6 +5,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
     excluirPacote,
     listarPacotes,
@@ -96,27 +97,20 @@ export function PacotesPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
-            <header className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                    <h1
-                        className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
+            <PageHeader
+                variant="list"
+                title="Pacotes"
+                subtitle="Gerencie os pacotes de serviços cadastrados."
+                action={
+                    <Button
+                        variant="primary"
+                        className="min-h-9 px-3 text-xs"
+                        onClick={() => navigate('/pacotes/novo')}
                     >
-                        Pacotes
-                    </h1>
-                    <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Gerencie os pacotes de serviços cadastrados.
-                    </p>
-                </div>
-
-                <Button
-                    variant="primary"
-                    className="min-h-9 px-3 text-xs"
-                    onClick={() => navigate('/pacotes/novo')}
-                >
-                    Novo pacote
-                </Button>
-            </header>
+                        Novo pacote
+                    </Button>
+                }
+            />
 
             {loading && (
                 <SkeletonCard count={3} heightClassName="min-h-[132px]" />

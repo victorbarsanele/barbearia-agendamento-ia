@@ -12,7 +12,7 @@
     --color-border: #2c2b38;
     --color-gold: #e5c07b;
     --color-gold-light: #f3dca7;
-    --color-gold-muted: rgba(229,192,123,0.12);
+    --color-gold-muted: rgba(229, 192, 123, 0.12);
     --color-text-primary: #f2f2f5;
     --color-text-secondary: #9e9ea7;
     --color-danger: #dc2626;
@@ -21,13 +21,13 @@
     --color-surface-inset: #0e0e14;
     --color-gold-dark: #b89758;
     --color-on-gold: #131319;
-    --color-danger-muted: rgba(220,38,38,0.16);
+    --color-danger-muted: rgba(220, 38, 38, 0.16);
     --color-danger-text: #fca5a5;
-    --color-success-muted: rgba(22,163,74,0.16);
+    --color-success-muted: rgba(22, 163, 74, 0.16);
     --radius-card: 1rem;
     --radius-control: 0.75rem;
-    --shadow-card: 0 8px 24px -4px rgba(0,0,0,0.45);
-    --shadow-gold-glow: 0 4px 16px rgba(229,192,123,0.22);
+    --shadow-card: 0 8px 24px -4px rgba(0, 0, 0, 0.45);
+    --shadow-gold-glow: 0 4px 16px rgba(229, 192, 123, 0.22);
 
     --font-title: 'Playfair Display', serif;
     --font-body: 'Inter', sans-serif;

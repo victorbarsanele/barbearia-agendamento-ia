@@ -2,8 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 type IconButtonVariant = 'ghost' | 'gold';
 
-interface IconButtonProps
-    extends ButtonHTMLAttributes<HTMLButtonElement> {
+interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     ariaLabel: string;
     children: ReactNode;
     variant?: IconButtonVariant;
