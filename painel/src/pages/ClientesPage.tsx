@@ -181,7 +181,7 @@ export function ClientesPage() {
 
                 <Button
                     variant="primary"
-                    className="min-h-9 px-3 text-xs"
+                    className="px-3 text-xs"
                     onClick={() => navigate('/clientes/novo')}
                 >
                     Novo cliente
@@ -312,7 +312,7 @@ export function ClientesPage() {
                     <Button
                         type="button"
                         variant="ghost"
-                        className="min-h-9 px-3 text-xs"
+                        className="px-3 text-xs"
                         disabled={pagina <= 1}
                         onClick={() =>
                             setPagina((atual) => Math.max(1, atual - 1))
@@ -329,7 +329,7 @@ export function ClientesPage() {
                     <Button
                         type="button"
                         variant="ghost"
-                        className="min-h-9 px-3 text-xs"
+                        className="px-3 text-xs"
                         disabled={pagina >= totalPaginas}
                         onClick={() =>
                             setPagina((atual) =>

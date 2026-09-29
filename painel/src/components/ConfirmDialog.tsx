@@ -50,7 +50,7 @@ export function ConfirmDialog({
                         variant="danger"
                         onClick={onCancel}
                         disabled={loading}
-                        className="min-h-9 px-3 text-sm"
+                        className="px-3 text-sm"
                     >
                         {cancelText}
                     </Button>
@@ -59,7 +59,7 @@ export function ConfirmDialog({
                         variant="danger"
                         onClick={onConfirm}
                         disabled={loading}
-                        className="min-h-9 px-3 text-sm"
+                        className="px-3 text-sm"
                     >
                         {loading ? 'Excluindo...' : confirmText}
                     </Button>

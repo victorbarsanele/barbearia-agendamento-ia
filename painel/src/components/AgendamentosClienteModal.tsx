@@ -8,6 +8,7 @@ import {
 } from '../services/agendamentos.service';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { IconButton } from './ui/IconButton';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 
@@ -217,7 +218,7 @@ export function AgendamentosClienteModal({
                                     <Button
                                         type="button"
                                         variant="ghost"
-                                        className="min-h-8 px-3 text-xs"
+                                        className="px-3 text-xs"
                                         onClick={() =>
                                             handleVerNoPainel(agendamento)
                                         }
@@ -227,7 +228,7 @@ export function AgendamentosClienteModal({
                                     <Button
                                         type="button"
                                         variant="ghost"
-                                        className="min-h-8 px-3 text-xs"
+                                        className="px-3 text-xs"
                                         onClick={() =>
                                             handleEditar(agendamento.id)
                                         }
@@ -242,7 +243,7 @@ export function AgendamentosClienteModal({
                                             <Button
                                                 type="button"
                                                 variant="danger"
-                                                className="min-h-8 px-3 text-xs"
+                                                className="px-3 text-xs"
                                                 disabled={
                                                     removendoId ===
                                                     agendamento.id
@@ -260,7 +261,7 @@ export function AgendamentosClienteModal({
                                             <Button
                                                 type="button"
                                                 variant="ghost"
-                                                className="min-h-8 px-3 text-xs"
+                                                className="px-3 text-xs"
                                                 disabled={
                                                     removendoId ===
                                                     agendamento.id
@@ -278,7 +279,7 @@ export function AgendamentosClienteModal({
                                         <Button
                                             type="button"
                                             variant="danger"
-                                            className="min-h-8 px-3 text-xs"
+                                            className="px-3 text-xs"
                                             disabled={
                                                 removendoId === agendamento.id
                                             }
@@ -315,15 +316,13 @@ export function AgendamentosClienteModal({
                     >
                         {cliente.nome}
                     </h2>
-                    <Button
+                    <IconButton
                         type="button"
-                        variant="ghost"
-                        className="min-h-8 w-8 px-0 text-base leading-none"
                         onClick={onClose}
-                        aria-label="Fechar"
+                        ariaLabel="Fechar"
                     >
                         X
-                    </Button>
+                    </IconButton>
                 </header>
 
                 <div className="max-h-[90vh] space-y-4 overflow-y-auto p-4">

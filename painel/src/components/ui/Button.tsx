@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-type ButtonVariant = 'primary' | 'danger' | 'ghost' | 'outline';
+type ButtonVariant = 'primary' | 'danger' | 'danger-soft' | 'ghost' | 'outline';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     variant?: ButtonVariant;
@@ -12,6 +12,8 @@ function getVariantClasses(variant: ButtonVariant): string {
     switch (variant) {
         case 'danger':
             return 'bg-[var(--color-danger)] text-white hover:brightness-110 active:scale-95';
+        case 'danger-soft':
+            return 'border border-[rgba(220,38,38,0.25)] bg-[var(--color-danger-muted)] text-[var(--color-danger-text)] hover:brightness-110 active:scale-95';
         case 'outline':
             return 'border border-[var(--color-gold)]/80 bg-transparent text-[var(--color-gold)] hover:border-[var(--color-gold)] hover:bg-[var(--color-gold-muted)] hover:text-[var(--color-gold-light)] active:scale-95';
         case 'ghost':
@@ -31,7 +33,7 @@ export function Button({
     ...props
 }: ButtonProps) {
     const baseClasses =
-        'inline-flex min-h-10 touch-manipulation items-center justify-center rounded-[8px] px-3.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100 disabled:hover:brightness-100';
+        'inline-flex min-h-11 touch-manipulation items-center justify-center rounded-[8px] px-3.5 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100 disabled:hover:brightness-100';
 
     const widthClass = fullWidth ? 'w-full' : 'w-fit';
 

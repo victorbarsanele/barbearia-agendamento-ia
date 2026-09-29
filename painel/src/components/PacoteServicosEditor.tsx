@@ -122,7 +122,7 @@ export function PacoteServicosEditor({
                 variant="ghost"
                 onClick={adicionarLinha}
                 disabled={disabled || linhas.length >= servicos.length}
-                className="min-h-10 px-3 text-xs"
+                        className="px-3 text-xs"
             >
                 <Plus size={16} aria-hidden="true" />
                 Adicionar serviço

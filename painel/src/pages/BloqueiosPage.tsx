@@ -257,7 +257,7 @@ export function BloqueiosPage() {
                 </div>
                 <Button
                     variant="ghost"
-                    className="min-h-9 px-3 text-xs"
+                    className="px-3 text-xs"
                     onClick={() => navigate('/')}
                 >
                     Voltar
@@ -298,7 +298,7 @@ export function BloqueiosPage() {
                             </div>
                             <Button
                                 variant="danger"
-                                className="min-h-8 px-3 text-xs"
+                                className="px-3 text-xs"
                                 disabled={excluindoId === bloqueio.id}
                                 onClick={() => setPendenteExclusao(bloqueio)}
                             >

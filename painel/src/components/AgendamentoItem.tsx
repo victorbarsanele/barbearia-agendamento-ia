@@ -5,6 +5,7 @@ import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
+import { IconButton } from './ui/IconButton';
 
 interface AgendamentoItemProps {
     agendamento: Agendamento;
@@ -124,16 +125,16 @@ export function AgendamentoItem({
                                     <CheckCircle2 className="absolute -bottom-1 -right-1 h-4 w-4 rounded-full bg-[var(--color-surface-elevated)] text-[var(--color-success)]" />
                                 </span>
                             ) : (
-                                <button
-                                    type="button"
+                                <IconButton
+                                    ariaLabel="Marcar pacote como concluído"
+                                    title="Marcar pacote como concluído"
+                                    variant="gold"
                                     onClick={abrirConfirmacaoConclusao}
                                     disabled={concluindo}
-                                    aria-label="Marcar pacote como concluído"
-                                    title="Marcar pacote como concluído"
-                                    className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--color-gold)]/35 bg-[var(--color-surface-elevated)] text-[var(--color-gold)] transition-transform hover:scale-110 disabled:opacity-60"
+                                    className="rounded-full border-[var(--color-gold)]/35 bg-[var(--color-surface-elevated)] hover:scale-110"
                                 >
                                     <Package className="h-5 w-5" />
-                                </button>
+                                </IconButton>
                             ))}
 
                         <span className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-gold)]/35 bg-[var(--color-surface-elevated)] px-3.5 py-1.5 text-sm font-semibold text-[var(--color-gold)]">
@@ -154,7 +155,7 @@ export function AgendamentoItem({
                         {podeEditar && (
                             <Button
                                 variant="outline"
-                                className="min-h-7 rounded-full px-4 py-1 text-xs font-semibold hover:scale-105"
+                                className="rounded-full px-4 text-xs font-semibold hover:scale-105"
                                 onClick={() => onEditar(agendamento.id)}
                             >
                                 Editar
@@ -164,7 +165,7 @@ export function AgendamentoItem({
                         {podeCancelar && (
                             <Button
                                 variant="danger"
-                                className="min-h-7 rounded-full px-4 py-1 text-xs font-semibold hover:scale-105"
+                                className="rounded-full px-4 text-xs font-semibold hover:scale-105"
                                 onClick={abrirConfirmacao}
                                 disabled={cancelando}
                             >

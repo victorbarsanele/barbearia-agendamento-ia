@@ -246,14 +246,14 @@ export function AgendamentosPage() {
                         <div className="flex items-center gap-2">
                             <Button
                                 variant="outline"
-                                className="min-h-8 rounded-lg px-4 text-xs font-semibold"
+                                className="rounded-lg px-4 text-xs font-semibold"
                                 onClick={() => navigate('/novo')}
                             >
                                 Novo
                             </Button>
                             <Button
                                 variant="outline"
-                                className="min-h-8 rounded-lg px-4 text-xs font-semibold"
+                                className="rounded-lg px-4 text-xs font-semibold"
                                 onClick={() => setLoteModalAberto(true)}
                             >
                                 Lote
@@ -293,7 +293,7 @@ export function AgendamentosPage() {
                     <div className="mt-3 grid grid-cols-[1fr_1.4fr_1fr] gap-2">
                         <button
                             type="button"
-                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleDiaAnterior}
                             aria-label="Dia anterior"
                         >
@@ -301,14 +301,14 @@ export function AgendamentosPage() {
                         </button>
                         <button
                             type="button"
-                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleIrParaHoje}
                         >
                             Hoje
                         </button>
                         <button
                             type="button"
-                            className="flex min-h-9 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleProximoDia}
                             aria-label="Próximo dia"
                         >

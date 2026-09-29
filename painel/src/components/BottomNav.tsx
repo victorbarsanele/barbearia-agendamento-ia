@@ -13,6 +13,7 @@ import {
     LogOut,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { IconButton } from './ui/IconButton';
 
 interface SubNavItem {
     label: string;
@@ -89,14 +90,13 @@ export function BottomNav() {
                         >
                             Mais opções
                         </h2>
-                        <button
-                            type="button"
-                            aria-label="Fechar menu Mais"
+                        <IconButton
+                            ariaLabel="Fechar menu Mais"
                             onClick={() => setMenuAberto(false)}
-                            className="grid h-8 w-8 place-items-center rounded-full border border-[var(--color-border)] text-[var(--color-text-secondary)] transition hover:border-[var(--color-gold)] hover:text-[var(--color-gold)]"
+                            className="rounded-full text-[var(--color-text-secondary)] hover:text-[var(--color-gold)]"
                         >
                             <X className="h-4 w-4" />
-                        </button>
+                        </IconButton>
                     </div>
 
                     <div className="space-y-2">

@@ -517,7 +517,7 @@ export function NovoAgendamentoPage() {
                                     type="button"
                                     variant="ghost"
                                     onClick={limparClienteSelecionado}
-                                    className="min-h-8 shrink-0 px-2.5 text-xs"
+                                    className="shrink-0 px-2.5 text-xs"
                                 >
                                     Trocar
                                 </Button>
