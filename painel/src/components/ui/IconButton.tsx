@@ -1,6 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
-type IconButtonVariant = 'ghost' | 'gold';
+type IconButtonVariant = 'ghost' | 'gold' | 'danger';
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
     ariaLabel: string;
@@ -9,6 +9,10 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 function getVariantClasses(variant: IconButtonVariant): string {
+    if (variant === 'danger') {
+        return 'border border-[rgba(220,38,38,0.25)] bg-transparent text-[var(--color-danger-text)] hover:border-[rgba(220,38,38,0.25)] hover:bg-[var(--color-danger-muted)] active:scale-95';
+    }
+
     if (variant === 'gold') {
         return 'border border-[var(--color-gold)]/80 bg-transparent text-[var(--color-gold)] hover:border-[var(--color-gold)] hover:bg-[var(--color-gold-muted)] hover:text-[var(--color-gold-light)] active:scale-95';
     }
