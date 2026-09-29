@@ -253,7 +253,7 @@ export function ClientesPage() {
                                     className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
                                 >
                                     <Calendar size={16} aria-hidden="true" />
-                                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[#0a0a0a]">
+                                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[var(--color-on-gold)]">
                                         {agendamentosPorCliente[cliente.id] ??
                                             0}
                                     </span>

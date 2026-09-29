@@ -18,7 +18,7 @@ function getVariantClasses(variant: ButtonVariant): string {
             return 'border border-[var(--color-border)] bg-transparent text-[var(--color-text-primary)] hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] active:scale-95';
         case 'primary':
         default:
-            return 'bg-[var(--color-gold)] text-[#0a0a0a] hover:bg-[var(--color-gold-light)] hover:brightness-105 active:scale-95';
+            return 'bg-[var(--color-gold)] text-[var(--color-on-gold)] hover:bg-[var(--color-gold-light)] hover:brightness-105 active:scale-95';
     }
 }
 

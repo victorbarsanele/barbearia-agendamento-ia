@@ -327,7 +327,7 @@ export function AgendamentosPage() {
             )}
 
             {erro && (
-                <div className="mb-4 rounded-[12px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[#fca5a5]">
+                            <div className="mb-4 rounded-[12px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger-text)]">
                     {erro}
                 </div>
             )}
