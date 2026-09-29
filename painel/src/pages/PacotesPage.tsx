@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, CircleX, Package } from 'lucide-react';
+import {
+    CalendarDays,
+    CheckCircle2,
+    CircleX,
+    Package,
+    Trash2,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { IconButton } from '../components/ui/IconButton';
 import { PageHeader } from '../components/ui/PageHeader';
 import {
     excluirPacote,
@@ -104,7 +111,7 @@ export function PacotesPage() {
                 action={
                     <Button
                         variant="primary"
-                        className="min-h-9 px-3 text-xs"
+                        className="px-3 text-xs"
                         onClick={() => navigate('/pacotes/novo')}
                     >
                         Novo pacote
@@ -112,9 +119,7 @@ export function PacotesPage() {
                 }
             />
 
-            {loading && (
-                <SkeletonCard count={3} heightClassName="min-h-[132px]" />
-            )}
+            {loading && <SkeletonCard count={3} variant="pacote" />}
 
             {erro && (
                 <div className="mb-4 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">
@@ -154,6 +159,11 @@ export function PacotesPage() {
                                 </div>
 
                                 <div className="flex items-center gap-3 text-base">
+                                    <CalendarDays
+                                        size={14}
+                                        aria-hidden="true"
+                                        className="text-[var(--color-text-secondary)]"
+                                    />
                                     <span className="text-[var(--color-text-secondary)]">
                                         {pacote.duracaoDias} dias
                                     </span>
@@ -170,15 +180,15 @@ export function PacotesPage() {
                                 </div>
 
                                 <div
-                                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium ${pacote.liberadoParaGemini ? 'bg-[var(--color-success)]/15 text-[var(--color-success)]' : 'bg-[var(--color-border)]/55 text-[var(--color-text-secondary)]'}`}
+                                    className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${pacote.liberadoParaGemini ? 'bg-[var(--color-success-muted)] text-[var(--color-success)]' : 'bg-[color:rgba(255,255,255,0.04)] text-[var(--color-text-secondary)]'}`}
                                 >
                                     {pacote.liberadoParaGemini ? (
                                         <CheckCircle2
-                                            size={20}
+                                            size={14}
                                             aria-hidden="true"
                                         />
                                     ) : (
-                                        <CircleX size={20} aria-hidden="true" />
+                                        <CircleX size={14} aria-hidden="true" />
                                     )}
                                     <span>
                                         {pacote.liberadoParaGemini
@@ -212,30 +222,27 @@ export function PacotesPage() {
                                 aria-hidden="true"
                             />
 
-                            <div className="ml-auto flex gap-2">
+                            <div className="ml-auto flex items-center gap-2">
                                 <Button
                                     type="button"
                                     variant="ghost"
                                     onClick={() =>
                                         navigate(`/pacotes/editar/${pacote.id}`)
                                     }
-                                    className="min-h-8 px-3 text-xs"
+                                    className="px-4 text-sm"
                                 >
                                     Editar
                                 </Button>
-                                <Button
-                                    type="button"
+                                <IconButton
                                     variant="danger"
+                                    ariaLabel={`Excluir pacote ${pacote.nome}`}
                                     onClick={() =>
                                         setPacotePendenteExclusao(pacote)
                                     }
                                     disabled={excluindoId === pacote.id}
-                                    className="min-h-8 px-3 text-xs"
                                 >
-                                    {excluindoId === pacote.id
-                                        ? 'Excluindo...'
-                                        : 'Excluir'}
-                                </Button>
+                                    <Trash2 size={18} aria-hidden="true" />
+                                </IconButton>
                             </div>
                         </Card>
                     ))}

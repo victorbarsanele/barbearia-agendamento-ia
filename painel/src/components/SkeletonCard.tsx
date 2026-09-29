@@ -2,7 +2,7 @@ type SkeletonCardProps = {
     count?: number;
     heightClassName?: string;
     className?: string;
-    variant?: 'default' | 'agendamento' | 'row';
+    variant?: 'default' | 'agendamento' | 'row' | 'pacote';
 };
 
 function SkeletonItem({
@@ -70,6 +70,40 @@ export function SkeletonCard({
                             </div>
 
                             <div className="flex shrink-0 items-center gap-2">
+                                <SkeletonItem heightClassName="h-11 w-[72px]" />
+                                <SkeletonItem heightClassName="h-11 w-11" />
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (variant === 'pacote') {
+        return (
+            <div className={`space-y-3 ${className}`.trim()}>
+                {Array.from({ length: count }, (_, index) => (
+                    <div
+                        key={index}
+                        className="rounded-[12px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.03)] p-4 shadow-[0_14px_35px_rgba(0,0,0,0.16)] sm:p-5"
+                    >
+                        <div className="flex flex-col gap-3">
+                            <div className="space-y-2">
+                                <div className="space-y-2">
+                                    <SkeletonItem heightClassName="h-6 w-3/5" />
+                                    <SkeletonItem heightClassName="h-7 w-2/5" />
+                                </div>
+                                <SkeletonItem heightClassName="h-8 w-56" />
+                                <div>
+                                    <SkeletonItem heightClassName="h-5 w-32" />
+                                    <div className="mt-2 flex gap-2">
+                                        <SkeletonItem heightClassName="h-9 w-32" />
+                                        <SkeletonItem heightClassName="h-9 w-24" />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] pt-3">
                                 <SkeletonItem heightClassName="h-11 w-[72px]" />
                                 <SkeletonItem heightClassName="h-11 w-11" />
                             </div>
