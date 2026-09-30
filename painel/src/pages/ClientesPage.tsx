@@ -194,9 +194,7 @@ export function ClientesPage() {
                 />
             </div>
 
-            {loading && (
-                <SkeletonCard count={4} heightClassName="min-h-[132px]" />
-            )}
+            {loading && <SkeletonCard count={4} variant="cliente" />}
 
             {erro && (
                 <div className="mb-4 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">
