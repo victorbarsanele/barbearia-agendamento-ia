@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, CheckCircle2, Clock, Package } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
 import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
+import { formatarPrecoBRL } from '../utils/preco';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
@@ -108,9 +109,36 @@ export function AgendamentoItem({
                         <p className="truncate text-base font-bold text-[var(--color-text-primary)]">
                             {agendamento.cliente.nome}
                         </p>
-                        <p className="mt-0.5 truncate text-sm text-[var(--color-text-secondary)]">
-                            {agendamento.servico.nome}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                            <span className="text-[var(--color-text-secondary)]">
+                                {agendamento.servico.nome}
+                            </span>
+                            <span
+                                aria-hidden="true"
+                                className="text-[var(--color-text-secondary)]"
+                            >
+                                ·
+                            </span>
+                            <span className="text-[var(--color-text-secondary)]">
+                                {agendamento.servico.duracaoMinutos} min
+                            </span>
+                            {!ehAgendamentoDePacote &&
+                                agendamento.servico.preco && (
+                                    <>
+                                        <span
+                                            aria-hidden="true"
+                                            className="text-[var(--color-text-secondary)]"
+                                        >
+                                            ·
+                                        </span>
+                                        <span className="font-bold text-[var(--color-gold)]">
+                                            {formatarPrecoBRL(
+                                                agendamento.servico.preco,
+                                            )}
+                                        </span>
+                                    </>
+                                )}
+                        </div>
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
@@ -128,6 +156,7 @@ export function AgendamentoItem({
                                 <IconButton
                                     ariaLabel="Marcar pacote como concluído"
                                     title="Marcar pacote como concluído"
+                                    size="sm"
                                     variant="gold"
                                     onClick={abrirConfirmacaoConclusao}
                                     disabled={concluindo}
@@ -154,8 +183,8 @@ export function AgendamentoItem({
                     <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                         {podeEditar && (
                             <Button
-                                variant="outline"
-                                className="rounded-full px-4 text-xs font-semibold hover:scale-105"
+                                variant="ghost"
+                                className="rounded-full px-4 text-sm font-semibold hover:scale-105"
                                 onClick={() => onEditar(agendamento.id)}
                             >
                                 Editar
@@ -164,8 +193,8 @@ export function AgendamentoItem({
 
                         {podeCancelar && (
                             <Button
-                                variant="danger"
-                                className="rounded-full px-4 text-xs font-semibold hover:scale-105"
+                                variant="danger-soft"
+                                className="rounded-full px-4 text-sm font-semibold hover:scale-105"
                                 onClick={abrirConfirmacao}
                                 disabled={cancelando}
                             >
@@ -178,7 +207,7 @@ export function AgendamentoItem({
                                 agendamento.numeroNoPacote,
                                 agendamento.totalServicoNoPacote,
                             ) && (
-                                <span className="ml-auto shrink-0 whitespace-nowrap text-xs font-semibold text-[var(--color-gold)]">
+                                <span className="ml-auto inline-flex w-fit items-center rounded-full bg-[var(--color-gold-muted)] px-2.5 py-1 text-xs font-semibold text-[var(--color-gold)]">
                                     {formatarNumeroNoPacote(
                                         agendamento.numeroNoPacote,
                                         agendamento.totalServicoNoPacote,
@@ -213,7 +242,6 @@ export function AgendamentoItem({
                             </span>
                             ?
                         </p>
-
                         <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
                             <input
                                 type="checkbox"

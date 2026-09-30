@@ -53,3 +53,16 @@ export function formatPrecoNumberToInputBR(value: string | null): string {
 
     return numberValue.toFixed(2).replace('.', ',');
 }
+
+export function formatarPrecoBRL(value: string | null | undefined): string {
+    const numberValue = Number(value);
+
+    if (!Number.isFinite(numberValue)) {
+        return '—';
+    }
+
+    return new Intl.NumberFormat('pt-BR', {
+        style: 'currency',
+        currency: 'BRL',
+    }).format(numberValue);
+}
