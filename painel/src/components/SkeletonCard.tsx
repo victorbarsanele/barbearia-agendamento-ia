@@ -2,7 +2,7 @@ type SkeletonCardProps = {
     count?: number;
     heightClassName?: string;
     className?: string;
-    variant?: 'default' | 'agendamento' | 'row' | 'pacote';
+    variant?: 'default' | 'agendamento' | 'row' | 'pacote' | 'dia';
 };
 
 function SkeletonItem({
@@ -106,6 +106,57 @@ export function SkeletonCard({
                             <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] pt-3">
                                 <SkeletonItem heightClassName="h-11 w-[72px]" />
                                 <SkeletonItem heightClassName="h-11 w-11" />
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (variant === 'dia') {
+        return (
+            <div className={`space-y-3 ${className}`.trim()}>
+                {Array.from({ length: count }, (_, index) => (
+                    <div
+                        key={index}
+                        className="rounded-[12px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.03)] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.18)] sm:p-5"
+                    >
+                        <div>
+                            <div className="mb-4 flex flex-col gap-2">
+                                <SkeletonItem heightClassName="h-4 w-1/3" />
+                                <SkeletonItem heightClassName="h-4 w-1/2" />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <SkeletonItem heightClassName="mb-2 h-4 w-20" />
+                                    <SkeletonItem heightClassName="h-11 w-full" />
+                                </div>
+                                <div>
+                                    <SkeletonItem heightClassName="mb-2 h-4 w-20" />
+                                    <SkeletonItem heightClassName="h-11 w-full" />
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-inset)] p-3">
+                                <SkeletonItem heightClassName="mb-1 h-4 w-32" />
+                                <SkeletonItem heightClassName="mt-4 h-11 w-2/3" />
+                                <div className="mt-3 grid grid-cols-2 gap-3">
+                                    <div>
+                                        <SkeletonItem heightClassName="mb-2 h-4 w-20" />
+                                        <SkeletonItem heightClassName="h-11 w-full" />
+                                    </div>
+                                    <div>
+                                        <SkeletonItem heightClassName="mb-2 h-4 w-20" />
+                                        <SkeletonItem heightClassName="h-11 w-full" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-inset)] p-3">
+                                <SkeletonItem heightClassName="mb-1 h-4 w-40" />
+                                <SkeletonItem heightClassName="mt-4 h-11 w-3/4" />
                             </div>
                         </div>
                     </div>
