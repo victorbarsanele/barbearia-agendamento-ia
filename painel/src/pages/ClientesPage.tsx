@@ -14,6 +14,7 @@ import {
     listarClientesPaginado,
     type Cliente,
 } from '../services/clientes.service';
+import { formatarTelefone } from '../utils/formatarTelefone';
 
 const CLIENTES_POR_PAGINA = 10;
 const DEBOUNCE_BUSCA_MS = 350;
@@ -231,7 +232,7 @@ export function ClientesPage() {
                                     {cliente.nome}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    {cliente.telefone}
+                                    {formatarTelefone(cliente.telefone)}
                                 </p>
                             </div>
 
@@ -244,10 +245,10 @@ export function ClientesPage() {
                                     }
                                     title={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
                                     aria-label={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
-                                    className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Calendar size={16} aria-hidden="true" />
-                                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[var(--color-on-gold)]">
+                                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--color-gold)] px-1 text-xs font-bold leading-none text-[var(--color-on-gold)]">
                                         {agendamentosPorCliente[cliente.id] ??
                                             0}
                                     </span>
@@ -261,7 +262,7 @@ export function ClientesPage() {
                                     }
                                     title="Gerenciar pacote do cliente"
                                     aria-label="Gerenciar pacote do cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Package size={16} aria-hidden="true" />
                                     <span>Pacote</span>
@@ -276,21 +277,21 @@ export function ClientesPage() {
                                     }
                                     title="Editar cliente"
                                     aria-label="Editar cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Pencil size={16} aria-hidden="true" />
                                     <span>Editar</span>
                                 </Button>
                                 <Button
                                     type="button"
-                                    variant="danger"
+                                    variant="danger-soft"
                                     onClick={() =>
                                         setClientePendenteExclusao(cliente)
                                     }
                                     disabled={excluindoId === cliente.id}
                                     title="Excluir cliente"
                                     aria-label="Excluir cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Trash2 size={16} aria-hidden="true" />
                                     <span>Excluir</span>
@@ -331,14 +332,14 @@ export function ClientesPage() {
                             )
                         }
                     >
-                        Proximo
+                        Próximo
                     </Button>
                 </div>
             )}
 
             <ConfirmDialog
                 open={Boolean(clientePendenteExclusao)}
-                title="Confirmar exclusao"
+                title="Confirmar exclusão"
                 description={
                     clientePendenteExclusao
                         ? `Deseja excluir o cliente ${clientePendenteExclusao.nome}?`

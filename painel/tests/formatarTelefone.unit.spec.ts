@@ -10,9 +10,7 @@ test('formata telefone brasileiro fixo com DDI', () => {
 });
 
 test('formata entrada com máscara e símbolos', () => {
-    expect(formatarTelefone('+55 (11) 92370-5328')).toBe(
-        '+55 11 92370-5328',
-    );
+    expect(formatarTelefone('+55 (11) 92370-5328')).toBe('+55 11 92370-5328');
 });
 
 test('mantém número curto inalterado', () => {
