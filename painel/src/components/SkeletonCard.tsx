@@ -2,13 +2,7 @@ type SkeletonCardProps = {
     count?: number;
     heightClassName?: string;
     className?: string;
-    variant?:
-        | 'default'
-        | 'agendamento'
-        | 'row'
-        | 'pacote'
-        | 'dia'
-        | 'bloqueio';
+    variant?: 'default' | 'agendamento' | 'row' | 'pacote' | 'dia' | 'bloqueio';
 };
 
 function SkeletonItem({

@@ -290,7 +290,9 @@ export function BloqueiosPage() {
                                     variant="danger"
                                     ariaLabel={`Excluir bloqueio ${bloqueio.motivo}`}
                                     disabled={excluindoId === bloqueio.id}
-                                    onClick={() => setPendenteExclusao(bloqueio)}
+                                    onClick={() =>
+                                        setPendenteExclusao(bloqueio)
+                                    }
                                 >
                                     <Trash2 className="h-[18px] w-[18px]" />
                                 </IconButton>
