@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Trash2 } from 'lucide-react';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { TimeTextInput } from '../components/TimeTextInput';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { IconButton } from '../components/ui/IconButton';
 import { PageHeader } from '../components/ui/PageHeader';
+import { SkeletonCard } from '../components/SkeletonCard';
 import {
     criarBloqueio,
     excluirBloqueio,
@@ -83,7 +85,6 @@ function minutosParaHora(minutos: number): string {
 }
 
 export function BloqueiosPage() {
-    const navigate = useNavigate();
     const [bloqueios, setBloqueios] = useState<BloqueioHorario[]>([]);
     const [inicio, setInicio] = useState<Date | null>(null);
     const [fim, setFim] = useState<Date | null>(null);
@@ -245,18 +246,11 @@ export function BloqueiosPage() {
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
             <PageHeader
-                variant="list"
+                variant="form"
                 title="Bloqueios"
                 subtitle="Horários indisponíveis para clientes."
-                action={
-                    <Button
-                        variant="ghost"
-                        className="px-3 text-xs"
-                        onClick={() => navigate('/')}
-                    >
-                        Voltar
-                    </Button>
-                }
+                backTo="/"
+                backStyle="icon"
             />
 
             {!loading && bloqueiosOrdenados.length === 0 && (
@@ -273,37 +267,55 @@ export function BloqueiosPage() {
                             key={bloqueio.id}
                             className="flex items-center justify-between gap-3 bg-[var(--color-surface-elevated)]"
                         >
-                            <div>
+                            <div className="min-w-0 flex-1 break-words">
                                 <p className="text-sm font-semibold text-[var(--color-text-primary)]">
                                     {bloqueio.recorrencia === 'SEMANAL'
-                                        ? `Toda ${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][bloqueio.diaSemana ?? 0]} (${String(Math.floor((bloqueio.horaInicioMinutos ?? 0) / 60)).padStart(2, '0')}:${String((bloqueio.horaInicioMinutos ?? 0) % 60).padStart(2, '0')} - ${String(Math.floor((bloqueio.horaFimMinutos ?? 0) / 60)).padStart(2, '0')}:${String((bloqueio.horaFimMinutos ?? 0) % 60).padStart(2, '0')})`
+                                        ? `${bloqueio.diaSemana === 0 || bloqueio.diaSemana === 6 ? 'Todo' : 'Toda'} ${['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][bloqueio.diaSemana ?? 0]} (${String(Math.floor((bloqueio.horaInicioMinutos ?? 0) / 60)).padStart(2, '0')}:${String((bloqueio.horaInicioMinutos ?? 0) % 60).padStart(2, '0')} - ${String(Math.floor((bloqueio.horaFimMinutos ?? 0) / 60)).padStart(2, '0')}:${String((bloqueio.horaFimMinutos ?? 0) % 60).padStart(2, '0')})`
                                         : formatarIntervalo(
                                               bloqueio.dataHoraInicio,
                                               bloqueio.dataHoraFim,
                                           )}
                                 </p>
-                                <p className="mt-1 text-xs text-[var(--color-gold)]">
+                                <p className="mt-1.5 inline-flex w-fit items-center rounded-full bg-[var(--color-gold-muted)] px-2.5 py-1 text-xs font-semibold text-[var(--color-gold)]">
                                     {bloqueio.escopo === 'SO_PAINEL'
                                         ? 'Só painel'
                                         : 'Todos'}
                                 </p>
-                                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                                <p className="mt-1.5 text-sm text-[var(--color-text-secondary)]">
                                     {bloqueio.motivo}
                                 </p>
                             </div>
-                            <Button
-                                variant="danger"
-                                className="px-3 text-xs"
-                                disabled={excluindoId === bloqueio.id}
-                                onClick={() => setPendenteExclusao(bloqueio)}
-                            >
-                                Excluir
-                            </Button>
+                            <div className="shrink-0">
+                                <IconButton
+                                    variant="danger"
+                                    ariaLabel={`Excluir bloqueio ${bloqueio.motivo}`}
+                                    disabled={excluindoId === bloqueio.id}
+                                    onClick={() => setPendenteExclusao(bloqueio)}
+                                >
+                                    <Trash2 className="h-[18px] w-[18px]" />
+                                </IconButton>
+                            </div>
                         </Card>
                     ))}
                 </div>
             )}
 
+            {loading && (
+                <div className="mb-5">
+                    <SkeletonCard count={3} variant="bloqueio" />
+                    <span className="sr-only">Carregando bloqueios...</span>
+                </div>
+            )}
+
+            <div className="mb-3 flex items-center gap-2">
+                <span
+                    aria-hidden
+                    className="h-5 w-1 rounded-full bg-[var(--color-gold)]"
+                />
+                <h2 className="font-title text-lg font-bold text-[var(--color-text-primary)]">
+                    Criar novo bloqueio
+                </h2>
+            </div>
             <Card className="mb-5 bg-[var(--color-surface-elevated)]">
                 <form
                     className="space-y-4"
@@ -530,11 +542,6 @@ export function BloqueiosPage() {
                 <div className="mb-4 rounded-md border border-[var(--color-success)]/40 bg-[var(--color-success)]/10 p-3 text-sm text-[var(--color-success)]">
                     {sucesso}
                 </div>
-            )}
-            {loading && (
-                <p className="text-sm text-[var(--color-text-secondary)]">
-                    Carregando...
-                </p>
             )}
             <ConfirmDialog
                 open={Boolean(pendenteExclusao)}

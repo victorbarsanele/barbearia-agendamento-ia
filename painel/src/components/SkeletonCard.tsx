@@ -2,7 +2,13 @@ type SkeletonCardProps = {
     count?: number;
     heightClassName?: string;
     className?: string;
-    variant?: 'default' | 'agendamento' | 'row' | 'pacote' | 'dia';
+    variant?:
+        | 'default'
+        | 'agendamento'
+        | 'row'
+        | 'pacote'
+        | 'dia'
+        | 'bloqueio';
 };
 
 function SkeletonItem({
@@ -158,6 +164,29 @@ export function SkeletonCard({
                                 <SkeletonItem heightClassName="mb-1 h-4 w-40" />
                                 <SkeletonItem heightClassName="mt-4 h-11 w-3/4" />
                             </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (variant === 'bloqueio') {
+        return (
+            <div className={`space-y-3 ${className}`.trim()}>
+                {Array.from({ length: count }, (_, index) => (
+                    <div
+                        key={index}
+                        className="rounded-[12px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.03)] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.18)] sm:p-5"
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                                <SkeletonItem heightClassName="h-5 w-3/5" />
+                                <SkeletonItem heightClassName="mt-1.5 h-6 w-20" />
+                                <SkeletonItem heightClassName="mt-1.5 h-5 w-2/5" />
+                            </div>
+
+                            <SkeletonItem heightClassName="h-11 w-11 shrink-0" />
                         </div>
                     </div>
                 ))}
