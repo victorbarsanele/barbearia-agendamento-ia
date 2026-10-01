@@ -245,15 +245,15 @@ export function AgendamentosPage() {
 
                         <div className="flex items-center gap-2">
                             <Button
-                                variant="outline"
-                                className="rounded-lg px-4 text-xs font-semibold"
+                                variant="primary"
+                                className="px-4 text-sm font-semibold"
                                 onClick={() => navigate('/novo')}
                             >
                                 Novo
                             </Button>
                             <Button
-                                variant="outline"
-                                className="rounded-lg px-4 text-xs font-semibold"
+                                variant="ghost"
+                                className="px-4 text-sm font-semibold"
                                 onClick={() => setLoteModalAberto(true)}
                             >
                                 Lote
@@ -282,7 +282,7 @@ export function AgendamentosPage() {
                             setCalendarioAberto((current) => !current)
                         }
                         aria-label="Abrir calendário"
-                        className="flex w-full items-center gap-2.5 rounded-[8px] text-left text-sm font-semibold text-[var(--color-text-primary)] transition hover:text-[var(--color-gold)] focus:outline-none"
+                        className="-my-3 flex w-full items-center gap-2.5 rounded-[8px] py-3 text-left text-sm font-semibold text-[var(--color-text-primary)] transition hover:text-[var(--color-gold)] focus:outline-none"
                     >
                         <Calendar className="h-5 w-5 shrink-0 text-[var(--color-gold)] transition-transform hover:scale-110" />
                         <span className="min-w-0 flex-1 truncate">
@@ -293,7 +293,7 @@ export function AgendamentosPage() {
                     <div className="mt-3 grid grid-cols-[1fr_1.4fr_1fr] gap-2">
                         <button
                             type="button"
-                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex min-h-11 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleDiaAnterior}
                             aria-label="Dia anterior"
                         >
@@ -301,14 +301,14 @@ export function AgendamentosPage() {
                         </button>
                         <button
                             type="button"
-                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex min-h-11 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-semibold text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleIrParaHoje}
                         >
                             Hoje
                         </button>
                         <button
                             type="button"
-                            className="flex items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
+                            className="flex min-h-11 items-center justify-center rounded-[10px] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-primary)] transition-all hover:border-[var(--color-gold)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-gold)] active:scale-95"
                             onClick={handleProximoDia}
                             aria-label="Próximo dia"
                         >
