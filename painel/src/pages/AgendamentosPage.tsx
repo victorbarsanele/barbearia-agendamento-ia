@@ -318,13 +318,7 @@ export function AgendamentosPage() {
                 </div>
             </header>
 
-            {loading && (
-                <SkeletonCard
-                    variant="agendamento"
-                    count={4}
-                    heightClassName="min-h-[152px]"
-                />
-            )}
+            {loading && <SkeletonCard count={4} variant="agendamento" />}
 
             {erro && (
                 <div className="mb-4 rounded-[12px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger-text)]">

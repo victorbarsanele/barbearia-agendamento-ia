@@ -38,22 +38,30 @@ export function SkeletonCard({
                 {Array.from({ length: count }, (_, index) => (
                     <div
                         key={index}
-                        className={`rounded-[12px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.03)] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.18)] sm:p-5 ${heightClassName}`.trim()}
+                        className="rounded-[12px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.03)] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.18)] sm:p-5"
                     >
-                        <div className="flex h-full flex-col gap-4">
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1 space-y-3">
-                                    <SkeletonItem heightClassName="h-10 w-24" />
-                                    <SkeletonItem heightClassName="h-5 w-3/4" />
-                                    <SkeletonItem heightClassName="h-4 w-1/2" />
+                        <div className="flex flex-col gap-4">
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                    <SkeletonItem heightClassName="h-6 w-3/5" />
+                                    <SkeletonItem
+                                        heightClassName="h-5 w-2/5"
+                                        className="mt-0"
+                                    />
                                 </div>
 
-                                <SkeletonItem heightClassName="h-7 w-20 rounded-full" />
+                                <div className="flex shrink-0 items-center gap-2">
+                                    <SkeletonItem heightClassName="h-9 w-9" />
+                                    <SkeletonItem heightClassName="h-9 w-[88px]" />
+                                </div>
                             </div>
 
-                            <div className="mt-auto flex gap-2 border-t border-[var(--color-border)] pt-3">
-                                <SkeletonItem heightClassName="h-9 flex-1" />
-                                <SkeletonItem heightClassName="h-9 flex-1" />
+                            <div className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-3">
+                                <div className="flex items-center gap-2">
+                                    <SkeletonItem heightClassName="h-11 w-[72px]" />
+                                    <SkeletonItem heightClassName="h-11 w-[92px]" />
+                                </div>
+                                <SkeletonItem heightClassName="h-6 w-16" className="shrink-0" />
                             </div>
                         </div>
                     </div>
