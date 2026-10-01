@@ -61,7 +61,10 @@ export function SkeletonCard({
                                     <SkeletonItem heightClassName="h-11 w-[72px]" />
                                     <SkeletonItem heightClassName="h-11 w-[92px]" />
                                 </div>
-                                <SkeletonItem heightClassName="h-6 w-16" className="shrink-0" />
+                                <SkeletonItem
+                                    heightClassName="h-6 w-16"
+                                    className="shrink-0"
+                                />
                             </div>
                         </div>
                     </div>
