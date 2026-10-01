@@ -9,7 +9,7 @@ import {
 import { listarServicos, type Servico } from '../../services/servicos.service';
 import { Card } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
-import { Button } from '../ui/Button';
+import { IconButton } from '../ui/IconButton';
 import { SeletorClienteServico } from './SeletorClienteServico';
 import { GeradorRepeticao } from './GeradorRepeticao';
 import { CalendarioSelecaoMultipla } from './CalendarioSelecaoMultipla';
@@ -235,15 +235,13 @@ export function LoteAgendamentoModal({
                     >
                         Agendar em lote
                     </h2>
-                    <Button
+                    <IconButton
                         type="button"
-                        variant="ghost"
                         onClick={fechar}
-                        className="min-h-8 w-8 px-0"
-                        aria-label="Fechar"
+                        ariaLabel="Fechar"
                     >
                         <X className="h-4 w-4" />
-                    </Button>
+                    </IconButton>
                 </div>
 
                 {erro && (

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
     criarAgendamento,
@@ -16,6 +17,7 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { PageHeader } from '../components/ui/PageHeader';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
@@ -71,6 +73,11 @@ function formatarPreco(valor: string | null): string {
         style: 'currency',
         currency: 'BRL',
     }).format(numero);
+}
+
+function formatarDataHoraResumo(data: string, hora: string): string {
+    const [ano = '', mes = '', dia = ''] = data.split('-');
+    return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano} às ${hora}`;
 }
 
 export function NovoAgendamentoPage() {
@@ -278,6 +285,9 @@ export function NovoAgendamentoPage() {
         () => buscarSaldoPorServico(pacoteAtivo, servicoId),
         [pacoteAtivo, servicoId],
     );
+    const servicoSelecionado = servicosDisponiveis.find(
+        (servico) => servico.id === servicoId,
+    );
 
     useEffect(() => {
         if (servicosDisponiveis.length === 0) {
@@ -456,17 +466,7 @@ export function NovoAgendamentoPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 sm:p-6">
-            <header className="mb-6 flex items-center gap-3">
-                <Button variant="ghost" onClick={() => navigate('/')}>
-                    Voltar
-                </Button>
-                <h1
-                    className="text-3xl font-bold text-[var(--color-gold)]"
-                    style={{ fontFamily: 'var(--font-title)' }}
-                >
-                    Novo agendamento
-                </h1>
-            </header>
+            <PageHeader title="Novo agendamento" backTo="/" />
 
             <Card className="bg-[var(--color-surface-elevated)]">
                 <form
@@ -517,7 +517,7 @@ export function NovoAgendamentoPage() {
                                     type="button"
                                     variant="ghost"
                                     onClick={limparClienteSelecionado}
-                                    className="min-h-8 shrink-0 px-2.5 text-xs"
+                                    className="shrink-0 px-2.5 text-sm"
                                 >
                                     Trocar
                                 </Button>
@@ -539,7 +539,8 @@ export function NovoAgendamentoPage() {
                                         {pacoteAtivo.servicos
                                             .filter(
                                                 (saldo) =>
-                                                    saldo.quantidadeRestante > 0,
+                                                    saldo.quantidadeRestante >
+                                                    0,
                                             )
                                             .map(
                                                 (saldo) =>
@@ -567,7 +568,7 @@ export function NovoAgendamentoPage() {
                                                         cliente,
                                                     )
                                                 }
-                                                className="w-full px-3 py-2 text-left text-sm text-[var(--color-text-primary)] transition hover:bg-[var(--color-gold)]/15"
+                                                className="min-h-11 w-full px-3 py-2 text-left text-sm text-[var(--color-text-primary)] transition hover:bg-[var(--color-gold)]/15"
                                             >
                                                 <span className="font-medium text-[var(--color-gold)]">
                                                     {cliente.nome}
@@ -589,37 +590,84 @@ export function NovoAgendamentoPage() {
                     </div>
 
                     <div>
-                        <label
-                            htmlFor="servico"
+                        <p
+                            id="servico-label"
                             className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]"
                         >
                             Serviço
-                        </label>
-                        <select
-                            id="servico"
-                            value={servicoId}
-                            onChange={(event) =>
-                                setServicoId(event.target.value)
-                            }
-                            disabled={
-                                loadingServicos ||
-                                servicosDisponiveis.length === 0
-                            }
-                            className={`${fieldClassName} disabled:cursor-not-allowed disabled:opacity-60`}
-                        >
-                            {servicosDisponiveis.length === 0 ? (
-                                <option value="">
-                                    Sem serviços disponíveis
-                                </option>
-                            ) : (
-                                servicosDisponiveis.map((servico) => (
-                                    <option key={servico.id} value={servico.id}>
-                                        {servico.nome} ({servico.duracaoMinutos}{' '}
-                                        min) — {formatarPreco(servico.preco)}
-                                    </option>
-                                ))
-                            )}
-                        </select>
+                        </p>
+                        {loadingServicos ? (
+                            <p className="text-sm text-[var(--color-text-secondary)]">
+                                Carregando serviços...
+                            </p>
+                        ) : servicosDisponiveis.length === 0 ? (
+                            <p className="text-sm text-[var(--color-text-secondary)]">
+                                Sem serviços disponíveis
+                            </p>
+                        ) : (
+                            <div
+                                role="radiogroup"
+                                aria-labelledby="servico-label"
+                                className="space-y-2"
+                            >
+                                {servicosDisponiveis.map((servico) => {
+                                    const selecionado =
+                                        servico.id === servicoId;
+                                    const preco = formatarPreco(servico.preco);
+
+                                    return (
+                                        <label
+                                            key={servico.id}
+                                            className={`flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl border p-3 focus-within:ring-2 focus-within:ring-[var(--color-gold)] ${selecionado ? 'border-[var(--color-gold)] bg-[var(--color-gold-muted)]' : 'border-[var(--color-border)] bg-[var(--color-surface-inset)]'}`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="servico"
+                                                value={servico.id}
+                                                checked={selecionado}
+                                                onChange={() =>
+                                                    setServicoId(servico.id)
+                                                }
+                                                className="sr-only"
+                                            />
+                                            <div className="min-w-0 flex-1 break-words">
+                                                <p className="text-base font-semibold text-[var(--color-text-primary)]">
+                                                    {servico.nome}
+                                                </p>
+                                                <p className="flex items-center gap-1 text-sm text-[var(--color-text-secondary)]">
+                                                    <Clock
+                                                        size={14}
+                                                        aria-hidden="true"
+                                                    />
+                                                    {servico.duracaoMinutos} min
+                                                </p>
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                {!usarPacoteAtivo && (
+                                                    <span
+                                                        className={`font-bold ${preco === 'Consultar' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-gold)]'}`}
+                                                    >
+                                                        {preco}
+                                                    </span>
+                                                )}
+                                                {selecionado ? (
+                                                    <CheckCircle2
+                                                        size={20}
+                                                        aria-hidden="true"
+                                                        className="text-[var(--color-gold)]"
+                                                    />
+                                                ) : (
+                                                    <span
+                                                        aria-hidden="true"
+                                                        className="h-5 w-5 rounded-full border border-[var(--color-border)]"
+                                                    />
+                                                )}
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        )}
                         {usarPacoteAtivo && pacoteAtivo && (
                             <p
                                 className={`mt-2 text-sm ${
@@ -665,6 +713,59 @@ export function NovoAgendamentoPage() {
                             Registro retroativo
                         </Checkbox>
                     )}
+
+                    {clienteSelecionado &&
+                        servicoSelecionado &&
+                        data &&
+                        hora && (
+                            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-inset)] p-3">
+                                <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                                    Resumo do agendamento
+                                </h2>
+                                <dl className="mt-3 space-y-2">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <dt className="text-sm text-[var(--color-text-secondary)]">
+                                            Cliente
+                                        </dt>
+                                        <dd className="break-words text-right text-sm font-medium text-[var(--color-text-primary)]">
+                                            {clienteSelecionado.nome}
+                                        </dd>
+                                    </div>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <dt className="text-sm text-[var(--color-text-secondary)]">
+                                            Data e hora
+                                        </dt>
+                                        <dd className="break-words text-right text-sm font-medium text-[var(--color-text-primary)]">
+                                            {formatarDataHoraResumo(data, hora)}
+                                        </dd>
+                                    </div>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <dt className="text-sm text-[var(--color-text-secondary)]">
+                                            Serviço
+                                        </dt>
+                                        <dd className="break-words text-right text-sm font-medium text-[var(--color-text-primary)]">
+                                            {servicoSelecionado.nome} ·{' '}
+                                            {servicoSelecionado.duracaoMinutos}{' '}
+                                            min
+                                        </dd>
+                                    </div>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <dt className="text-sm text-[var(--color-text-secondary)]">
+                                            Valor
+                                        </dt>
+                                        <dd
+                                            className={`break-words text-right text-sm ${usarPacoteAtivo || formatarPreco(servicoSelecionado.preco) !== 'Consultar' ? 'font-bold text-[var(--color-gold)]' : 'font-medium text-[var(--color-text-secondary)]'}`}
+                                        >
+                                            {usarPacoteAtivo
+                                                ? 'Pacote ativo'
+                                                : formatarPreco(
+                                                      servicoSelecionado.preco,
+                                                  )}
+                                        </dd>
+                                    </div>
+                                </dl>
+                            </div>
+                        )}
 
                     {data &&
                         hora &&

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
     atualizarServico,
     buscarServicoPorId,
@@ -178,17 +179,7 @@ export function EditarServicoPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 sm:p-6">
-            <header className="mb-6 flex items-center gap-3">
-                <Button variant="ghost" onClick={() => navigate('/servicos')}>
-                    Voltar
-                </Button>
-                <h1
-                    className="text-3xl font-bold text-[var(--color-gold)]"
-                    style={{ fontFamily: 'var(--font-title)' }}
-                >
-                    Editar servico
-                </h1>
-            </header>
+            <PageHeader title="Editar serviço" backTo="/servicos" />
 
             {loading && (
                 <Card className="bg-[var(--color-surface-elevated)]">

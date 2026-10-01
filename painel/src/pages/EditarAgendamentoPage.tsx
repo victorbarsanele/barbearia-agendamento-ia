@@ -16,6 +16,7 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { DateTimePicker } from '../components/DateTimePicker';
+import { PageHeader } from '../components/ui/PageHeader';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { buscarSaldoPorServico } from '../utils/pacoteCliente';
 
@@ -325,17 +326,7 @@ export function EditarAgendamentoPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 sm:p-6">
-            <header className="mb-6 flex items-center gap-3">
-                <Button variant="ghost" onClick={() => navigate('/')}>
-                    Voltar
-                </Button>
-                <h1
-                    className="text-3xl font-bold text-[var(--color-gold)]"
-                    style={{ fontFamily: 'var(--font-title)' }}
-                >
-                    Editar agendamento
-                </h1>
-            </header>
+            <PageHeader title="Editar agendamento" backTo="/" />
 
             {loading && (
                 <Card className="bg-[var(--color-surface-elevated)]">
@@ -427,7 +418,7 @@ export function EditarAgendamentoPage() {
                                                 <p className="mt-2 text-[var(--color-text-secondary)]">
                                                     {!saldoServicoSelecionado ||
                                                     saldoServicoSelecionado.quantidadeRestante <=
-                                                    0
+                                                        0
                                                         ? 'Pacote esgotado.'
                                                         : 'O serviço selecionado não está incluso neste pacote.'}
                                                 </p>

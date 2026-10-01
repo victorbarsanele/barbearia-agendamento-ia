@@ -8,6 +8,7 @@ import {
     type PacoteClienteAtivo,
 } from '../services/pacoteCliente.service';
 import { Button } from './ui/Button';
+import { IconButton } from './ui/IconButton';
 import { ConfirmDialog } from './ConfirmDialog';
 import { formatPrecoNumberToInputBR } from '../utils/preco';
 
@@ -194,15 +195,13 @@ export function PacoteClienteModal({
                     >
                         Pacote de {cliente.nome}
                     </h2>
-                    <Button
+                    <IconButton
                         type="button"
-                        variant="ghost"
-                        className="min-h-8 w-8 px-0 text-base leading-none"
                         onClick={onClose}
-                        aria-label="Fechar"
+                        ariaLabel="Fechar"
                     >
                         X
-                    </Button>
+                    </IconButton>
                 </header>
 
                 <div className="max-h-[90vh] space-y-4 overflow-y-auto p-4">
@@ -254,7 +253,7 @@ export function PacoteClienteModal({
                                 type="button"
                                 variant="danger"
                                 fullWidth
-                                className="mt-3 min-h-10"
+                                className="mt-3"
                                 onClick={() => setConfirmandoDesvinculo(true)}
                             >
                                 Desvincular pacote

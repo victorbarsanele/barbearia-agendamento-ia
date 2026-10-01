@@ -76,7 +76,7 @@ export function LoginPage() {
     };
 
     return (
-        <main className="flex min-h-screen flex-col items-center justify-center bg-[radial-gradient(ellipse_at_top,_rgba(201,168,76,0.16),_transparent_55%),_linear-gradient(180deg,_#0a0a0a_0%,_#0a0a0a_100%)] px-4 py-10">
+        <main className="flex min-h-screen flex-col items-center justify-center bg-[radial-gradient(ellipse_at_top,_rgba(229,192,123,0.16),_transparent_55%),_linear-gradient(180deg,_var(--color-bg)_0%,_var(--color-bg)_100%)] px-4 py-10">
             <div className="mb-10 flex flex-col items-center">
                 <div className="flex h-20 w-20 items-center justify-center rounded-full border border-[var(--color-gold)]">
                     <Scissors
@@ -171,7 +171,7 @@ export function LoginPage() {
                     </div>
 
                     {errorMessage && (
-                        <p className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-sm text-[#fca5a5]">
+                        <p className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 px-3 py-2 text-sm text-[var(--color-danger-text)]">
                             {errorMessage}
                         </p>
                     )}

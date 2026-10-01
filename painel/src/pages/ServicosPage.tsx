@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Clock, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { IconButton } from '../components/ui/IconButton';
+import { PageHeader } from '../components/ui/PageHeader';
 import {
     excluirServico,
     listarServicos,
@@ -113,31 +116,22 @@ export function ServicosPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
-            <header className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                    <h1
-                        className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
+            <PageHeader
+                variant="list"
+                title="Serviços"
+                subtitle="Gerencie os serviços cadastrados."
+                action={
+                    <Button
+                        variant="primary"
+                        className="px-3 text-xs"
+                        onClick={() => navigate('/servicos/novo')}
                     >
-                        Serviços
-                    </h1>
-                    <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Gerencie os serviços cadastrados.
-                    </p>
-                </div>
+                        Novo serviço
+                    </Button>
+                }
+            />
 
-                <Button
-                    variant="primary"
-                    className="min-h-9 px-3 text-xs"
-                    onClick={() => navigate('/servicos/novo')}
-                >
-                    Novo serviço
-                </Button>
-            </header>
-
-            {loading && (
-                <SkeletonCard count={3} heightClassName="min-h-[132px]" />
-            )}
+            {loading && <SkeletonCard count={3} variant="row" />}
 
             {erro && (
                 <div className="mb-4 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">
@@ -164,21 +158,23 @@ export function ServicosPage() {
                     {servicosOrdenados.map((servico) => (
                         <Card
                             key={servico.id}
-                            className="flex flex-col gap-3 bg-[var(--color-surface-elevated)]"
+                            className="flex items-center justify-between gap-3 bg-[var(--color-surface-elevated)]"
                         >
-                            <div>
-                                <p className="text-base font-bold text-[var(--color-text-primary)]">
+                            <div className="min-w-0 flex-1">
+                                <p className="break-words text-base font-bold text-[var(--color-text-primary)]">
                                     {servico.nome}
                                 </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Duração: {servico.duracaoMinutos} min
-                                </p>
-                                <p className="text-sm text-[var(--color-text-secondary)]">
-                                    Preço: {formatarPreco(servico.preco)}
-                                </p>
+                                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                                    <Clock size={14} aria-hidden="true" />
+                                    <span>{servico.duracaoMinutos} min</span>
+                                    <span aria-hidden="true">·</span>
+                                    <span className="text-base font-bold text-[var(--color-gold)]">
+                                        {formatarPreco(servico.preco)}
+                                    </span>
+                                </div>
                             </div>
 
-                            <div className="ml-auto flex gap-2">
+                            <div className="flex shrink-0 items-center gap-2">
                                 <Button
                                     type="button"
                                     variant="ghost"
@@ -187,23 +183,20 @@ export function ServicosPage() {
                                             `/servicos/editar/${servico.id}`,
                                         )
                                     }
-                                    className="min-h-8 px-3 text-xs"
+                                    className="px-4 text-sm"
                                 >
                                     Editar
                                 </Button>
-                                <Button
-                                    type="button"
+                                <IconButton
                                     variant="danger"
+                                    ariaLabel={`Excluir serviço ${servico.nome}`}
                                     onClick={() =>
                                         setServicoPendenteExclusao(servico)
                                     }
                                     disabled={excluindoId === servico.id}
-                                    className="min-h-8 px-3 text-xs"
                                 >
-                                    {excluindoId === servico.id
-                                        ? 'Excluindo...'
-                                        : 'Excluir'}
-                                </Button>
+                                    <Trash2 size={18} aria-hidden="true" />
+                                </IconButton>
                             </div>
                         </Card>
                     ))}

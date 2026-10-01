@@ -15,9 +15,9 @@ function getStatusStyles(status: AgendamentoStatus): string {
         case 'AGENDADO':
             return 'border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] text-[var(--color-gold)]';
         case 'CANCELADO':
-            return 'border border-[var(--color-danger)]/35 bg-[color:rgba(220,38,38,0.16)] text-[#fca5a5]';
+            return 'border border-[var(--color-danger)]/35 bg-[color:var(--color-danger-muted)] text-[var(--color-danger-text)]';
         case 'CONFIRMADO':
-            return 'border border-[var(--color-success)]/35 bg-[color:rgba(22,163,74,0.16)] text-[#86efac]';
+            return 'border border-[var(--color-success)]/35 bg-[color:var(--color-success-muted)] text-[#86efac]';
         case 'CONCLUIDO':
         default:
             return 'border border-[var(--color-border)] bg-[var(--color-surface-elevated)] text-[var(--color-text-secondary)]';

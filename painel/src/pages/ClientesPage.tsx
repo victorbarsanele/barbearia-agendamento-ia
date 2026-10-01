@@ -7,12 +7,14 @@ import { PacoteClienteModal } from '../components/PacoteClienteModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { PageHeader } from '../components/ui/PageHeader';
 import { listarAgendamentos } from '../services/agendamentos.service';
 import {
     excluirCliente,
     listarClientesPaginado,
     type Cliente,
 } from '../services/clientes.service';
+import { formatarTelefone } from '../utils/formatarTelefone';
 
 const CLIENTES_POR_PAGINA = 10;
 const DEBOUNCE_BUSCA_MS = 350;
@@ -166,27 +168,20 @@ export function ClientesPage() {
 
     return (
         <main className="mx-auto min-h-screen w-full max-w-[600px] bg-[var(--color-bg)] p-4 pb-20 sm:p-6 sm:pb-24">
-            <header className="mb-5 flex items-center justify-between gap-3">
-                <div>
-                    <h1
-                        className="text-[34px] font-bold leading-none text-[var(--color-gold)]"
-                        style={{ fontFamily: 'var(--font-title)' }}
+            <PageHeader
+                variant="list"
+                title="Clientes"
+                subtitle="Gerencie os clientes cadastrados."
+                action={
+                    <Button
+                        variant="primary"
+                        className="px-3 text-xs"
+                        onClick={() => navigate('/clientes/novo')}
                     >
-                        Clientes
-                    </h1>
-                    <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
-                        Gerencie os clientes cadastrados.
-                    </p>
-                </div>
-
-                <Button
-                    variant="primary"
-                    className="min-h-9 px-3 text-xs"
-                    onClick={() => navigate('/clientes/novo')}
-                >
-                    Novo cliente
-                </Button>
-            </header>
+                        Novo cliente
+                    </Button>
+                }
+            />
 
             <div className="mb-4">
                 <input
@@ -199,9 +194,7 @@ export function ClientesPage() {
                 />
             </div>
 
-            {loading && (
-                <SkeletonCard count={4} heightClassName="min-h-[132px]" />
-            )}
+            {loading && <SkeletonCard count={4} variant="cliente" />}
 
             {erro && (
                 <div className="mb-4 rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-4 text-sm text-[var(--color-danger)]">
@@ -237,7 +230,7 @@ export function ClientesPage() {
                                     {cliente.nome}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    {cliente.telefone}
+                                    {formatarTelefone(cliente.telefone)}
                                 </p>
                             </div>
 
@@ -250,10 +243,10 @@ export function ClientesPage() {
                                     }
                                     title={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
                                     aria-label={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
-                                    className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Calendar size={16} aria-hidden="true" />
-                                    <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-[var(--color-gold)] px-1 text-[10px] font-bold leading-4 text-[#0a0a0a]">
+                                    <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--color-gold)] px-1 text-xs font-bold leading-none text-[var(--color-on-gold)]">
                                         {agendamentosPorCliente[cliente.id] ??
                                             0}
                                     </span>
@@ -267,7 +260,7 @@ export function ClientesPage() {
                                     }
                                     title="Gerenciar pacote do cliente"
                                     aria-label="Gerenciar pacote do cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Package size={16} aria-hidden="true" />
                                     <span>Pacote</span>
@@ -282,21 +275,21 @@ export function ClientesPage() {
                                     }
                                     title="Editar cliente"
                                     aria-label="Editar cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Pencil size={16} aria-hidden="true" />
                                     <span>Editar</span>
                                 </Button>
                                 <Button
                                     type="button"
-                                    variant="danger"
+                                    variant="danger-soft"
                                     onClick={() =>
                                         setClientePendenteExclusao(cliente)
                                     }
                                     disabled={excluindoId === cliente.id}
                                     title="Excluir cliente"
                                     aria-label="Excluir cliente"
-                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-[10px] leading-tight sm:w-14"
+                                    className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Trash2 size={16} aria-hidden="true" />
                                     <span>Excluir</span>
@@ -312,7 +305,7 @@ export function ClientesPage() {
                     <Button
                         type="button"
                         variant="ghost"
-                        className="min-h-9 px-3 text-xs"
+                        className="px-3 text-xs"
                         disabled={pagina <= 1}
                         onClick={() =>
                             setPagina((atual) => Math.max(1, atual - 1))
@@ -329,7 +322,7 @@ export function ClientesPage() {
                     <Button
                         type="button"
                         variant="ghost"
-                        className="min-h-9 px-3 text-xs"
+                        className="px-3 text-xs"
                         disabled={pagina >= totalPaginas}
                         onClick={() =>
                             setPagina((atual) =>
@@ -337,14 +330,14 @@ export function ClientesPage() {
                             )
                         }
                     >
-                        Proximo
+                        Próximo
                     </Button>
                 </div>
             )}
 
             <ConfirmDialog
                 open={Boolean(clientePendenteExclusao)}
-                title="Confirmar exclusao"
+                title="Confirmar exclusão"
                 description={
                     clientePendenteExclusao
                         ? `Deseja excluir o cliente ${clientePendenteExclusao.nome}?`
