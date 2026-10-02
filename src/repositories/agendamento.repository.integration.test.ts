@@ -81,13 +81,15 @@ afterEach(async () => {
 });
 
 describe('agendamento.repository integração concorrência', () => {
-    async function criarPacoteComQuatroUsos() {
+    async function criarPacoteComQuatroUsos(usosAnteriores = 0) {
         const pacote = await prisma.pacote.create({
             data: {
                 nome: `Pacote numeracao ${Date.now()}`,
                 duracaoDias: 30,
                 servicos: {
-                    create: [{ servicoId: entidades.servicoId, quantidadeTotal: 4 }],
+                    create: [
+                        { servicoId: entidades.servicoId, quantidadeTotal: 4 },
+                    ],
                 },
             },
         });
@@ -103,7 +105,8 @@ describe('agendamento.repository integração concorrência', () => {
                         {
                             servicoId: entidades.servicoId,
                             quantidadeTotal: 4,
-                            quantidadeRestante: 4,
+                            ...(usosAnteriores > 0 ? { usosAnteriores } : {}),
+                            quantidadeRestante: 4 - usosAnteriores,
                         },
                     ],
                 },
@@ -112,6 +115,121 @@ describe('agendamento.repository integração concorrência', () => {
         entidades.pacoteClienteId = pacoteCliente.id;
         return pacoteCliente;
     }
+
+    it('começa numeração após usos anteriores', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos(1);
+        const agendamento = await agendamentoRepository.criarComNumeroNoPacote(
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: pacoteCliente.id,
+                dataHoraInicio: new Date('2026-09-20T13:00:00.000Z'),
+                dataHoraFim: new Date('2026-09-20T13:30:00.000Z'),
+                status: StatusAgendamento.AGENDADO,
+            },
+            pacoteCliente.id,
+            entidades.servicoId,
+        );
+
+        expect(agendamento.numeroNoPacote).toBe(2);
+    });
+
+    it('bloqueia quando todos os números restantes estão ocupados', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos(1);
+        for (const hora of [13, 14, 15]) {
+            await agendamentoRepository.criarComNumeroNoPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date(`2026-09-20T${hora}:00:00.000Z`),
+                    dataHoraFim: new Date(`2026-09-20T${hora}:30:00.000Z`),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+            );
+        }
+
+        await expect(
+            agendamentoRepository.criarComNumeroNoPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date('2026-09-20T16:00:00.000Z'),
+                    dataHoraFim: new Date('2026-09-20T16:30:00.000Z'),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+            ),
+        ).rejects.toMatchObject({
+            message:
+                'Todos os 3 usos restantes deste serviço no pacote já estão agendados ou concluídos.',
+        });
+    });
+
+    it('mantém números distintos em concorrência com offset', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos(1);
+        const criar = (hora: number) =>
+            agendamentoRepository.criarComNumeroNoPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date(`2026-09-20T${hora}:00:00.000Z`),
+                    dataHoraFim: new Date(`2026-09-20T${hora}:30:00.000Z`),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+            );
+
+        const resultados = await Promise.all([criar(13), criar(14)]);
+        expect(resultados.map((item) => item.numeroNoPacote).sort()).toEqual([
+            2, 3,
+        ]);
+    });
+
+    it('rejeita edição quando agendamento ocupa número afetado', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        await agendamentoRepository.criarComNumeroNoPacote(
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: pacoteCliente.id,
+                dataHoraInicio: new Date('2026-09-20T13:00:00.000Z'),
+                dataHoraFim: new Date('2026-09-20T13:30:00.000Z'),
+                status: StatusAgendamento.AGENDADO,
+            },
+            pacoteCliente.id,
+            entidades.servicoId,
+        );
+
+        await expect(
+            agendamentoRepository.atualizarUsosAnteriores(
+                pacoteCliente.id,
+                entidades.servicoId,
+                1,
+            ),
+        ).rejects.toMatchObject({ statusCode: 409 });
+    });
+
+    it('usa zero como default para linha existente sem usos anteriores', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        await expect(
+            prisma.pacoteClienteServico.findUnique({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: pacoteCliente.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { usosAnteriores: true },
+            }),
+        ).resolves.toEqual({ usosAnteriores: 0 });
+    });
 
     it('atribui números distintos em concorrência, reaproveita cancelado e mantém remarcação', async () => {
         const pacoteCliente = await criarPacoteComQuatroUsos();
@@ -140,25 +258,35 @@ describe('agendamento.repository integração concorrência', () => {
             resultados.map((agendamento) => agendamento.numeroNoPacote).sort(),
         ).toEqual([1, 2]);
 
-        await agendamentoRepository.cancelar(resultados[0].id);
+        const resultadoNumero1 = resultados.find(
+            (agendamento) => agendamento.numeroNoPacote === 1,
+        );
+        const resultadoNumero2 = resultados.find(
+            (agendamento) => agendamento.numeroNoPacote === 2,
+        );
+        expect(resultadoNumero1).toBeDefined();
+        expect(resultadoNumero2).toBeDefined();
+
+        await agendamentoRepository.cancelar(resultadoNumero1!.id);
         const reaproveitado = await criar('2026-09-20T15:00:00.000Z');
         expect(reaproveitado.numeroNoPacote).toBe(1);
 
-        const remarcado = await agendamentoRepository.atualizarComNumeroNoPacote(
-            resultados[1].id,
-            {
-                clienteId: entidades.clienteId,
-                servicoId: entidades.servicoId,
-                pacoteClienteId: pacoteCliente.id,
-                dataHoraInicio: new Date('2026-09-20T16:00:00.000Z'),
-                dataHoraFim: new Date('2026-09-20T16:30:00.000Z'),
-                status: StatusAgendamento.AGENDADO,
-            },
-            pacoteCliente.id,
-            entidades.servicoId,
-            resultados[1].numeroNoPacote ?? null,
-            StatusAgendamento.AGENDADO,
-        );
+        const remarcado =
+            await agendamentoRepository.atualizarComNumeroNoPacote(
+                resultadoNumero2!.id,
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    pacoteClienteId: pacoteCliente.id,
+                    dataHoraInicio: new Date('2026-09-20T16:00:00.000Z'),
+                    dataHoraFim: new Date('2026-09-20T16:30:00.000Z'),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+                resultadoNumero2!.numeroNoPacote ?? null,
+                StatusAgendamento.AGENDADO,
+            );
         expect(remarcado.numeroNoPacote).toBe(2);
     });
 
@@ -209,7 +337,11 @@ describe('agendamento.repository integração concorrência', () => {
         const agendamentos = await prisma.agendamento.findMany({
             where: { pacoteClienteId: pacoteCliente.id },
             orderBy: { dataHoraInicio: 'asc' },
-            select: { dataHoraInicio: true, status: true, numeroNoPacote: true },
+            select: {
+                dataHoraInicio: true,
+                status: true,
+                numeroNoPacote: true,
+            },
         });
 
         expect(agendamentos).toEqual([

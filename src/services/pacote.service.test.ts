@@ -19,6 +19,7 @@ vi.mock('../repositories/pacoteCliente.repository', () => ({
 
 vi.mock('../repositories/agendamento.repository', () => ({
     contarPendentesPorPacoteClienteId: vi.fn(),
+    atualizarUsosAnteriores: vi.fn(),
 }));
 
 vi.mock('../repositories/cliente.repository', () => ({
@@ -119,10 +120,108 @@ describe('pacote.service.vincularCliente', () => {
                     {
                         servicoId: 'servico-1',
                         quantidadeTotal: 5,
+                        usosAnteriores: 0,
                     },
                 ],
             }),
         );
+    });
+
+    it('aceita usosAnteriores omitido como zero', async () => {
+        vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(clienteBase);
+        vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
+            pacoteBase as never,
+        );
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(null);
+        vi.mocked(pacoteClienteRepository.criar).mockResolvedValue({
+            id: 'pacote-cliente-1',
+        } as never);
+
+        await pacoteService.vincularCliente({
+            clienteId: clienteBase.id,
+            pacoteId: pacoteBase.id,
+        });
+
+        expect(pacoteClienteRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                servicos: [
+                    expect.objectContaining({
+                        servicoId: 'servico-1',
+                        usosAnteriores: 0,
+                    }),
+                ],
+            }),
+        );
+    });
+
+    it('rejeita uso anterior de serviço fora do template', async () => {
+        vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(clienteBase);
+        vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
+            pacoteBase as never,
+        );
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(null);
+
+        await expect(
+            pacoteService.vincularCliente({
+                clienteId: clienteBase.id,
+                pacoteId: pacoteBase.id,
+                usosAnteriores: [
+                    { servicoId: 'servico-inexistente', usosAnteriores: 1 },
+                ],
+            }),
+        ).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it.each([-1, 5])(
+        'rejeita usosAnteriores inválido: %s',
+        async (quantidade) => {
+            vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(
+                clienteBase,
+            );
+            vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
+                pacoteBase as never,
+            );
+            vi.mocked(
+                pacoteClienteRepository.buscarAtivoPorClienteId,
+            ).mockResolvedValue(null);
+
+            await expect(
+                pacoteService.vincularCliente({
+                    clienteId: clienteBase.id,
+                    pacoteId: pacoteBase.id,
+                    usosAnteriores: [
+                        { servicoId: 'servico-1', usosAnteriores: quantidade },
+                    ],
+                }),
+            ).rejects.toMatchObject({ statusCode: 400 });
+        },
+    );
+
+    it('edita usosAnteriores pelo repository e retorna pacote atualizado', async () => {
+        vi.mocked(
+            agendamentoRepository.atualizarUsosAnteriores,
+        ).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+
+        await pacoteService.atualizarUsosAnteriores(
+            'pacote-cliente-1',
+            'servico-1',
+            2,
+        );
+
+        expect(
+            agendamentoRepository.atualizarUsosAnteriores,
+        ).toHaveBeenCalledWith('pacote-cliente-1', 'servico-1', 2);
     });
 
     it('rejeita quando cliente não existe', async () => {

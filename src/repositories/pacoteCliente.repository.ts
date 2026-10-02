@@ -16,7 +16,11 @@ const includePacote = {
 export async function criar(data: {
     clienteId: string;
     pacoteId: string;
-    servicos: { servicoId: string; quantidadeTotal: number }[];
+    servicos: {
+        servicoId: string;
+        quantidadeTotal: number;
+        usosAnteriores: number;
+    }[];
     dataInicio: Date;
 }): Promise<PacoteClienteComPacote> {
     return prisma.pacoteCliente.create({
@@ -29,7 +33,9 @@ export async function criar(data: {
                 create: data.servicos.map((servico) => ({
                     servicoId: servico.servicoId,
                     quantidadeTotal: servico.quantidadeTotal,
-                    quantidadeRestante: servico.quantidadeTotal,
+                    usosAnteriores: servico.usosAnteriores,
+                    quantidadeRestante:
+                        servico.quantidadeTotal - servico.usosAnteriores,
                 })),
             },
         },

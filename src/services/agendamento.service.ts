@@ -431,6 +431,7 @@ export async function simularLote(data: LoteAgendamentoData) {
             : null;
         let vagasDePacote = saldoServico
             ? saldoServico.quantidadeTotal -
+              (saldoServico.usosAnteriores ?? 0) -
               (await agendamentoRepository.contarNaoCanceladosPorPacoteEServico(
                   data.pacoteClienteId!,
                   data.servicoId,
@@ -452,7 +453,7 @@ export async function simularLote(data: LoteAgendamentoData) {
                 } else {
                     conflitos.push({
                         ...slot,
-                        motivo: `Todos os ${saldoServico?.quantidadeTotal ?? 0} usos deste serviço no pacote já estão agendados ou concluídos.`,
+                        motivo: `Todos os ${Math.max((saldoServico?.quantidadeTotal ?? 0) - (saldoServico?.usosAnteriores ?? 0), 0)} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
                     });
                 }
             } catch (error) {

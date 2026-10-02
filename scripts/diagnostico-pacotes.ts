@@ -13,9 +13,15 @@ async function main() {
         select: {
             id: true,
             status: true,
-            quantidadeTotal: true,
-            quantidadeRestante: true,
             pacoteId: true,
+            servicos: {
+                select: {
+                    servicoId: true,
+                    quantidadeTotal: true,
+                    usosAnteriores: true,
+                    quantidadeRestante: true,
+                },
+            },
             pacote: {
                 select: {
                     id: true,
@@ -27,7 +33,7 @@ async function main() {
     });
 
     const concluidosPorPacoteCliente = await prisma.agendamento.groupBy({
-        by: ['pacoteClienteId'],
+        by: ['pacoteClienteId', 'servicoId'],
         where: {
             pacoteClienteId: { not: null },
             concluido: true,
@@ -37,7 +43,10 @@ async function main() {
     const mapaConcluidos = new Map<string, number>();
     for (const item of concluidosPorPacoteCliente) {
         if (item.pacoteClienteId) {
-            mapaConcluidos.set(item.pacoteClienteId, item._count._all);
+            mapaConcluidos.set(
+                `${item.pacoteClienteId}:${item.servicoId}`,
+                item._count._all,
+            );
         }
     }
 
@@ -47,24 +56,32 @@ async function main() {
         (item) => item.pacote.servicos.length > 1,
     );
 
-    const divergencias = comMultiplosServicos
-        .map((item) => {
-            const consumidos = item.quantidadeTotal - item.quantidadeRestante;
-            const concluidos = mapaConcluidos.get(item.id) ?? 0;
-            return {
-                pacoteClienteId: item.id,
-                pacoteId: item.pacoteId,
-                pacoteNome: item.pacote.nome,
-                status: item.status,
-                quantidadeTotal: item.quantidadeTotal,
-                quantidadeRestante: item.quantidadeRestante,
-                consumidoCalculado: consumidos,
-                agendamentosConcluidos: concluidos,
-                bate: consumidos === concluidos,
-                servicosNoPacote: item.pacote.servicos.length,
-            };
-        })
-        .filter((item) => !item.bate);
+    const divergencias = pacotesClientes.flatMap((item) =>
+        item.servicos
+            .map((servico) => {
+                const concluidos =
+                    mapaConcluidos.get(`${item.id}:${servico.servicoId}`) ?? 0;
+                const consumidos =
+                    servico.quantidadeTotal -
+                    servico.usosAnteriores -
+                    servico.quantidadeRestante;
+                return {
+                    pacoteClienteId: item.id,
+                    pacoteId: item.pacoteId,
+                    pacoteNome: item.pacote.nome,
+                    status: item.status,
+                    servicoId: servico.servicoId,
+                    quantidadeTotal: servico.quantidadeTotal,
+                    usosAnteriores: servico.usosAnteriores,
+                    quantidadeRestante: servico.quantidadeRestante,
+                    consumidoCalculado: consumidos,
+                    agendamentosConcluidos: concluidos,
+                    bate: consumidos === concluidos,
+                    servicosNoPacote: item.pacote.servicos.length,
+                };
+            })
+            .filter((servico) => !servico.bate),
+    );
 
     console.log('=== DIAGNÓSTICO PACOTES (read-only) ===');
     console.log('\nTotal de PacoteCliente por status:');
@@ -80,14 +97,21 @@ async function main() {
     if (comMultiplosServicos.length > 0) {
         console.log('\nDetalhe dos PacoteCliente com múltiplos serviços:');
         for (const item of comMultiplosServicos) {
-            const concluidos = mapaConcluidos.get(item.id) ?? 0;
-            const consumidos = item.quantidadeTotal - item.quantidadeRestante;
-            console.log(
-                `  pacoteClienteId=${item.id} pacote="${item.pacote.nome}" status=${item.status} ` +
-                    `servicos=${item.pacote.servicos.length} quantidadeTotal=${item.quantidadeTotal} ` +
-                    `quantidadeRestante=${item.quantidadeRestante} consumidoCalculado=${consumidos} ` +
-                    `agendamentosConcluidos=${concluidos} bate=${consumidos === concluidos}`,
-            );
+            for (const servico of item.servicos) {
+                const concluidos =
+                    mapaConcluidos.get(`${item.id}:${servico.servicoId}`) ?? 0;
+                const consumidos =
+                    servico.quantidadeTotal -
+                    servico.usosAnteriores -
+                    servico.quantidadeRestante;
+                console.log(
+                    `  pacoteClienteId=${item.id} pacote="${item.pacote.nome}" status=${item.status} ` +
+                        `servicoId=${servico.servicoId} quantidadeTotal=${servico.quantidadeTotal} ` +
+                        `usosAnteriores=${servico.usosAnteriores} quantidadeRestante=${servico.quantidadeRestante} ` +
+                        `consumidoCalculado=${consumidos} agendamentosConcluidos=${concluidos} ` +
+                        `bate=${consumidos === concluidos}`,
+                );
+            }
         }
     }
 

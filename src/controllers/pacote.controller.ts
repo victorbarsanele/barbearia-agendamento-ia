@@ -25,6 +25,11 @@ interface PacoteParams {
 interface VincularPacoteBody {
     clienteId: string;
     pacoteId: string;
+    usosAnteriores?: { servicoId: string; usosAnteriores: number }[];
+}
+
+interface UsosAnterioresBody {
+    usosAnteriores: number;
 }
 
 interface ClienteParams {
@@ -33,6 +38,10 @@ interface ClienteParams {
 
 interface PacoteClienteParams {
     pacoteClienteId: string;
+}
+
+interface PacoteClienteServicoParams extends PacoteClienteParams {
+    servicoId: string;
 }
 
 function handleError(error: unknown, reply: FastifyReply): void {
@@ -142,6 +151,25 @@ export async function desvincular(
     try {
         const pacoteCliente = await pacoteService.desvincularCliente(
             request.params.pacoteClienteId,
+        );
+        void reply.send(pacoteCliente);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function atualizarUsosAnteriores(
+    request: FastifyRequest<{
+        Params: PacoteClienteServicoParams;
+        Body: UsosAnterioresBody;
+    }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const pacoteCliente = await pacoteService.atualizarUsosAnteriores(
+            request.params.pacoteClienteId,
+            request.params.servicoId,
+            request.body.usosAnteriores,
         );
         void reply.send(pacoteCliente);
     } catch (error) {

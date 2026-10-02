@@ -14,10 +14,7 @@ type AgendamentoBase = Prisma.AgendamentoGetPayload<{
     };
 }>;
 
-export type AgendamentoComRelacoes = Omit<
-    AgendamentoBase,
-    'numeroNoPacote'
-> & {
+export type AgendamentoComRelacoes = Omit<AgendamentoBase, 'numeroNoPacote'> & {
     numeroNoPacote?: number | null;
 };
 
@@ -145,9 +142,11 @@ async function reservarNumeroNoPacote(
     servicoId: string,
     ignorarAgendamentoId?: string,
 ): Promise<number> {
-    const saldos = await tx.$queryRaw<{ quantidadeTotal: number }[]>(
+    const saldos = await tx.$queryRaw<
+        { quantidadeTotal: number; usosAnteriores: number }[]
+    >(
         Prisma.sql`
-            SELECT "quantidadeTotal"
+            SELECT "quantidadeTotal", "usosAnteriores"
             FROM "pacotes_clientes_servicos"
             WHERE "pacoteClienteId" = ${pacoteClienteId}
               AND "servicoId" = ${servicoId}
@@ -171,16 +170,22 @@ async function reservarNumeroNoPacote(
           AND "numeroNoPacote" IS NOT NULL
           ${ignorarAgendamentoId ? Prisma.sql`AND id <> ${ignorarAgendamentoId}` : Prisma.empty}
     `);
-    const ocupadosSet = new Set(ocupados.map(({ numeroNoPacote }) => numeroNoPacote));
+    const ocupadosSet = new Set(
+        ocupados.map(({ numeroNoPacote }) => numeroNoPacote),
+    );
 
-    for (let numero = 1; numero <= saldo.quantidadeTotal; numero += 1) {
+    for (
+        let numero = saldo.usosAnteriores + 1;
+        numero <= saldo.quantidadeTotal;
+        numero += 1
+    ) {
         if (!ocupadosSet.has(numero)) {
             return numero;
         }
     }
 
     throw new AppError(
-        `Todos os ${saldo.quantidadeTotal} usos deste serviço no pacote já estão agendados ou concluídos.`,
+        `Todos os ${saldo.quantidadeTotal - saldo.usosAnteriores} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
         400,
     );
 }
@@ -236,6 +241,7 @@ export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
                             select: {
                                 servicoId: true,
                                 quantidadeTotal: true,
+                                usosAnteriores: true,
                             },
                         },
                     },
@@ -250,10 +256,126 @@ export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
                 pacoteCliente?.servicos.find(
                     (item) => item.servicoId === agendamento.servicoId,
                 )?.quantidadeTotal ?? null,
+            usosAnteriores:
+                pacoteCliente?.servicos.find(
+                    (item) => item.servicoId === agendamento.servicoId,
+                )?.usosAnteriores ?? null,
         }));
     } catch (error) {
         throw error;
     }
+}
+
+async function atualizarStatusConformeSaldos(
+    tx: Transacao,
+    pacoteClienteId: string,
+): Promise<PacoteCliente> {
+    const saldosRestantes = await tx.pacoteClienteServico.count({
+        where: { pacoteClienteId, quantidadeRestante: { gt: 0 } },
+    });
+
+    return tx.pacoteCliente.update({
+        where: { id: pacoteClienteId },
+        data: {
+            status:
+                saldosRestantes === 0
+                    ? StatusPacoteCliente.FINALIZADO
+                    : StatusPacoteCliente.ATIVO,
+        },
+    });
+}
+
+export async function atualizarUsosAnteriores(
+    pacoteClienteId: string,
+    servicoId: string,
+    novosUsosAnteriores: number,
+): Promise<PacoteCliente> {
+    return prisma.$transaction(async (tx) => {
+        const saldos = await tx.$queryRaw<
+            {
+                id: string;
+                quantidadeTotal: number;
+                usosAnteriores: number;
+                quantidadeRestante: number;
+            }[]
+        >(Prisma.sql`
+            SELECT pcs."id", pcs."quantidadeTotal", pcs."usosAnteriores", pcs."quantidadeRestante"
+            FROM "pacotes_clientes_servicos" AS pcs
+            WHERE pcs."pacoteClienteId" = ${pacoteClienteId}
+              AND pcs."servicoId" = ${servicoId}
+            FOR UPDATE
+        `);
+        const saldo = saldos[0];
+
+        if (!saldo) {
+            throw new AppError(
+                'Serviço não encontrado no pacote do cliente.',
+                404,
+            );
+        }
+
+        const pacoteCliente = await tx.pacoteCliente.findUnique({
+            where: { id: pacoteClienteId },
+            select: { status: true },
+        });
+        if (!pacoteCliente) {
+            throw new AppError('Pacote do cliente não encontrado.', 404);
+        }
+        if (pacoteCliente.status !== StatusPacoteCliente.ATIVO) {
+            throw new AppError('Pacote do cliente não está ativo.', 409);
+        }
+        if (novosUsosAnteriores < 0) {
+            throw new AppError(
+                'usosAnteriores deve ser maior ou igual a zero.',
+                400,
+            );
+        }
+        if (novosUsosAnteriores >= saldo.quantidadeTotal) {
+            throw new AppError(
+                'usosAnteriores deve ser menor que a quantidade total do serviço.',
+                400,
+            );
+        }
+
+        const agendamentosOcupados = await tx.agendamento.count({
+            where: {
+                pacoteClienteId,
+                servicoId,
+                status: { not: StatusAgendamento.CANCELADO },
+                numeroNoPacote: { lte: novosUsosAnteriores },
+            },
+        });
+        if (agendamentosOcupados > 0) {
+            throw new AppError(
+                'Não é possível definir usosAnteriores: existe agendamento não cancelado ocupando número afetado.',
+                409,
+            );
+        }
+
+        const novaQuantidadeRestante =
+            saldo.quantidadeRestante +
+            saldo.usosAnteriores -
+            novosUsosAnteriores;
+        if (
+            novaQuantidadeRestante < 0 ||
+            novaQuantidadeRestante > saldo.quantidadeTotal - novosUsosAnteriores
+        ) {
+            throw new AppError(
+                'A alteração de usosAnteriores produziria saldo inválido.',
+                409,
+            );
+        }
+
+        await tx.pacoteClienteServico.update({
+            where: { id: saldo.id },
+            data: {
+                usosAnteriores: novosUsosAnteriores,
+                quantidadeRestante: novaQuantidadeRestante,
+            },
+        });
+
+        return atualizarStatusConformeSaldos(tx, pacoteClienteId);
+    });
 }
 
 export async function buscarPorId(
@@ -320,7 +442,10 @@ export async function atualizarComNumeroNoPacote(
         return await prisma.$transaction(async (tx) => {
             let numeroNoPacote: number | null = null;
 
-            if (pacoteClienteId && data.status !== StatusAgendamento.CANCELADO) {
+            if (
+                pacoteClienteId &&
+                data.status !== StatusAgendamento.CANCELADO
+            ) {
                 const podeManterNumero =
                     servicoId === data.servicoId &&
                     statusAtual !== StatusAgendamento.CANCELADO &&
@@ -408,18 +533,18 @@ export async function atualizarPacoteClienteId(
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
-                const numeroNoPacote = pacoteClienteId
-                        ? atual.pacoteClienteId === pacoteClienteId &&
-                            atual.status !== StatusAgendamento.CANCELADO &&
-                            atual.numeroNoPacote !== null
-                                ? atual.numeroNoPacote
-                                : await reservarNumeroNoPacote(
-                                            tx,
-                                            pacoteClienteId,
-                                            atual.servicoId,
-                                            id,
-                                    )
-                        : null;
+        const numeroNoPacote = pacoteClienteId
+            ? atual.pacoteClienteId === pacoteClienteId &&
+              atual.status !== StatusAgendamento.CANCELADO &&
+              atual.numeroNoPacote !== null
+                ? atual.numeroNoPacote
+                : await reservarNumeroNoPacote(
+                      tx,
+                      pacoteClienteId,
+                      atual.servicoId,
+                      id,
+                  )
+            : null;
 
         return tx.agendamento.update({
             where: { id },
@@ -536,19 +661,10 @@ export async function concluirComPacote(
             );
         }
 
-        const saldosRestantes = await tx.pacoteClienteServico.count({
-            where: { pacoteClienteId, quantidadeRestante: { gt: 0 } },
-        });
-
-        const pacoteClienteAtualizado = await tx.pacoteCliente.update({
-            where: { id: pacoteClienteId },
-            data: {
-                status:
-                    saldosRestantes === 0
-                        ? StatusPacoteCliente.FINALIZADO
-                        : StatusPacoteCliente.ATIVO,
-            },
-        });
+        const pacoteClienteAtualizado = await atualizarStatusConformeSaldos(
+            tx,
+            pacoteClienteId,
+        );
 
         const agendamento = await tx.agendamento.update({
             where: { id: agendamentoId },

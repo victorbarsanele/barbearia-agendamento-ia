@@ -186,6 +186,7 @@ export async function excluirPorId(id: string): Promise<void> {
 export async function vincularCliente(data: {
     clienteId: string;
     pacoteId: string;
+    usosAnteriores?: { servicoId: string; usosAnteriores: number }[];
 }) {
     const cliente = await clienteRepository.buscarPorId(data.clienteId);
     if (!cliente) {
@@ -203,15 +204,79 @@ export async function vincularCliente(data: {
         throw new AppError('Cliente já possui um pacote ativo.', 409);
     }
 
+    const usosAnteriores = new Map(
+        (data.usosAnteriores ?? []).map((item) => [
+            item.servicoId,
+            item.usosAnteriores,
+        ]),
+    );
+    if (usosAnteriores.size !== (data.usosAnteriores ?? []).length) {
+        throw new AppError('Serviço repetido em usosAnteriores.', 400);
+    }
+
+    const servicosDoPacote = new Map(
+        pacote.servicos.map((servico) => [
+            servico.servicoId,
+            servico.quantidadeTotal,
+        ]),
+    );
+    for (const [servicoId, quantidade] of usosAnteriores) {
+        const quantidadeTotal = servicosDoPacote.get(servicoId);
+        if (quantidadeTotal === undefined) {
+            throw new AppError(
+                'Serviço de usosAnteriores não está incluído no pacote.',
+                400,
+            );
+        }
+        if (
+            !Number.isInteger(quantidade) ||
+            quantidade < 0 ||
+            quantidade >= quantidadeTotal
+        ) {
+            throw new AppError(
+                'usosAnteriores deve ser inteiro, maior ou igual a zero e menor que a quantidade total do serviço.',
+                400,
+            );
+        }
+    }
+
     return pacoteClienteRepository.criar({
         clienteId: data.clienteId,
         pacoteId: data.pacoteId,
         servicos: pacote.servicos.map((servico) => ({
             servicoId: servico.servicoId,
             quantidadeTotal: servico.quantidadeTotal,
+            usosAnteriores: usosAnteriores.get(servico.servicoId) ?? 0,
         })),
         dataInicio: new Date(),
     });
+}
+
+export async function atualizarUsosAnteriores(
+    pacoteClienteId: string,
+    servicoId: string,
+    usosAnteriores: number,
+) {
+    if (!Number.isInteger(usosAnteriores) || usosAnteriores < 0) {
+        throw new AppError(
+            'usosAnteriores deve ser inteiro, maior ou igual a zero.',
+            400,
+        );
+    }
+
+    await agendamentoRepository.atualizarUsosAnteriores(
+        pacoteClienteId,
+        servicoId,
+        usosAnteriores,
+    );
+
+    const pacoteCliente =
+        await pacoteClienteRepository.buscarPorId(pacoteClienteId);
+    if (!pacoteCliente) {
+        throw new AppError('Pacote do cliente não encontrado.', 404);
+    }
+
+    return pacoteCliente;
 }
 
 export async function buscarAtivoPorCliente(clienteId: string) {

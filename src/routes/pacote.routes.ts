@@ -54,6 +54,21 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
                     properties: {
                         clienteId: { type: 'string', minLength: 1 },
                         pacoteId: { type: 'string', minLength: 1 },
+                        usosAnteriores: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                required: ['servicoId', 'usosAnteriores'],
+                                additionalProperties: false,
+                                properties: {
+                                    servicoId: { type: 'string', minLength: 1 },
+                                    usosAnteriores: {
+                                        type: 'integer',
+                                        minimum: 0,
+                                    },
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -93,6 +108,32 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         pacoteController.desvincular,
+    );
+
+    app.patch(
+        '/pacotes/cliente/:pacoteClienteId/servicos/:servicoId/usos-anteriores',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['pacoteClienteId', 'servicoId'],
+                    additionalProperties: false,
+                    properties: {
+                        pacoteClienteId: { type: 'string', minLength: 1 },
+                        servicoId: { type: 'string', minLength: 1 },
+                    },
+                },
+                body: {
+                    type: 'object',
+                    required: ['usosAnteriores'],
+                    additionalProperties: false,
+                    properties: {
+                        usosAnteriores: { type: 'integer', minimum: 0 },
+                    },
+                },
+            },
+        },
+        pacoteController.atualizarUsosAnteriores,
     );
 
     app.get(
