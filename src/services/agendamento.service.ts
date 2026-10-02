@@ -7,6 +7,7 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import { isAgendamentoConcluido } from '../utils/agendamento';
 import { TIME_ZONE as HORARIO_TIME_ZONE } from './horario-funcionamento.service';
 import { estaDentroDoHorarioDeAlmoco } from './horario-funcionamento';
 import * as horarioFuncionamentoService from './horario-funcionamento.service';
@@ -335,8 +336,7 @@ function validarStatusPermiteVinculo(agendamento: {
     concluido: boolean;
 }): void {
     if (
-        agendamento.concluido ||
-        agendamento.status === StatusAgendamento.CONCLUIDO ||
+        isAgendamentoConcluido(agendamento) ||
         agendamento.status === StatusAgendamento.CANCELADO
     ) {
         throw new AppError(
@@ -589,6 +589,26 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
+        if (
+            data.status === StatusAgendamento.CANCELADO &&
+            isAgendamentoConcluido(agendamentoExistente)
+        ) {
+            throw new AppError(
+                'Agendamento concluído não pode ser cancelado.',
+                409,
+            );
+        }
+
+        if (
+            data.status === StatusAgendamento.CONCLUIDO &&
+            agendamentoExistente.status !== StatusAgendamento.CONCLUIDO
+        ) {
+            throw new AppError(
+                'Para concluir um agendamento use a conclusão de pacote.',
+                409,
+            );
+        }
+
         const { servico } = await carregarDependencias(
             data.clienteId,
             data.servicoId,
@@ -688,6 +708,13 @@ export async function cancelar(
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
+        if (isAgendamentoConcluido(agendamento)) {
+            throw new AppError(
+                'Agendamento concluído não pode ser cancelado.',
+                409,
+            );
+        }
+
         const agendamentoCancelado = await agendamentoRepository.cancelar(id);
 
         if (notificarCliente) {
@@ -762,6 +789,13 @@ async function concluirInterno(id: string) {
 
     if (!agendamento) {
         throw new AppError('Agendamento não encontrado.', 404);
+    }
+
+    if (agendamento.status === StatusAgendamento.CANCELADO) {
+        throw new AppError(
+            'Agendamento cancelado não pode ser concluído.',
+            409,
+        );
     }
 
     if (agendamento.concluido) {

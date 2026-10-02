@@ -6,6 +6,7 @@ import {
     listarAgendamentos,
     type Agendamento,
 } from '../services/agendamentos.service';
+import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
@@ -235,7 +236,11 @@ export function AgendamentosClienteModal({
                                     >
                                         Editar
                                     </Button>
-                                    {confirmandoRemocaoId === agendamento.id ? (
+                                    {podeCancelarAgendamento(
+                                        agendamento.status,
+                                        agendamento.concluido,
+                                    ) &&
+                                    (confirmandoRemocaoId === agendamento.id ? (
                                         <>
                                             <span className="self-center text-xs text-[var(--color-text-secondary)]">
                                                 Tem certeza?
@@ -291,7 +296,7 @@ export function AgendamentosClienteModal({
                                         >
                                             Remover
                                         </Button>
-                                    )}
+                                    ))}
                                 </div>
                             </li>
                         ))}

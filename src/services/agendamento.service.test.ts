@@ -599,9 +599,96 @@ describe('agendamento.service.cancelar', () => {
         expect(resultado.status).toBe(StatusAgendamento.CANCELADO);
         expect(resultado.id).toBe('agendamento-1');
     });
+
+    it.each([
+        ['por booleano', { concluido: true }],
+        ['por status', { status: StatusAgendamento.CONCLUIDO }],
+    ])('rejeita cancelamento concluído %s', async (_descricao, dados) => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            ...dados,
+        });
+
+        await expect(
+            agendamentoService.cancelar('agendamento-1'),
+        ).rejects.toMatchObject({
+            message: 'Agendamento concluído não pode ser cancelado.',
+            statusCode: 409,
+        });
+        expect(agendamentoRepository.cancelar).not.toHaveBeenCalled();
+    });
 });
 
 describe('agendamento.service.atualizar', () => {
+    it.each([
+        ['concluído por booleano', { concluido: true }],
+        ['com status concluído', { status: StatusAgendamento.CONCLUIDO }],
+    ])('rejeita PUT CANCELADO em agendamento %s', async (_descricao, dados) => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            ...dados,
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                status: StatusAgendamento.CANCELADO,
+            }),
+        ).rejects.toMatchObject({
+            message: 'Agendamento concluído não pode ser cancelado.',
+            statusCode: 409,
+        });
+        expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+    });
+
+    it.each([StatusAgendamento.AGENDADO, StatusAgendamento.CONFIRMADO])(
+        'rejeita PUT CONCLUIDO vindo de %s', async (status) => {
+            vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+                ...agendamentoAtual,
+                status,
+            });
+
+            await expect(
+                agendamentoService.atualizar('agendamento-1', {
+                    clienteId: clienteBase.id,
+                    servicoId: servicoBase.id,
+                    dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                    status: StatusAgendamento.CONCLUIDO,
+                }),
+            ).rejects.toMatchObject({
+                message:
+                    'Para concluir um agendamento use a conclusão de pacote.',
+                statusCode: 409,
+            });
+            expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+        },
+    );
+
+    it('permite PUT com status CONCLUIDO para remarcação', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CONCLUIDO,
+        });
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CONCLUIDO,
+            dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                status: StatusAgendamento.CONCLUIDO,
+            }),
+        ).resolves.toMatchObject({ status: StatusAgendamento.CONCLUIDO });
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledTimes(1);
+    });
+
     it('chama notificação quando reagendamento muda horário', async () => {
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
             ...agendamentoAtual,
@@ -946,6 +1033,21 @@ describe('agendamento.service.concluir', () => {
         });
     });
 
+    it('rejeita conclusão de agendamento cancelado', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CANCELADO,
+        });
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).rejects.toMatchObject({
+            message: 'Agendamento cancelado não pode ser concluído.',
+            statusCode: 409,
+        });
+        expect(agendamentoRepository.concluirComPacote).not.toHaveBeenCalled();
+    });
+
     it('rejeita quando agendamento não está vinculado a pacote', async () => {
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
             ...agendamentoAtual,
@@ -1011,6 +1113,33 @@ describe('agendamento.service.concluir', () => {
             servicoBase.id,
         );
         expect(resultado).toMatchObject({ concluido: true });
+    });
+
+    it('permite reparar status CONCLUIDO ainda não marcado como concluído', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CONCLUIDO,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: false,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                status: StatusAgendamento.CONCLUIDO,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        });
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).resolves.toMatchObject({ concluido: true });
+        expect(agendamentoRepository.concluirComPacote).toHaveBeenCalledTimes(1);
     });
 
     it('rejeita conclusão quando o pacote do cliente não está ativo (ex: cancelado)', async () => {
