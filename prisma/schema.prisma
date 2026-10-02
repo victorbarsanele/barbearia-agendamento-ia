@@ -153,6 +153,7 @@ model PacoteClienteServico {
   pacoteClienteId    String
   servicoId          String
   quantidadeTotal    Int
+  usosAnteriores     Int           @default(0)
   quantidadeRestante Int
 
   pacoteCliente      PacoteCliente @relation(fields: [pacoteClienteId], references: [id], onDelete: Cascade)

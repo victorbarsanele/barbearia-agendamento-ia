@@ -18,12 +18,14 @@ export interface PacoteClienteServicoSaldo {
     servicoId: string;
     quantidadeTotal: number;
     quantidadeRestante: number;
+    usosAnteriores: number;
     servico: PacoteClienteAtivo['pacote']['servicos'][number]['servico'];
 }
 
 export interface VincularPacotePayload {
     clienteId: string;
     pacoteId: string;
+    usosAnteriores?: { servicoId: string; usosAnteriores: number }[];
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
@@ -64,6 +66,25 @@ export async function desvincularPacoteCliente(
     const response = await apiFetch(
         `/api/pacotes/cliente/${pacoteClienteId}/desvincular`,
         { method: 'PATCH' },
+    );
+
+    return handleResponse<PacoteClienteAtivo>(response);
+}
+
+export async function atualizarUsosAnteriores(
+    pacoteClienteId: string,
+    servicoId: string,
+    usosAnteriores: number,
+): Promise<PacoteClienteAtivo> {
+    const response = await apiFetch(
+        `/api/pacotes/cliente/${pacoteClienteId}/servicos/${servicoId}/usos-anteriores`,
+        {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ usosAnteriores }),
+        },
     );
 
     return handleResponse<PacoteClienteAtivo>(response);

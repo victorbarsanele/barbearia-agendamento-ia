@@ -881,11 +881,11 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
             pacote: {
                 servicos: [{ servicoId: servicoBase.id }],
             },
-            servicos: [
-                { servicoId: servicoBase.id, quantidadeRestante: 2 },
-            ],
+            servicos: [{ servicoId: servicoBase.id, quantidadeRestante: 2 }],
         } as never);
-        vi.mocked(agendamentoRepository.criarComNumeroNoPacote).mockResolvedValue({
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).mockResolvedValue({
             ...agendamentoAtual,
             pacoteClienteId: 'pacote-cliente-1',
         });
@@ -897,7 +897,9 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
             dataHoraInicio: '2026-07-20T10:00:00-03:00',
         });
 
-        expect(agendamentoRepository.criarComNumeroNoPacote).toHaveBeenCalledWith(
+        expect(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).toHaveBeenCalledWith(
             expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
             'pacote-cliente-1',
             servicoBase.id,
@@ -1043,9 +1045,7 @@ describe('agendamento.service.vincularPacote', () => {
         pacote: {
             servicos: [{ servicoId: servicoBase.id }],
         },
-        servicos: [
-            { servicoId: servicoBase.id, quantidadeRestante: 5 },
-        ],
+        servicos: [{ servicoId: servicoBase.id, quantidadeRestante: 5 }],
     };
 
     it('vincula pacote a agendamento existente sem vínculo prévio', async () => {
@@ -1402,13 +1402,14 @@ describe('agendamento.service.simularLote', () => {
                 {
                     servicoId: servicoBase.id,
                     quantidadeTotal: 4,
-                    quantidadeRestante: 4,
+                    usosAnteriores: 1,
+                    quantidadeRestante: 3,
                 },
             ],
         } as never);
         vi.mocked(
             agendamentoRepository.contarNaoCanceladosPorPacoteEServico,
-        ).mockResolvedValue(3);
+        ).mockResolvedValue(2);
 
         const resultado = await agendamentoService.simularLote({
             clienteId: clienteBase.id,
@@ -1425,8 +1426,7 @@ describe('agendamento.service.simularLote', () => {
             {
                 data: '2026-07-21',
                 horario: '11:00',
-                motivo:
-                    'Todos os 4 usos deste serviço no pacote já estão agendados ou concluídos.',
+                motivo: 'Todos os 3 usos restantes deste serviço no pacote já estão agendados ou concluídos.',
             },
         ]);
     });
