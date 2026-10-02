@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Cliente } from '../services/clientes.service';
 import { listarPacotes, type Pacote } from '../services/pacotes.service';
 import {
+    atualizarUsosAnteriores,
     buscarPacoteAtivoDoCliente,
     desvincularPacoteCliente,
     vincularPacoteCliente,
@@ -11,6 +12,11 @@ import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
 import { ConfirmDialog } from './ConfirmDialog';
 import { formatPrecoNumberToInputBR } from '../utils/preco';
+import {
+    montarPayloadUsosAnteriores,
+    rotuloPrimeiroNumero,
+    validarUsosAnteriores,
+} from '../utils/usosAnteriores';
 
 interface PacoteClienteModalProps {
     open: boolean;
@@ -35,6 +41,11 @@ function calcularValidoAte(dataInicio: string, duracaoDias: number): string {
     return formatarDataEmBrasilia(validoAte.toISOString());
 }
 
+interface LinhaUsoAnterior {
+    servicoId: string;
+    valor: string;
+}
+
 export function PacoteClienteModal({
     open,
     cliente,
@@ -48,12 +59,51 @@ export function PacoteClienteModal({
     const [pacotesDisponiveis, setPacotesDisponiveis] = useState<Pacote[]>([]);
     const [carregandoPacotes, setCarregandoPacotes] = useState(false);
     const [pacoteSelecionadoId, setPacoteSelecionadoId] = useState('');
+    const [linhasUsosAnteriores, setLinhasUsosAnteriores] = useState<
+        LinhaUsoAnterior[]
+    >([]);
 
     const [vinculando, setVinculando] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
 
+    const [editandoServicoId, setEditandoServicoId] = useState<string | null>(
+        null,
+    );
+    const [valorEditado, setValorEditado] = useState('');
+    const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+    const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+
     const [confirmandoDesvinculo, setConfirmandoDesvinculo] = useState(false);
     const [desvinculando, setDesvinculando] = useState(false);
+
+    const pacoteSelecionado = useMemo(
+        () =>
+            pacotesDisponiveis.find(
+                (pacote) => pacote.id === pacoteSelecionadoId,
+            ) ?? null,
+        [pacoteSelecionadoId, pacotesDisponiveis],
+    );
+
+    const errosUsosAnteriores = useMemo(
+        () =>
+            new Map(
+                linhasUsosAnteriores.map((linha) => {
+                    const servico = pacoteSelecionado?.servicos.find(
+                        (item) => item.servicoId === linha.servicoId,
+                    );
+                    return [
+                        linha.servicoId,
+                        servico
+                            ? validarUsosAnteriores(
+                                  linha.valor,
+                                  servico.quantidadeTotal,
+                              )
+                            : null,
+                    ];
+                }),
+            ),
+        [linhasUsosAnteriores, pacoteSelecionado],
+    );
 
     useEffect(() => {
         if (!open || !cliente) {
@@ -109,8 +159,57 @@ export function PacoteClienteModal({
     }, [open, cliente]);
 
     const podeVincular = useMemo(() => {
-        return !!pacoteSelecionadoId && !vinculando;
-    }, [pacoteSelecionadoId, vinculando]);
+        return (
+            !!pacoteSelecionadoId &&
+            !vinculando &&
+            linhasUsosAnteriores.every(
+                (linha) => !errosUsosAnteriores.get(linha.servicoId),
+            )
+        );
+    }, [
+        errosUsosAnteriores,
+        linhasUsosAnteriores,
+        pacoteSelecionadoId,
+        vinculando,
+    ]);
+
+    const handleSelecionarPacote = (pacoteId: string) => {
+        setPacoteSelecionadoId(pacoteId);
+        const pacote = pacotesDisponiveis.find((item) => item.id === pacoteId);
+        setLinhasUsosAnteriores(
+            pacote?.servicos.map((servico) => ({
+                servicoId: servico.servicoId,
+                valor: '0',
+            })) ?? [],
+        );
+    };
+
+    const atualizarLinhaUsoAnterior = (servicoId: string, valor: string) => {
+        setLinhasUsosAnteriores((linhas) =>
+            linhas.map((linha) =>
+                linha.servicoId === servicoId ? { ...linha, valor } : linha,
+            ),
+        );
+    };
+
+    const carregarPacotesDisponiveis = async () => {
+        setCarregandoPacotes(true);
+        try {
+            setPacotesDisponiveis(await listarPacotes());
+        } finally {
+            setCarregandoPacotes(false);
+        }
+    };
+
+    const aplicarPacoteAtualizado = async (atualizado: PacoteClienteAtivo) => {
+        if (atualizado.status === 'ATIVO') {
+            setPacoteAtivo(atualizado);
+            return;
+        }
+
+        setPacoteAtivo(null);
+        await carregarPacotesDisponiveis();
+    };
 
     const handleDesvincular = async () => {
         if (!pacoteAtivo) {
@@ -155,9 +254,12 @@ export function PacoteClienteModal({
             const novoPacoteCliente = await vincularPacoteCliente({
                 clienteId: cliente.id,
                 pacoteId: pacoteSelecionadoId,
+                usosAnteriores:
+                    montarPayloadUsosAnteriores(linhasUsosAnteriores),
             });
             setPacoteAtivo(novoPacoteCliente);
             setPacoteSelecionadoId('');
+            setLinhasUsosAnteriores([]);
         } catch (error) {
             const message =
                 error instanceof Error
@@ -173,6 +275,55 @@ export function PacoteClienteModal({
             }
         } finally {
             setVinculando(false);
+        }
+    };
+
+    const iniciarEdicao = (servicoId: string, usosAnteriores: number) => {
+        setEditandoServicoId(servicoId);
+        setValorEditado(String(usosAnteriores));
+        setErroEdicao(null);
+    };
+
+    const cancelarEdicao = () => {
+        if (salvandoEdicao) {
+            return;
+        }
+        setEditandoServicoId(null);
+        setValorEditado('');
+        setErroEdicao(null);
+    };
+
+    const salvarEdicao = async (quantidadeTotal: number) => {
+        if (!pacoteAtivo || !editandoServicoId) {
+            return;
+        }
+
+        const validacao = validarUsosAnteriores(valorEditado, quantidadeTotal);
+        if (validacao) {
+            setErroEdicao(validacao);
+            return;
+        }
+
+        setSalvandoEdicao(true);
+        setErroEdicao(null);
+
+        try {
+            const atualizado = await atualizarUsosAnteriores(
+                pacoteAtivo.id,
+                editandoServicoId,
+                Number(valorEditado || 0),
+            );
+            setEditandoServicoId(null);
+            setValorEditado('');
+            await aplicarPacoteAtualizado(atualizado);
+        } catch (error) {
+            setErroEdicao(
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível atualizar os usos anteriores.',
+            );
+        } finally {
+            setSalvandoEdicao(false);
         }
     };
 
@@ -229,13 +380,126 @@ export function PacoteClienteModal({
                                 )}
                             </p>
                             <ul className="mt-2 space-y-1 text-sm font-semibold text-[var(--color-gold)]">
-                                {pacoteAtivo.servicos.map((saldo) => (
-                                    <li key={saldo.servicoId}>
-                                        {saldo.quantidadeRestante} de{' '}
-                                        {saldo.quantidadeTotal} usos de{' '}
-                                        {saldo.servico.nome}
-                                    </li>
-                                ))}
+                                {pacoteAtivo.servicos.map((saldo) => {
+                                    const editando =
+                                        editandoServicoId === saldo.servicoId;
+
+                                    return (
+                                        <li
+                                            key={saldo.servicoId}
+                                            className="space-y-1"
+                                        >
+                                            {editando ? (
+                                                <div className="space-y-2 rounded-[8px] border border-[var(--color-border)] p-2">
+                                                    <label className="block text-xs text-[var(--color-text-secondary)]">
+                                                        Usos anteriores de{' '}
+                                                        {saldo.servico.nome}
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            max={
+                                                                saldo.quantidadeTotal -
+                                                                1
+                                                            }
+                                                            value={valorEditado}
+                                                            onChange={(event) =>
+                                                                setValorEditado(
+                                                                    event.target
+                                                                        .value,
+                                                                )
+                                                            }
+                                                            className="mt-1 h-9 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 text-sm text-[var(--color-text-primary)]"
+                                                        />
+                                                    </label>
+                                                    {erroEdicao && (
+                                                        <p className="text-xs text-[var(--color-danger)]">
+                                                            {erroEdicao}
+                                                        </p>
+                                                    )}
+                                                    <div className="flex gap-2">
+                                                        <Button
+                                                            type="button"
+                                                            className="min-h-9 px-2 text-xs"
+                                                            disabled={
+                                                                salvandoEdicao
+                                                            }
+                                                            onClick={() => {
+                                                                void salvarEdicao(
+                                                                    saldo.quantidadeTotal,
+                                                                );
+                                                            }}
+                                                        >
+                                                            {salvandoEdicao
+                                                                ? 'Salvando...'
+                                                                : 'Salvar'}
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            className="min-h-9 px-2 text-xs"
+                                                            disabled={
+                                                                salvandoEdicao
+                                                            }
+                                                            onClick={
+                                                                cancelarEdicao
+                                                            }
+                                                        >
+                                                            Cancelar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span>
+                                                        {
+                                                            saldo.quantidadeRestante
+                                                        }{' '}
+                                                        de{' '}
+                                                        {saldo.quantidadeTotal}{' '}
+                                                        usos de{' '}
+                                                        {saldo.servico.nome}
+                                                        {saldo.usosAnteriores >
+                                                            0 && (
+                                                            <span className="ml-1 font-normal text-[var(--color-text-secondary)]">
+                                                                (
+                                                                {
+                                                                    saldo.usosAnteriores
+                                                                }{' '}
+                                                                uso
+                                                                {saldo.usosAnteriores ===
+                                                                1
+                                                                    ? ''
+                                                                    : 's'}{' '}
+                                                                anterior
+                                                                {saldo.usosAnteriores ===
+                                                                1
+                                                                    ? ''
+                                                                    : 'es'}
+                                                                )
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    {pacoteAtivo.status ===
+                                                        'ATIVO' && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            className="min-h-8 px-2 text-xs"
+                                                            onClick={() =>
+                                                                iniciarEdicao(
+                                                                    saldo.servicoId,
+                                                                    saldo.usosAnteriores,
+                                                                )
+                                                            }
+                                                        >
+                                                            Editar
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </li>
+                                    );
+                                })}
                             </ul>
                             <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
                                 Início:{' '}
@@ -287,7 +551,7 @@ export function PacoteClienteModal({
                                         <select
                                             value={pacoteSelecionadoId}
                                             onChange={(event) =>
-                                                setPacoteSelecionadoId(
+                                                handleSelecionarPacote(
                                                     event.target.value,
                                                 )
                                             }
@@ -321,6 +585,94 @@ export function PacoteClienteModal({
                                                 ),
                                             )}
                                         </select>
+
+                                        {pacoteSelecionado && (
+                                            <div className="space-y-3 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface-inset)] p-3">
+                                                {pacoteSelecionado.servicos.map(
+                                                    (servico) => {
+                                                        const linha =
+                                                            linhasUsosAnteriores.find(
+                                                                (item) =>
+                                                                    item.servicoId ===
+                                                                    servico.servicoId,
+                                                            );
+                                                        const valor =
+                                                            linha?.valor ?? '0';
+                                                        const erroCampo =
+                                                            errosUsosAnteriores.get(
+                                                                servico.servicoId,
+                                                            );
+                                                        const numero = Number(
+                                                            valor || 0,
+                                                        );
+
+                                                        return (
+                                                            <div
+                                                                key={
+                                                                    servico.servicoId
+                                                                }
+                                                                className="space-y-1"
+                                                            >
+                                                                <label className="block text-sm text-[var(--color-text-primary)]">
+                                                                    {
+                                                                        servico
+                                                                            .servico
+                                                                            .nome
+                                                                    }{' '}
+                                                                    <span className="text-[var(--color-text-secondary)]">
+                                                                        (total:{' '}
+                                                                        {
+                                                                            servico.quantidadeTotal
+                                                                        }
+                                                                        )
+                                                                    </span>
+                                                                    <input
+                                                                        type="number"
+                                                                        min={0}
+                                                                        max={
+                                                                            servico.quantidadeTotal -
+                                                                            1
+                                                                        }
+                                                                        value={
+                                                                            valor
+                                                                        }
+                                                                        onChange={(
+                                                                            event,
+                                                                        ) =>
+                                                                            atualizarLinhaUsoAnterior(
+                                                                                servico.servicoId,
+                                                                                event
+                                                                                    .target
+                                                                                    .value,
+                                                                            )
+                                                                        }
+                                                                        aria-label={`Usos já realizados antes do sistema: ${servico.servico.nome}`}
+                                                                        className="mt-1 h-10 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text-primary)]"
+                                                                    />
+                                                                </label>
+                                                                {erroCampo && (
+                                                                    <p className="text-xs text-[var(--color-danger)]">
+                                                                        {
+                                                                            erroCampo
+                                                                        }
+                                                                    </p>
+                                                                )}
+                                                                {!erroCampo &&
+                                                                    numero >
+                                                                        0 && (
+                                                                        <p className="text-xs text-[var(--color-gold)]">
+                                                                            {rotuloPrimeiroNumero(
+                                                                                numero,
+                                                                                servico.quantidadeTotal,
+                                                                            )}
+                                                                        </p>
+                                                                    )}
+                                                            </div>
+                                                        );
+                                                    },
+                                                )}
+                                            </div>
+                                        )}
 
                                         <Button
                                             type="button"
