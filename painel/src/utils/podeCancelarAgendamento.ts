@@ -1,8 +1,4 @@
-type StatusAgendamento =
-    | 'AGENDADO'
-    | 'CONFIRMADO'
-    | 'CANCELADO'
-    | 'CONCLUIDO';
+type StatusAgendamento = 'AGENDADO' | 'CONFIRMADO' | 'CANCELADO' | 'CONCLUIDO';
 
 export function podeCancelarAgendamento(
     status: StatusAgendamento,

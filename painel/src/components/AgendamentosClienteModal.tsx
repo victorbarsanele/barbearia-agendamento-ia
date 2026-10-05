@@ -240,11 +240,49 @@ export function AgendamentosClienteModal({
                                         agendamento.status,
                                         agendamento.concluido,
                                     ) &&
-                                    (confirmandoRemocaoId === agendamento.id ? (
-                                        <>
-                                            <span className="self-center text-xs text-[var(--color-text-secondary)]">
-                                                Tem certeza?
-                                            </span>
+                                        (confirmandoRemocaoId ===
+                                        agendamento.id ? (
+                                            <>
+                                                <span className="self-center text-xs text-[var(--color-text-secondary)]">
+                                                    Tem certeza?
+                                                </span>
+                                                <Button
+                                                    type="button"
+                                                    variant="danger"
+                                                    className="px-3 text-xs"
+                                                    disabled={
+                                                        removendoId ===
+                                                        agendamento.id
+                                                    }
+                                                    onClick={() =>
+                                                        void handleRemover(
+                                                            agendamento.id,
+                                                        )
+                                                    }
+                                                >
+                                                    {removendoId ===
+                                                    agendamento.id
+                                                        ? 'Removendo...'
+                                                        : 'Sim, remover'}
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    className="px-3 text-xs"
+                                                    disabled={
+                                                        removendoId ===
+                                                        agendamento.id
+                                                    }
+                                                    onClick={() =>
+                                                        setConfirmandoRemocaoId(
+                                                            null,
+                                                        )
+                                                    }
+                                                >
+                                                    Cancelar
+                                                </Button>
+                                            </>
+                                        ) : (
                                             <Button
                                                 type="button"
                                                 variant="danger"
@@ -254,49 +292,14 @@ export function AgendamentosClienteModal({
                                                     agendamento.id
                                                 }
                                                 onClick={() =>
-                                                    void handleRemover(
+                                                    setConfirmandoRemocaoId(
                                                         agendamento.id,
                                                     )
                                                 }
                                             >
-                                                {removendoId === agendamento.id
-                                                    ? 'Removendo...'
-                                                    : 'Sim, remover'}
+                                                Remover
                                             </Button>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                className="px-3 text-xs"
-                                                disabled={
-                                                    removendoId ===
-                                                    agendamento.id
-                                                }
-                                                onClick={() =>
-                                                    setConfirmandoRemocaoId(
-                                                        null,
-                                                    )
-                                                }
-                                            >
-                                                Cancelar
-                                            </Button>
-                                        </>
-                                    ) : (
-                                        <Button
-                                            type="button"
-                                            variant="danger"
-                                            className="px-3 text-xs"
-                                            disabled={
-                                                removendoId === agendamento.id
-                                            }
-                                            onClick={() =>
-                                                setConfirmandoRemocaoId(
-                                                    agendamento.id,
-                                                )
-                                            }
-                                        >
-                                            Remover
-                                        </Button>
-                                    ))}
+                                        ))}
                                 </div>
                             </li>
                         ))}

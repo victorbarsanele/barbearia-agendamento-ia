@@ -644,7 +644,8 @@ describe('agendamento.service.atualizar', () => {
     });
 
     it.each([StatusAgendamento.AGENDADO, StatusAgendamento.CONFIRMADO])(
-        'rejeita PUT CONCLUIDO vindo de %s', async (status) => {
+        'rejeita PUT CONCLUIDO vindo de %s',
+        async (status) => {
             vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
                 ...agendamentoAtual,
                 status,
@@ -1139,7 +1140,9 @@ describe('agendamento.service.concluir', () => {
         await expect(
             agendamentoService.concluir('agendamento-1'),
         ).resolves.toMatchObject({ concluido: true });
-        expect(agendamentoRepository.concluirComPacote).toHaveBeenCalledTimes(1);
+        expect(agendamentoRepository.concluirComPacote).toHaveBeenCalledTimes(
+            1,
+        );
     });
 
     it('rejeita conclusão quando o pacote do cliente não está ativo (ex: cancelado)', async () => {
