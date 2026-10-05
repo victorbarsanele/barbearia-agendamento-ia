@@ -36,6 +36,14 @@ vi.mock('../repositories/servico.repository', () => ({
     listarTodos: mocks.listarTodosServicos,
 }));
 
+vi.mock('../repositories/bloqueio.repository', () => ({
+    listarTodos: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../repositories/pacote.repository', () => ({
+    listarLiberadosParaGemini: vi.fn().mockResolvedValue([]),
+}));
+
 vi.mock('../repositories/horarioFuncionamento.repository', () => ({
     listarTodos: vi.fn().mockResolvedValue(
         [1, 2, 3, 4, 5]

@@ -1,7 +1,6 @@
 import { Cliente } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { AppError } from '../lib/app-error';
-import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import { normalizarTelefone } from '../utils/telefone';
 
@@ -91,29 +90,43 @@ export async function atualizar(
     });
 }
 
-export async function excluirPorId(id: string): Promise<void> {
-    const clienteExistente = await clienteRepository.buscarPorId(id);
-    if (!clienteExistente) {
+export async function obterResumoExclusao(
+    id: string,
+): Promise<clienteRepository.ResumoExclusaoCliente> {
+    const resumo = await clienteRepository.obterResumoExclusao(id);
+    if (!resumo) {
         throw new AppError('Cliente não encontrado.', 404);
     }
 
-    const agendamentosAtivos =
-        await agendamentoRepository.contarAtivosPorClienteId(id);
-    if (agendamentosAtivos > 0) {
+    return resumo;
+}
+
+export async function excluirPorId(
+    id: string,
+    confirmarHistorico = false,
+): Promise<void> {
+    const resumo = await obterResumoExclusao(id);
+
+    if (resumo.impedimentos.length > 0) {
         throw new AppError(
-            'Não é possível excluir cliente com agendamentos ativos.',
+            'Não é possível excluir cliente com pacote ativo ou agendamentos futuros em aberto.',
             409,
         );
     }
 
-    await agendamentoRepository.excluirCanceladosPorClienteId(id);
+    if (resumo.temHistorico && !confirmarHistorico) {
+        throw new AppError(
+            'Este cliente possui histórico. Confirme a exclusão do histórico para continuar.',
+            409,
+        );
+    }
 
     try {
-        await clienteRepository.excluirPorId(id);
+        await clienteRepository.excluirComHistorico(id);
     } catch (error) {
         if (isForeignKeyConflict(error)) {
             throw new AppError(
-                'Não é possível excluir cliente com agendamentos vinculados.',
+                'Não foi possível excluir o cliente porque ainda existem registros vinculados.',
                 409,
             );
         }

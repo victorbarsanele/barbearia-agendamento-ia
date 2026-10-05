@@ -26,6 +26,10 @@ interface ListarClientesQuery {
     limit?: number;
 }
 
+interface ExcluirClienteQuery {
+    confirmarHistorico?: boolean;
+}
+
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
         void reply.status(error.statusCode).send({ message: error.message });
@@ -120,12 +124,32 @@ export async function atualizar(
     }
 }
 
-export async function excluir(
+export async function obterResumoExclusao(
     request: FastifyRequest<{ Params: BuscarPorIdParams }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        await clienteService.excluirPorId(request.params.id);
+        const resumo = await clienteService.obterResumoExclusao(
+            request.params.id,
+        );
+        void reply.send(resumo);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function excluir(
+    request: FastifyRequest<{
+        Params: BuscarPorIdParams;
+        Querystring: ExcluirClienteQuery;
+    }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        await clienteService.excluirPorId(
+            request.params.id,
+            request.query.confirmarHistorico === true,
+        );
         void reply.status(204).send();
     } catch (error) {
         handleError(error, reply);

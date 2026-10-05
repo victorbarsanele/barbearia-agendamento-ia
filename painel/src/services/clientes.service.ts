@@ -11,6 +11,24 @@ export interface ClientePayload {
     telefone: string;
 }
 
+export interface ResumoExclusaoCliente {
+    cliente: { id: string; nome: string };
+    agendamentos: {
+        concluidos: number;
+        cancelados: number;
+        passados: number;
+        emAberto: number;
+    };
+    pacotes: {
+        ativos: number;
+        finalizados: number;
+        cancelados: number;
+    };
+    lotes: number;
+    temHistorico: boolean;
+    impedimentos: string[];
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
         const body = (await response.json().catch(() => null)) as {
@@ -95,8 +113,19 @@ export async function atualizarCliente(
     return handleResponse<Cliente>(response);
 }
 
-export async function excluirCliente(id: string): Promise<void> {
-    const response = await apiFetch(`/api/clientes/${id}`, {
+export async function obterResumoExclusaoCliente(
+    id: string,
+): Promise<ResumoExclusaoCliente> {
+    const response = await apiFetch(`/api/clientes/${id}/exclusao`);
+    return handleResponse<ResumoExclusaoCliente>(response);
+}
+
+export async function excluirCliente(
+    id: string,
+    options: { confirmarHistorico?: boolean } = {},
+): Promise<void> {
+    const query = options.confirmarHistorico ? '?confirmarHistorico=true' : '';
+    const response = await apiFetch(`/api/clientes/${id}${query}`, {
         method: 'DELETE',
     });
 
