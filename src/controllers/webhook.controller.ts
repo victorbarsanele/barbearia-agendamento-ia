@@ -1,109 +1,9 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
-import {
-    escalarParaHumano,
-    processarMensagemWhatsapp,
-    sendWhatsAppText,
-} from '../services/gemini.service';
+import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
+import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { parseEvolutionIncomingMessage } from '../whatsapp/evolution-inbound.adapter';
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const MAX_MESSAGE_LENGTH = 500;
-const URL_PATTERN = /(https?:\/\/|www\.)/i;
-const JAILBREAK_PATTERN =
-    /\b(ignore|system\s*prompt|instru[çc][aã]o|dan|jailbreak|bypass|prompt|base64)\b/i;
-const ESCALATION_KEYWORDS_PATTERN =
-    /\b(atendente|humano|pessoa real|falar com o barbeiro|falar com alguem)\b/i;
-
-interface BlockDecision {
-    blocked: boolean;
-    reason?: string;
-    response?: string;
-}
-
-type AnyRecord = Record<string, unknown>;
-
-function asRecord(value: unknown): AnyRecord | null {
-    if (typeof value !== 'object' || value === null) {
-        return null;
-    }
-
-    return value as AnyRecord;
-}
-
-function readString(record: AnyRecord | null, key: string): string | null {
-    if (!record) {
-        return null;
-    }
-
-    const value = record[key];
-    return typeof value === 'string' ? value : null;
-}
-
-function readBoolean(record: AnyRecord | null, key: string): boolean | null {
-    if (!record) {
-        return null;
-    }
-
-    const value = record[key];
-    return typeof value === 'boolean' ? value : null;
-}
-
-function extractMessagePayload(body: unknown): {
-    remoteJid: string | null;
-    conversation: string | null;
-    fromMe: boolean;
-} {
-    const root = asRecord(body);
-    const data = asRecord(root?.data);
-
-    const key = asRecord(data?.key ?? root?.key);
-    const message = asRecord(data?.message ?? root?.message);
-
-    const remoteJidRaw = readString(key, 'remoteJid');
-    const remoteJidAlt = readString(key, 'remoteJidAlt');
-    const addressingMode = readString(key, 'addressingMode');
-    const conversation = readString(message, 'conversation');
-    const fromMe = readBoolean(key, 'fromMe') ?? false;
-
-    // When WhatsApp uses 'lid' (new addressing mode), remoteJid is an internal ID
-    // not a phone number. Real phone is in remoteJidAlt.
-    const remoteJid =
-        addressingMode === 'lid' && remoteJidAlt ? remoteJidAlt : remoteJidRaw;
-
-    return {
-        remoteJid,
-        conversation,
-        fromMe,
-    };
-}
-
-function evaluateIncomingMessage(message: string): BlockDecision {
-    if (message.length > MAX_MESSAGE_LENGTH) {
-        return {
-            blocked: true,
-            reason: 'mensagem muito longa',
-            response: 'Mensagem muito longa. Por favor, seja mais breve.',
-        };
-    }
-
-    if (URL_PATTERN.test(message)) {
-        return {
-            blocked: true,
-            reason: 'mensagem com link',
-            response: 'Não consigo processar links. Posso agendar um horário?',
-        };
-    }
-
-    if (JAILBREAK_PATTERN.test(message)) {
-        return {
-            blocked: true,
-            reason: 'padrão suspeito de jailbreak',
-            response:
-                'Só posso ajudar com agendamentos. Quer marcar um horário?',
-        };
-    }
-
-    return { blocked: false };
-}
 
 export async function receberWhatsappWebhook(
     request: FastifyRequest,
@@ -118,48 +18,50 @@ export async function receberWhatsappWebhook(
         return;
     }
 
-    const { remoteJid, conversation, fromMe } = extractMessagePayload(
-        request.body,
-    );
+    const message = parseEvolutionIncomingMessage(request.body);
 
-    if (remoteJid?.endsWith('@g.us')) {
+    if (message.isGroup) {
         void reply.status(200).send({ ok: true });
         return;
     }
 
-    if (fromMe) {
+    if (message.isFromMe) {
         void reply.status(200).send({ ok: true });
         return;
     }
 
-    if (!remoteJid || !conversation) {
+    if (!message.phone || !message.text) {
         void reply.status(200).send({ ok: true });
         return;
     }
 
-    if (ESCALATION_KEYWORDS_PATTERN.test(conversation)) {
-        console.log(
-            `[WEBHOOK] Escalonamento por palavra-chave | numero: ${remoteJid}`,
+    if (!message.messageId) {
+        console.warn(
+            '[WEBHOOK] ID da mensagem ausente; processamento sem deduplicação.',
         );
-        await escalarParaHumano(remoteJid, 'palavra_chave');
-        void reply.status(200).send({ ok: true });
-        return;
+    } else {
+        let isFirstDelivery: boolean;
+        try {
+            isFirstDelivery = await registrarMensagemProcessada(
+                message.provider,
+                message.messageId,
+            );
+        } catch {
+            console.error(
+                '[WEBHOOK] Falha ao registrar ID da mensagem processada.',
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
+
+        if (!isFirstDelivery) {
+            void reply.status(200).send({ ok: true });
+            return;
+        }
     }
-
-    const blockDecision = evaluateIncomingMessage(conversation);
-
-    if (blockDecision.blocked && blockDecision.response) {
-        console.log(
-            `[WEBHOOK] Mensagem bloqueada: ${blockDecision.reason} | numero: ${remoteJid}`,
-        );
-
-        await sendWhatsAppText(remoteJid, blockDecision.response);
-
-        void reply.status(200).send({ ok: true });
-        return;
-    }
-
-    await processarMensagemWhatsapp(remoteJid, conversation);
 
     void reply.status(200).send({ ok: true });
+    void processarMensagemRecebida(message).catch(() => {
+        console.error('[WEBHOOK] Falha inesperada no processamento assíncrono.');
+    });
 }
