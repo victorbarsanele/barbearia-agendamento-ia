@@ -12,27 +12,20 @@ import { listarAgendamentos } from '../services/agendamentos.service';
 import {
     excluirCliente,
     listarClientesPaginado,
+    obterResumoExclusaoCliente,
     type Cliente,
+    type ResumoExclusaoCliente,
 } from '../services/clientes.service';
 import { formatarTelefone } from '../utils/formatarTelefone';
+import { nomeConfereComConfirmacao } from '../utils/nomeConfereComConfirmacao';
 
 const CLIENTES_POR_PAGINA = 10;
 const DEBOUNCE_BUSCA_MS = 350;
 
-function getMensagemErroExclusaoCliente(error: unknown): string {
-    const message = error instanceof Error ? error.message.toLowerCase() : '';
-
-    const pareceErroDeVinculo =
-        message.includes('agendamento') ||
-        message.includes('vinculad') ||
-        message.includes('constraint') ||
-        message.includes('foreign key');
-
-    if (pareceErroDeVinculo) {
-        return 'Este cliente possui agendamentos vinculados. Use o botao Agendamentos para remove-los antes de excluir.';
-    }
-
-    return 'Nao foi possivel excluir o cliente.';
+function getMensagemErro(error: unknown): string {
+    return error instanceof Error
+        ? error.message
+        : 'Nao foi possivel processar a exclusao do cliente.';
 }
 
 export function ClientesPage() {
@@ -45,6 +38,12 @@ export function ClientesPage() {
     const [excluindoId, setExcluindoId] = useState<string | null>(null);
     const [clientePendenteExclusao, setClientePendenteExclusao] =
         useState<Cliente | null>(null);
+    const [resumoExclusao, setResumoExclusao] =
+        useState<ResumoExclusaoCliente | null>(null);
+    const [nomeConfirmacao, setNomeConfirmacao] = useState('');
+    const [carregandoResumoId, setCarregandoResumoId] = useState<string | null>(
+        null,
+    );
     const [agendamentosPorCliente, setAgendamentosPorCliente] = useState<
         Record<string, number>
     >({});
@@ -126,6 +125,38 @@ export function ClientesPage() {
         };
     }, [buscaDebounced, pagina, refreshToken]);
 
+    const handleSolicitarExclusao = async (cliente: Cliente) => {
+        setCarregandoResumoId(cliente.id);
+        setErro(null);
+        setSucesso(null);
+
+        try {
+            const resumo = await obterResumoExclusaoCliente(cliente.id);
+            setClientePendenteExclusao(cliente);
+            setNomeConfirmacao('');
+
+            if (resumo.impedimentos.length > 0 || resumo.temHistorico) {
+                setResumoExclusao(resumo);
+            } else {
+                setResumoExclusao(null);
+            }
+        } catch (error) {
+            setErro(getMensagemErro(error));
+        } finally {
+            setCarregandoResumoId(null);
+        }
+    };
+
+    const fecharExclusao = () => {
+        if (excluindoId) {
+            return;
+        }
+
+        setClientePendenteExclusao(null);
+        setResumoExclusao(null);
+        setNomeConfirmacao('');
+    };
+
     const handleConfirmarExclusao = async () => {
         if (!clientePendenteExclusao) {
             return;
@@ -136,7 +167,9 @@ export function ClientesPage() {
         setSucesso(null);
 
         try {
-            await excluirCliente(clientePendenteExclusao.id);
+            await excluirCliente(clientePendenteExclusao.id, {
+                confirmarHistorico: Boolean(resumoExclusao?.temHistorico),
+            });
             const eraUltimoDaPagina = clientes.length === 1 && pagina > 1;
             if (eraUltimoDaPagina) {
                 setPagina((atual) => atual - 1);
@@ -145,12 +178,13 @@ export function ClientesPage() {
             }
             setSucesso('Cliente excluido com sucesso.');
         } catch (error) {
-            const message = getMensagemErroExclusaoCliente(error);
-            setErro(message);
+            setErro(getMensagemErro(error));
             setSucesso(null);
         } finally {
             setExcluindoId(null);
             setClientePendenteExclusao(null);
+            setResumoExclusao(null);
+            setNomeConfirmacao('');
         }
     };
 
@@ -284,9 +318,12 @@ export function ClientesPage() {
                                     type="button"
                                     variant="danger-soft"
                                     onClick={() =>
-                                        setClientePendenteExclusao(cliente)
+                                        void handleSolicitarExclusao(cliente)
                                     }
-                                    disabled={excluindoId === cliente.id}
+                                    disabled={
+                                        excluindoId === cliente.id ||
+                                        carregandoResumoId === cliente.id
+                                    }
                                     title="Excluir cliente"
                                     aria-label="Excluir cliente"
                                     className="h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
@@ -336,7 +373,9 @@ export function ClientesPage() {
             )}
 
             <ConfirmDialog
-                open={Boolean(clientePendenteExclusao)}
+                open={
+                    Boolean(clientePendenteExclusao) && resumoExclusao === null
+                }
                 title="Confirmar exclusão"
                 description={
                     clientePendenteExclusao
@@ -346,15 +385,120 @@ export function ClientesPage() {
                 confirmText="Excluir"
                 loading={Boolean(excluindoId)}
                 onCancel={() => {
-                    if (excluindoId) {
-                        return;
-                    }
-                    setClientePendenteExclusao(null);
+                    fecharExclusao();
                 }}
                 onConfirm={() => {
                     void handleConfirmarExclusao();
                 }}
             />
+
+            {clientePendenteExclusao && resumoExclusao && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/80 p-4 backdrop-blur-[1px]"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="Resumo da exclusão do cliente"
+                >
+                    <Card className="w-full max-w-md p-5 shadow-xl">
+                        <h2
+                            className="text-lg font-semibold text-[var(--color-gold)]"
+                            style={{ fontFamily: 'var(--font-title)' }}
+                        >
+                            {resumoExclusao.impedimentos.length > 0
+                                ? 'Exclusão bloqueada'
+                                : 'Excluir histórico do cliente'}
+                        </h2>
+
+                        {resumoExclusao.impedimentos.length > 0 ? (
+                            <>
+                                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                                    Resolva estes impedimentos antes de excluir:
+                                </p>
+                                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--color-danger-text)]">
+                                    {resumoExclusao.impedimentos.map(
+                                        (impedimento) => (
+                                            <li key={impedimento}>
+                                                {impedimento}
+                                            </li>
+                                        ),
+                                    )}
+                                </ul>
+                            </>
+                        ) : (
+                            <>
+                                <p className="mt-2 text-sm text-[var(--color-text-secondary)]">
+                                    Esta exclusão não pode ser desfeita.
+                                </p>
+                                <div className="mt-3 space-y-1 text-sm text-[var(--color-text-secondary)]">
+                                    <p>
+                                        {resumoExclusao.agendamentos.concluidos}{' '}
+                                        atendimentos concluídos
+                                    </p>
+                                    <p>
+                                        {resumoExclusao.agendamentos.passados}{' '}
+                                        atendimentos passados
+                                    </p>
+                                    <p>
+                                        {resumoExclusao.agendamentos.cancelados}{' '}
+                                        atendimentos cancelados
+                                    </p>
+                                    <p>
+                                        {resumoExclusao.pacotes.finalizados +
+                                            resumoExclusao.pacotes
+                                                .cancelados}{' '}
+                                        pacotes
+                                    </p>
+                                    <p>{resumoExclusao.lotes} lotes</p>
+                                </div>
+                                <label className="mt-4 block text-sm text-[var(--color-text-primary)]">
+                                    Digite o nome do cliente para confirmar
+                                    <input
+                                        type="text"
+                                        value={nomeConfirmacao}
+                                        onChange={(event) =>
+                                            setNomeConfirmacao(
+                                                event.target.value,
+                                            )
+                                        }
+                                        className="mt-2 h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-sm outline-none focus:border-[var(--color-gold)]"
+                                    />
+                                </label>
+                            </>
+                        )}
+
+                        <div className="mt-5 flex justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="danger"
+                                onClick={fecharExclusao}
+                                disabled={Boolean(excluindoId)}
+                                className="px-3 text-sm"
+                            >
+                                Cancelar
+                            </Button>
+                            {resumoExclusao.impedimentos.length === 0 && (
+                                <Button
+                                    type="button"
+                                    variant="danger"
+                                    onClick={() =>
+                                        void handleConfirmarExclusao()
+                                    }
+                                    disabled={
+                                        Boolean(excluindoId) ||
+                                        !nomeConfereComConfirmacao(
+                                            nomeConfirmacao,
+                                            clientePendenteExclusao.nome,
+                                        )
+                                    }
+                                    className="px-3 text-sm"
+                                >
+                                    {excluindoId ? 'Excluindo...' : 'Excluir'}
+                                </Button>
+                            )}
+                        </div>
+                    </Card>
+                </div>
+            )}
 
             <AgendamentosClienteModal
                 open={Boolean(clienteModalAgendamentos)}

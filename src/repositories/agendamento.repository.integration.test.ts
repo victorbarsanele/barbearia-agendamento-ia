@@ -10,6 +10,7 @@ type EntidadesTeste = {
     segundoServicoId?: string;
     pacoteId?: string;
     pacoteClienteId?: string;
+    loteId?: string;
 };
 
 let entidades: EntidadesTeste;
@@ -65,6 +66,12 @@ afterEach(async () => {
         await prisma.pacote.delete({ where: { id: entidades.pacoteId } });
     }
 
+    if (entidades.loteId) {
+        await prisma.loteAgendamento.delete({
+            where: { id: entidades.loteId },
+        });
+    }
+
     await prisma.cliente.deleteMany({
         where: { id: entidades.clienteId },
     });
@@ -81,6 +88,43 @@ afterEach(async () => {
 });
 
 describe('agendamento.repository integração concorrência', () => {
+    it('não lista como editável irmão AGENDADO já concluído', async () => {
+        const lote = await prisma.loteAgendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+            },
+        });
+        entidades.loteId = lote.id;
+        const origem = await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                loteId: lote.id,
+                dataHoraInicio: new Date('2026-09-20T13:00:00.000Z'),
+                dataHoraFim: new Date('2026-09-20T13:30:00.000Z'),
+            },
+        });
+        const concluido = await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                loteId: lote.id,
+                dataHoraInicio: new Date('2026-09-20T14:00:00.000Z'),
+                dataHoraFim: new Date('2026-09-20T14:30:00.000Z'),
+                concluido: true,
+            },
+        });
+
+        const siblings =
+            await agendamentoRepository.listarSiblingsEditaveisDoLote(
+                lote.id,
+                origem.id,
+            );
+
+        expect(siblings.map((item) => item.id)).not.toContain(concluido.id);
+    });
+
     async function criarPacoteComQuatroUsos(usosAnteriores = 0) {
         const pacote = await prisma.pacote.create({
             data: {

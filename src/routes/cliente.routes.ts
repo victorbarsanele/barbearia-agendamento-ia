@@ -39,6 +39,23 @@ export async function clienteRoutes(app: FastifyInstance): Promise<void> {
     );
 
     app.get(
+        '/clientes/:id/exclusao',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: {
+                        id: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        clienteController.obterResumoExclusao,
+    );
+
+    app.get(
         '/clientes/:id',
         {
             schema: {
@@ -91,6 +108,13 @@ export async function clienteRoutes(app: FastifyInstance): Promise<void> {
                     additionalProperties: false,
                     properties: {
                         id: { type: 'string', minLength: 1 },
+                    },
+                },
+                querystring: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        confirmarHistorico: { type: 'boolean', default: false },
                     },
                 },
             },

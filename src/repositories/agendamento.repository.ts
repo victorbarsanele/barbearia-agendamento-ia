@@ -506,6 +506,7 @@ export async function listarSiblingsEditaveisDoLote(
                         StatusAgendamento.CANCELADO,
                     ],
                 },
+                concluido: false,
             },
             include: includeRelacoes,
         });

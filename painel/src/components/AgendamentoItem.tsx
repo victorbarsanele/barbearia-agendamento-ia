@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, CheckCircle2, Clock, Package } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
 import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
+import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
 import { formatarPrecoBRL } from '../utils/preco';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
@@ -49,7 +50,10 @@ export function AgendamentoItem({
 
     const fazPartesDeLote = Boolean(agendamento.loteId);
 
-    const podeCancelar = agendamento.status !== 'CANCELADO';
+    const podeCancelar = podeCancelarAgendamento(
+        agendamento.status,
+        agendamento.concluido,
+    );
     const podeEditar = agendamento.status !== 'CANCELADO';
     const ehAgendamentoDePacote = Boolean(agendamento.pacoteClienteId);
     const podeConcluir = ehAgendamentoDePacote && !agendamento.concluido;

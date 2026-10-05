@@ -817,6 +817,25 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         });
     });
 
+    it('devolve recusa do service quando cancelamento é de concluído', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+        ]);
+        vi.mocked(agendamentoService.cancelar).mockRejectedValue(
+            new Error('Agendamento concluído não pode ser cancelado.'),
+        );
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+        );
+
+        expect(resultado).toEqual({
+            sucesso: false,
+            mensagem: 'Agendamento concluído não pode ser cancelado.',
+            motivoRecusa: 'Agendamento concluído não pode ser cancelado.',
+        });
+    });
+
     it('falha ao agir quando telefone não possui agendamento ativo', async () => {
         vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
 
