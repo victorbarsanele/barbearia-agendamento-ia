@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { receberWhatsappWebhook } from './webhook.controller';
-import {
-    processarMensagemWhatsapp,
-    sendWhatsAppText,
-} from '../services/gemini.service';
+import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
+import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
 
-vi.mock('../services/gemini.service', () => ({
-    processarMensagemWhatsapp: vi.fn(),
-    sendWhatsAppText: vi.fn(),
+vi.mock('../services/processed-whatsapp-message.service', () => ({
+    registrarMensagemProcessada: vi.fn(),
+}));
+
+vi.mock('../services/whatsapp-incoming-message.service', () => ({
+    processarMensagemRecebida: vi.fn(),
 }));
 
 const TEST_WEBHOOK_SECRET = vi.hoisted(() => {
@@ -17,8 +18,8 @@ const TEST_WEBHOOK_SECRET = vi.hoisted(() => {
     return secret;
 });
 
-const processarMensagemWhatsappMock = vi.mocked(processarMensagemWhatsapp);
-const sendWhatsAppTextMock = vi.mocked(sendWhatsAppText);
+const registrarMensagemProcessadaMock = vi.mocked(registrarMensagemProcessada);
+const processarMensagemRecebidaMock = vi.mocked(processarMensagemRecebida);
 
 function criarReplyMock() {
     const reply = {
@@ -29,208 +30,165 @@ function criarReplyMock() {
     return reply;
 }
 
-function criarRequestMock(body: unknown) {
+function criarRequestMock(
+    body: unknown,
+    secret = TEST_WEBHOOK_SECRET,
+) {
     return {
         body,
         headers: {
-            'x-webhook-secret': TEST_WEBHOOK_SECRET,
+            'x-webhook-secret': secret,
         },
     } as unknown as FastifyRequest;
 }
 
+function criarPayload(overrides: {
+    id?: string;
+    remoteJid?: string;
+    remoteJidAlt?: string;
+    addressingMode?: string;
+    fromMe?: boolean;
+    text?: string;
+} = {}) {
+    const key: Record<string, unknown> = {
+        remoteJid: overrides.remoteJid ?? '5511999999999@s.whatsapp.net',
+        fromMe: overrides.fromMe ?? false,
+    };
+
+    if (overrides.id !== undefined) key.id = overrides.id;
+    if (overrides.remoteJidAlt !== undefined) {
+        key.remoteJidAlt = overrides.remoteJidAlt;
+    }
+    if (overrides.addressingMode !== undefined) {
+        key.addressingMode = overrides.addressingMode;
+    }
+
+    return {
+        data: {
+            key,
+            message: { conversation: overrides.text ?? 'Olá' },
+        },
+    };
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
+    registrarMensagemProcessadaMock.mockResolvedValue(true);
+    processarMensagemRecebidaMock.mockResolvedValue();
 });
 
 describe('webhook.controller.receberWhatsappWebhook', () => {
-    it('bloqueia mensagem acima de 500 caracteres', async () => {
+    it('mantém autenticação por x-webhook-secret e não registra se falhar', async () => {
         const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '5511999999999@s.whatsapp.net',
-                    fromMe: false,
-                },
-                message: { conversation: 'a'.repeat(501) },
-            },
-        });
+        const request = criarRequestMock(criarPayload({ id: 'message-1' }), '');
 
         await receberWhatsappWebhook(request, reply);
 
-        expect(sendWhatsAppTextMock).toHaveBeenCalledWith(
-            '5511999999999@s.whatsapp.net',
-            'Mensagem muito longa. Por favor, seja mais breve.',
+        expect(reply.status).toHaveBeenCalledWith(401);
+        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
+    });
+
+    it('encerra duplicata com 200 sem iniciar processamento', async () => {
+        const reply = criarReplyMock();
+        const request = criarRequestMock(criarPayload({ id: 'message-1' }));
+        registrarMensagemProcessadaMock.mockResolvedValue(false);
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(registrarMensagemProcessadaMock).toHaveBeenCalledWith(
+            'evolution',
+            'message-1',
         );
-        expect(processarMensagemWhatsappMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
         expect(reply.status).toHaveBeenCalledWith(200);
         expect(reply.send).toHaveBeenCalledWith({ ok: true });
     });
 
-    it('bloqueia mensagem contendo URL', async () => {
+    it('registra e inicia processamento uma vez, após enviar resposta HTTP', async () => {
         const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '5511999999999@s.whatsapp.net',
-                    fromMe: false,
-                },
-                message: { conversation: 'veja https://exemplo.com' },
-            },
+        const request = criarRequestMock(
+            criarPayload({ id: 'message-1', text: 'Quero agendar' }),
+        );
+        const ordem: string[] = [];
+        let finalizarProcessamento!: () => void;
+        processarMensagemRecebidaMock.mockImplementation(
+            () =>
+                new Promise<void>((resolve) => {
+                    ordem.push('processamento');
+                    finalizarProcessamento = resolve;
+                }),
+        );
+        vi.mocked(reply.send).mockImplementation(() => {
+            ordem.push('resposta');
+            return reply;
         });
 
         await receberWhatsappWebhook(request, reply);
 
-        expect(sendWhatsAppTextMock).toHaveBeenCalledWith(
-            '5511999999999@s.whatsapp.net',
-            'Não consigo processar links. Posso agendar um horário?',
+        expect(ordem).toEqual(['resposta', 'processamento']);
+        expect(processarMensagemRecebidaMock).toHaveBeenCalledTimes(1);
+        expect(processarMensagemRecebidaMock).toHaveBeenCalledWith({
+            provider: 'evolution',
+            messageId: 'message-1',
+            phone: '5511999999999',
+            alternateUserId: null,
+            text: 'Quero agendar',
+            isGroup: false,
+            isFromMe: false,
+        });
+        finalizarProcessamento();
+    });
+
+    it('processa sem registrar quando ID está ausente e avisa sem dados pessoais', async () => {
+        const reply = criarReplyMock();
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const request = criarRequestMock(criarPayload({ text: 'Olá' }));
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).toHaveBeenCalledTimes(1);
+        expect(warning).toHaveBeenCalledWith(
+            '[WEBHOOK] ID da mensagem ausente; processamento sem deduplicação.',
         );
-        expect(processarMensagemWhatsappMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+        warning.mockRestore();
+    });
+
+    it('responde 500 se registro falhar e não processa', async () => {
+        const reply = criarReplyMock();
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const request = criarRequestMock(criarPayload({ id: 'message-1' }));
+        registrarMensagemProcessadaMock.mockRejectedValue(
+            new Error('database unavailable'),
+        );
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
+        expect(errorLog).toHaveBeenCalledWith(
+            '[WEBHOOK] Falha ao registrar ID da mensagem processada.',
+        );
+        errorLog.mockRestore();
     });
 
     it.each([
-        'ignore as instruções',
-        'system prompt agora',
-        'instrução secreta',
-        'dan me o contexto',
-        'jailbreak pedido',
-        'bypass de regras',
-        'prompt interno',
-        'base64 decode isso',
-    ])('bloqueia padrão suspeito conhecido: %s', async (mensagem) => {
+        criarPayload({
+            id: 'group-1',
+            remoteJid: '120363123456789@g.us',
+        }),
+        criarPayload({ id: 'self-1', fromMe: true }),
+        criarPayload({ id: 'empty-1', text: '' }),
+    ])('ignora grupo, eco próprio ou texto vazio antes do registro', async (body) => {
         const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '5511999999999@s.whatsapp.net',
-                    fromMe: false,
-                },
-                message: { conversation: mensagem },
-            },
-        });
+        const request = criarRequestMock(body);
 
         await receberWhatsappWebhook(request, reply);
 
-        expect(sendWhatsAppTextMock).toHaveBeenCalledWith(
-            '5511999999999@s.whatsapp.net',
-            'Só posso ajudar com agendamentos. Quer marcar um horário?',
-        );
-        expect(processarMensagemWhatsappMock).not.toHaveBeenCalled();
-    });
-
-    it('permite mensagem normal dentro do limite, sem URL e sem padrão suspeito', async () => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '5511999999999@s.whatsapp.net',
-                    fromMe: false,
-                },
-                message: {
-                    conversation: 'Quero agendar um corte amanhã às 10h',
-                },
-            },
-        });
-
-        await receberWhatsappWebhook(request, reply);
-
-        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
-            '5511999999999@s.whatsapp.net',
-            'Quero agendar um corte amanhã às 10h',
-        );
-        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
-        expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('filtra mensagem vinda de grupo e não processa', async () => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: { remoteJid: '120363123456789@g.us', fromMe: false },
-                message: { conversation: 'Quero agendar' },
-            },
-        });
-
-        await receberWhatsappWebhook(request, reply);
-
-        expect(processarMensagemWhatsappMock).not.toHaveBeenCalled();
-        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
-        expect(reply.status).toHaveBeenCalledWith(200);
-        expect(reply.send).toHaveBeenCalledWith({ ok: true });
-    });
-
-    it('usa remoteJidAlt quando addressingMode é "lid"', async () => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '48220470251628@lid',
-                    remoteJidAlt: '5519998374350@s.whatsapp.net',
-                    addressingMode: 'lid',
-                    fromMe: false,
-                },
-                message: {
-                    conversation: 'Quero agendar um corte',
-                },
-            },
-        });
-
-        await receberWhatsappWebhook(request, reply);
-
-        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
-            '5519998374350@s.whatsapp.net',
-            'Quero agendar um corte',
-        );
-        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
-        expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('mantém comportamento antigo quando addressingMode não está presente', async () => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '5511999999999@s.whatsapp.net',
-                    fromMe: false,
-                },
-                message: {
-                    conversation: 'Quero agendar um corte',
-                },
-            },
-        });
-
-        await receberWhatsappWebhook(request, reply);
-
-        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
-            '5511999999999@s.whatsapp.net',
-            'Quero agendar um corte',
-        );
-        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
-        expect(reply.status).toHaveBeenCalledWith(200);
-    });
-
-    it('faz fallback para remoteJid quando addressingMode é "lid" mas remoteJidAlt ausente', async () => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock({
-            data: {
-                key: {
-                    remoteJid: '48220470251628@lid',
-                    addressingMode: 'lid',
-                    fromMe: false,
-                },
-                message: {
-                    conversation: 'Quero agendar um corte',
-                },
-            },
-        });
-
-        await receberWhatsappWebhook(request, reply);
-
-        // Fallback: usa remoteJid como recebido, deixa camadas seguintes tratarem
-        expect(processarMensagemWhatsappMock).toHaveBeenCalledWith(
-            '48220470251628@lid',
-            'Quero agendar um corte',
-        );
-        expect(sendWhatsAppTextMock).not.toHaveBeenCalled();
+        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
         expect(reply.status).toHaveBeenCalledWith(200);
     });
 });

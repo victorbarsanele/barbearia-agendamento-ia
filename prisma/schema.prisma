@@ -193,3 +193,12 @@ model HorarioFuncionamento {
 
   @@map("horarios_funcionamento")
 }
+
+model MensagemWhatsAppProcessada {
+  provedor    String
+  idMensagem  String
+  registradoEm DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([provedor, idMensagem])
+  @@map("mensagens_whatsapp_processadas")
+}

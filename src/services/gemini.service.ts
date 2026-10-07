@@ -20,6 +20,9 @@ import {
 } from './horario-funcionamento';
 import { carregarConfiguracao } from './horario-funcionamento.service';
 import { normalizarTelefone } from '../utils/telefone';
+import { sendWhatsAppText } from '../whatsapp/evolution-outbound.adapter';
+
+export { sendWhatsAppText } from '../whatsapp/evolution-outbound.adapter';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const TIME_ZONE = agendamentoService.TIME_ZONE;
@@ -29,22 +32,6 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
-
-function getEvolutionApiKey(): string | undefined {
-    return process.env.EVOLUTION_API_KEY;
-}
-
-function getEvolutionApiUrl(): string {
-    return process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-}
-
-function getEvolutionInstanceName(): string {
-    return process.env.EVOLUTION_INSTANCE_NAME || 'barbearia';
-}
-
-function getEvolutionSendTextUrl(): string {
-    return `${getEvolutionApiUrl()}/message/sendText/${getEvolutionInstanceName()}`;
-}
 
 function getEscalationDefaultCooldownMs(): number {
     return Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
@@ -437,10 +424,6 @@ async function buscarClientePorTelefoneVariantes(
     }
 
     return null;
-}
-
-function normalizeBrazilPhoneForEvolution(value: string): string {
-    return normalizarTelefone(value);
 }
 
 function normalizeDateTimeInput(value: string): string {
@@ -1625,67 +1608,6 @@ async function runGeminiFunctionCalling(
     }
 
     return { text: finalText, usouTool, escalonado: false };
-}
-
-export async function sendWhatsAppText(
-    remoteJid: string,
-    text: string,
-): Promise<void> {
-    const number = normalizeBrazilPhoneForEvolution(remoteJid);
-
-    if (!number) {
-        return;
-    }
-
-    if (process.env.SIMULACAO_WEBHOOK === 'true') {
-        if (process.env.NODE_ENV === 'production') {
-            console.warn(
-                '[GEMINI SERVICE] SIMULACAO_WEBHOOK ignorada em produção.',
-            );
-        } else {
-            console.log(
-                '\n=== [SIMULACAO WEBHOOK] Mensagem que seria enviada ===',
-            );
-            console.log(`Para: ${remoteJid}`);
-            console.log(`Texto:\n${text}`);
-            console.log(
-                '=======================================================\n',
-            );
-            return;
-        }
-    }
-
-    const evolutionApiKey = getEvolutionApiKey();
-
-    if (!evolutionApiKey) {
-        throw new Error('EVOLUTION_API_KEY não definido no ambiente.');
-    }
-
-    const url = getEvolutionSendTextUrl();
-
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                apikey: evolutionApiKey,
-            },
-            body: JSON.stringify({
-                number,
-                text,
-            }),
-        });
-
-        if (!response.ok) {
-            const body = await response.text().catch(() => '');
-            throw new Error(
-                `Falha ao enviar mensagem pela Evolution API (${response.status}): ${body}`,
-            );
-        }
-    } catch (error) {
-        logNetworkError('EVOLUTION API', url, error);
-        throw error;
-    }
 }
 
 export async function processarMensagemWhatsapp(
