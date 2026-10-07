@@ -12,7 +12,9 @@ export function verifyYCloudSignature(
         return false;
     }
 
-    const match = signatureHeader.match(/^t=(\d+),s=([a-fA-F0-9]{64})$/);
+    const match = signatureHeader.match(
+        /^\s*t\s*=\s*(\d+)\s*,\s*s\s*=\s*([a-fA-F0-9]{64})\s*$/,
+    );
     if (!match) {
         return false;
     }

@@ -99,6 +99,87 @@ describe('YCloud outbound adapter', () => {
         });
     });
 
+    it('keeps invalid recipient and missing sender configuration errors out of network catch', async () => {
+        await expect(sendYCloudText('invalid number', 'text')).rejects.toThrow(
+            'Número de WhatsApp inválido.',
+        );
+        expect(fetch).not.toHaveBeenCalled();
+
+        vi.stubEnv('YCLOUD_FROM_NUMBER', '');
+        await expect(sendYCloudText('5511999999999', 'text')).rejects.toThrow(
+            'YCLOUD_FROM_NUMBER não configurado.',
+        );
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('throws on 2xx failed status and masks long digit sequences', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({
+                    status: 'failed',
+                    code: 'failure',
+                    message: 'Rejected for +5511999999999',
+                }),
+            }),
+        );
+
+        await expect(
+            sendYCloudText('5511999999999', 'PRIVATE MESSAGE'),
+        ).rejects.toThrow(
+            'Falha no envio YCloud: status failed; código failure; mensagem Rejected for [número].',
+        );
+    });
+
+    it('accepts unreadable 2xx body and logs only safe response metadata', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockRejectedValue(new Error('unreadable')),
+            }),
+        );
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        await expect(
+            sendYCloudText('5511999999999', 'PRIVATE MESSAGE'),
+        ).resolves.toBeUndefined();
+
+        expect(info).toHaveBeenCalledWith(
+            '[YCLOUD] Envio aceito | id: ausente | status: ausente',
+        );
+        expect(JSON.stringify(info.mock.calls)).not.toContain('5511999999999');
+        expect(JSON.stringify(info.mock.calls)).not.toContain('PRIVATE MESSAGE');
+        info.mockRestore();
+    });
+
+    it('logs accepted ID and status without recipient or message', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({
+                    id: 'outbound-id',
+                    status: 'sent',
+                }),
+            }),
+        );
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        await sendYCloudText('5511999999999', 'PRIVATE MESSAGE');
+
+        expect(info).toHaveBeenCalledWith(
+            '[YCLOUD] Envio aceito | id: outbound-id | status: sent',
+        );
+        expect(JSON.stringify(info.mock.calls)).not.toContain('5511999999999');
+        expect(JSON.stringify(info.mock.calls)).not.toContain('PRIVATE MESSAGE');
+        info.mockRestore();
+    });
+
     it('aborts request after 15 seconds', async () => {
         vi.useFakeTimers();
         vi.stubGlobal(

@@ -5,6 +5,8 @@ import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-no
 import { IncomingWhatsAppMessage } from '../whatsapp/types';
 import { parseYCloudWebhookEvent } from '../whatsapp/ycloud-inbound.adapter';
 import { verifyYCloudSignature } from '../whatsapp/ycloud-signature';
+import { getWhatsAppProvider } from '../whatsapp/config';
+import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
 
 export async function processarEventoYCloud(
     message: IncomingWhatsAppMessage,
@@ -58,13 +60,34 @@ export async function receberYCloudWebhook(
         return;
     }
 
+    if (event.kind === 'ignored') {
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (getWhatsAppProvider() !== 'ycloud') {
+        console.log(
+            '[YCLOUD WEBHOOK] Mensagem recebida ignorada: provedor ativo não é ycloud',
+        );
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    const allowlist = getWhatsAppAllowlist();
     if (
-        event.kind === 'ignored' ||
+        allowlist.active &&
+        (!event.message.phone || !allowlist.phones.has(event.message.phone))
+    ) {
+        console.log('[YCLOUD WEBHOOK] Mensagem ignorada pela lista de teste');
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (
         !event.message.text ||
         (!event.message.phone && !event.message.alternateUserId)
     ) {
         if (
-            event.kind === 'message' &&
             !event.message.phone &&
             !event.message.alternateUserId
         ) {

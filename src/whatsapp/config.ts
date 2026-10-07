@@ -1,4 +1,5 @@
 import { normalizarTelefone } from '../utils/telefone';
+import { validateWhatsAppAllowlist } from './allowlist';
 
 export type WhatsAppProvider = 'evolution' | 'ycloud';
 
@@ -16,6 +17,7 @@ export function getWhatsAppProvider(): WhatsAppProvider {
 
 export function validateWhatsAppConfiguration(): void {
     const provider = getWhatsAppProvider();
+    validateWhatsAppAllowlist();
 
     if (provider === 'evolution') {
         return;

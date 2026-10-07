@@ -58,6 +58,8 @@ function inboundBody(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
     vi.stubEnv('YCLOUD_WEBHOOK_SECRET', webhookSecret);
+    vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+    vi.stubEnv('WHATSAPP_ALLOWLIST', '');
     vi.clearAllMocks();
     registerMock.mockResolvedValue(true);
     processMock.mockResolvedValue();
@@ -120,6 +122,32 @@ describe('YCloud webhook controller', () => {
         expect(processMock).toHaveBeenCalledTimes(1);
     });
 
+    it('ignores inbound messages while Evolution is active', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'evolution');
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(makeRequest(inboundBody()), reply);
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Mensagem recebida ignorada: provedor ativo não é ycloud',
+        );
+        log.mockRestore();
+    });
+
+    it('accepts the inbound message when YCloud is active', async () => {
+        const reply = makeReply();
+
+        await receberYCloudWebhook(makeRequest(inboundBody()), reply);
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'wamid-1');
+        expect(processMock).toHaveBeenCalledTimes(1);
+    });
+
     it('ACKs before processing promise finishes', async () => {
         const reply = makeReply();
         const order: string[] = [];
@@ -165,6 +193,30 @@ describe('YCloud webhook controller', () => {
         expect(registerMock).not.toHaveBeenCalled();
     });
 
+    it('logs and acknowledges echo even when Evolution is active', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'evolution');
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                JSON.stringify({
+                    type: 'whatsapp.smb.message.echoes',
+                    whatsappSMBMessage: { wamid: 'echo-2' },
+                }),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Eco recebido | tipo: whatsapp.smb.message.echoes | wamid: echo-2',
+        );
+        log.mockRestore();
+    });
+
     it('does not run Gemini for username-only sender', async () => {
         const reply = makeReply();
         await receberYCloudWebhook(
@@ -184,6 +236,114 @@ describe('YCloud webhook controller', () => {
 
         expect(usernameMock).toHaveBeenCalledWith('username-123');
         expect(processMock).not.toHaveBeenCalled();
+    });
+
+    it('allows listed phone and ignores unlisted phone before idempotency', async () => {
+        vi.stubEnv(
+            'WHATSAPP_ALLOWLIST',
+            '+55 (11) 99999-9999, 5511888888888',
+        );
+        const listedReply = makeReply();
+        await receberYCloudWebhook(makeRequest(inboundBody()), listedReply);
+
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'wamid-1');
+        expect(processMock).toHaveBeenCalledTimes(1);
+
+        vi.clearAllMocks();
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const unlistedReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                JSON.stringify({
+                    type: 'whatsapp.inbound_message.received',
+                    whatsappInboundMessage: {
+                        wamid: 'unlisted-id',
+                        from: '5511777777777',
+                        type: 'text',
+                        text: { body: 'Olá' },
+                    },
+                }),
+            ),
+            unlistedReply,
+        );
+
+        expect(unlistedReply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+        expect(usernameMock).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Mensagem ignorada pela lista de teste',
+        );
+        log.mockRestore();
+    });
+
+    it('canonicalizes legacy mobile allowlist entry and ignores username-only sender', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '551198765432');
+        const listedReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                JSON.stringify({
+                    type: 'whatsapp.inbound_message.received',
+                    whatsappInboundMessage: {
+                        wamid: 'legacy-mobile',
+                        from: '5511998765432',
+                        type: 'text',
+                        text: { body: 'Olá' },
+                    },
+                }),
+            ),
+            listedReply,
+        );
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'legacy-mobile');
+        expect(processMock).toHaveBeenCalledTimes(1);
+
+        vi.clearAllMocks();
+        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const usernameReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                JSON.stringify({
+                    type: 'whatsapp.inbound_message.received',
+                    whatsappInboundMessage: {
+                        wamid: 'username-id',
+                        fromUserId: 'username-private',
+                        type: 'text',
+                        text: { body: 'Olá' },
+                    },
+                }),
+            ),
+            usernameReply,
+        );
+
+        expect(usernameReply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(usernameMock).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Mensagem ignorada pela lista de teste',
+        );
+        log.mockRestore();
+    });
+
+    it('keeps username handling when allowlist is disabled', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '  ');
+
+        await receberYCloudWebhook(
+            makeRequest(
+                JSON.stringify({
+                    type: 'whatsapp.inbound_message.received',
+                    whatsappInboundMessage: {
+                        wamid: 'username-id',
+                        fromUserId: 'username-123',
+                        type: 'text',
+                        text: { body: 'Olá' },
+                    },
+                }),
+            ),
+            makeReply(),
+        );
+
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'username-id');
+        expect(usernameMock).toHaveBeenCalledWith('username-123');
     });
 
     it('returns 500 and skips processing when idempotency registration fails', async () => {

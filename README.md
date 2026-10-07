@@ -96,6 +96,7 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `YCLOUD_API_KEY` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_WEBHOOK_SECRET` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
+- `WHATSAPP_ALLOWLIST` (opcional; lista temporária de números para testes YCloud)
 
 #### 6.2 Backend (raiz)
 
@@ -133,6 +134,8 @@ Evolution continua como provedor padrão para manter a operação atual. Use `WH
 #### 6.5 YCloud (WhatsApp Business Platform)
 
 Configure `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 com `+`) e `BARBER_PHONE`. O número do barbeiro não pode ser igual ao número conectado à YCloud.
+
+Durante validação, defina `WHATSAPP_ALLOWLIST` como números separados por vírgula. Só mensagens da lista passam pela rota YCloud; remetentes sem telefone também são ignorados. Remova a variável ou deixe-a vazia para desativar a lista. Inicialização registra apenas quantidade de números, nunca os números.
 
 Configure endpoint de webhook na YCloud para:
 
@@ -258,6 +261,7 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `YCLOUD_API_KEY` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)
+- `WHATSAPP_ALLOWLIST` (optional temporary list of test numbers for YCloud)
 
 #### 6.2 Backend (root)
 
@@ -295,6 +299,8 @@ Evolution remains the default provider to preserve current behavior. Set `WHATSA
 #### 6.5 YCloud (WhatsApp Business Platform)
 
 Set `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 with `+`) and `BARBER_PHONE`. Barber and connected YCloud numbers must differ.
+
+During validation, set `WHATSAPP_ALLOWLIST` to comma-separated numbers. Only listed senders pass through the YCloud route; senders without visible phone numbers are also ignored. Remove the variable or leave it empty to disable the list. Startup logs only the number of entries, never the numbers themselves.
 
 Configure YCloud webhook endpoint:
 

@@ -32,4 +32,32 @@ describe('YCloud webhook signature', () => {
         const signature = createYCloudSignature(body, secret, now);
         expect(verifyYCloudSignature(body, signature, secret, now)).toBe(true);
     });
+
+    it('accepts whitespace around separators and equals signs', () => {
+        const [, timestamp] = createYCloudSignature(
+            body,
+            secret,
+            now / 1000,
+        ).match(/^t=(\d+),s=/)!;
+        const signature = createYCloudSignature(body, secret, now / 1000)
+            .split(',')[1]!
+            .split('=')[1]!;
+
+        expect(
+            verifyYCloudSignature(
+                body,
+                ` t = ${timestamp} , s = ${signature} `,
+                secret,
+                now,
+            ),
+        ).toBe(true);
+        expect(
+            verifyYCloudSignature(
+                body,
+                `t=${timestamp},s=${signature.slice(2)}`,
+                secret,
+                now,
+            ),
+        ).toBe(false);
+    });
 });
