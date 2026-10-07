@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import * as webhookController from '../controllers/webhook.controller';
+import { receberYCloudWebhook } from '../controllers/ycloud-webhook.controller';
 
 export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     app.post(
@@ -14,4 +15,13 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
         },
         webhookController.receberWhatsappWebhook,
     );
+
+    await app.register(async (ycloudApp) => {
+        ycloudApp.addContentTypeParser(
+            'application/json',
+            { parseAs: 'string' },
+            (_request, body, done) => done(null, body),
+        );
+        ycloudApp.post('/webhook/ycloud', receberYCloudWebhook);
+    });
 }

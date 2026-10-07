@@ -114,6 +114,17 @@ function formatarHorarioBrasilia(data: Date): string {
     }).format(data);
 }
 
+function formatarHorarioCompletoTemplate(data: Date, incluirDiaSemana: boolean): string {
+    const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
+        ...(incluirDiaSemana ? { weekday: 'long' as const } : {}),
+        day: '2-digit',
+        month: '2-digit',
+        timeZone: TIME_ZONE,
+    }).format(data);
+
+    return `${dataFormatada} às ${formatarHorarioBrasilia(data)}`;
+}
+
 function formatarMinutosComoHorario(minutos: number): string {
     const horas = Math.floor(minutos / 60);
     const minutosRestantes = minutos % 60;
@@ -133,17 +144,28 @@ async function enviarMensagemRemarcacao(
     const barberPhone =
         process.env.BARBER_PHONE?.trim() || 'o barbeiro diretamente';
 
-    const mensagem = [
-        `Olá ${nomeCliente}! Seu agendamento foi remarcado pelo barbeiro.`,
-        `Nova data: ${formatarDataBrasilia(dataHoraInicio)}`,
-        `Novo horário: ${formatarHorarioBrasilia(dataHoraInicio)} (horário de Brasília)`,
-        `Serviço: ${nomeServico}`,
-        `Dúvidas? Entre em contato com o barbeiro: ${barberPhone}`,
-    ].join('\n');
-
-    const { addToHistory, sendWhatsAppText } = await import('./gemini.service');
-    await sendWhatsAppText(telefone, mensagem);
-    addToHistory(telefone, 'model', mensagem);
+    const { addToHistory } = await import('./gemini.service');
+    const { enviarNotificacaoWhatsApp } = await import(
+        './whatsapp-notification.service'
+    );
+    const mensagem = await enviarNotificacaoWhatsApp(
+        'reagendamento',
+        telefone,
+        {
+            nomeCliente,
+            novaData: formatarDataBrasilia(dataHoraInicio),
+            novoHorario: formatarHorarioBrasilia(dataHoraInicio),
+            novoHorarioCompleto: formatarHorarioCompletoTemplate(
+                dataHoraInicio,
+                true,
+            ),
+            servico: nomeServico,
+            contatoBarbeiro: barberPhone,
+        },
+    );
+    if (mensagem) {
+        addToHistory(telefone, 'model', mensagem);
+    }
 }
 
 async function enviarMensagemCancelamento(
@@ -159,17 +181,28 @@ async function enviarMensagemCancelamento(
     const barberPhone =
         process.env.BARBER_PHONE?.trim() || 'o barbeiro diretamente';
 
-    const mensagem = [
-        `Olá ${nomeCliente}! Seu agendamento foi cancelado pelo barbeiro.`,
-        `Data: ${formatarDataBrasilia(dataHoraInicio)}`,
-        `Horário: ${formatarHorarioBrasilia(dataHoraInicio)} (horário de Brasília)`,
-        `Serviço: ${nomeServico}`,
-        `Dúvidas? Entre em contato com o barbeiro: ${barberPhone}`,
-    ].join('\n');
-
-    const { addToHistory, sendWhatsAppText } = await import('./gemini.service');
-    await sendWhatsAppText(telefone, mensagem);
-    addToHistory(telefone, 'model', mensagem);
+    const { addToHistory } = await import('./gemini.service');
+    const { enviarNotificacaoWhatsApp } = await import(
+        './whatsapp-notification.service'
+    );
+    const mensagem = await enviarNotificacaoWhatsApp(
+        'cancelamento',
+        telefone,
+        {
+            nomeCliente,
+            data: formatarDataBrasilia(dataHoraInicio),
+            horario: formatarHorarioBrasilia(dataHoraInicio),
+            dataHoraCompleta: formatarHorarioCompletoTemplate(
+                dataHoraInicio,
+                false,
+            ),
+            servico: nomeServico,
+            contatoBarbeiro: barberPhone,
+        },
+    );
+    if (mensagem) {
+        addToHistory(telefone, 'model', mensagem);
+    }
 }
 
 function validarAntecedenciaMinima(dataHoraInicio: Date): void {
@@ -681,7 +714,6 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             } catch (error) {
                 console.error(
                     '[AGENDAMENTO SERVICE] Falha ao enviar mensagem de remarcação no WhatsApp',
-                    error,
                 );
             }
         }
@@ -728,7 +760,6 @@ export async function cancelar(
             } catch (error) {
                 console.error(
                     '[AGENDAMENTO SERVICE] Falha ao enviar mensagem de cancelamento no WhatsApp',
-                    error,
                 );
             }
         }

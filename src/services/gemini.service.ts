@@ -20,9 +20,9 @@ import {
 } from './horario-funcionamento';
 import { carregarConfiguracao } from './horario-funcionamento.service';
 import { normalizarTelefone } from '../utils/telefone';
-import { sendWhatsAppText } from '../whatsapp/evolution-outbound.adapter';
+import { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
-export { sendWhatsAppText } from '../whatsapp/evolution-outbound.adapter';
+export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
 const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const TIME_ZONE = agendamentoService.TIME_ZONE;
@@ -774,15 +774,23 @@ export async function escalarParaHumano(
                         ? 'cliente interessado em pacote de serviços'
                         : `motivo: ${motivo}`;
 
-            await sendWhatsAppText(
-                barberPhone,
-                `Cliente ${phone} precisa de atendimento manual (${descricaoMotivo}).`,
-            ).catch((error) =>
+            try {
+                const { enviarNotificacaoWhatsApp } = await import(
+                    './whatsapp-notification.service'
+                );
+                await enviarNotificacaoWhatsApp(
+                    'atendimento_humano',
+                    barberPhone,
+                    {
+                        telefoneCliente: phone,
+                        motivo: descricaoMotivo,
+                    },
+                );
+            } catch {
                 console.error(
-                    '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento',
-                    error,
-                ),
-            );
+                    '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento.',
+                );
+            }
         }
     }
 }
