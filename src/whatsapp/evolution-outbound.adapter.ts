@@ -1,4 +1,5 @@
 import { normalizarTelefone } from '../utils/telefone';
+import { getWhatsAppProvider } from './config';
 
 function getEvolutionApiKey(): string | undefined {
     return process.env.EVOLUTION_API_KEY;
@@ -24,6 +25,12 @@ export async function sendWhatsAppText(
     remoteJid: string,
     text: string,
 ): Promise<void> {
+    if (getWhatsAppProvider() !== 'evolution') {
+        throw new Error(
+            'Evolution outbound adapter não pode ser usado com outro provedor.',
+        );
+    }
+
     const number = normalizarTelefone(remoteJid);
 
     if (!number) {

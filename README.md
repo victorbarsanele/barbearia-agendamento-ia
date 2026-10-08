@@ -34,7 +34,8 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 
 #### Integrações
 
-- Evolution API (WhatsApp)
+- Evolution API (WhatsApp, transporte legado)
+- YCloud (WhatsApp Business Platform)
 - Google Gemini (Function Calling)
 
 ### 3. Funcionalidades principais
@@ -81,6 +82,7 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `DATABASE_URL`
 - `PORT`
 - `GEMINI_API_KEY`
+- `WHATSAPP_PROVIDER` (`evolution` por padrão; ou `ycloud`)
 - `EVOLUTION_API_KEY`
 - `JWT_SECRET`
 - `ADMIN_USER`
@@ -91,6 +93,10 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS`
+- `YCLOUD_API_KEY` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
+- `YCLOUD_WEBHOOK_SECRET` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
+- `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
+- `WHATSAPP_ALLOWLIST` (opcional; lista temporária de números para testes YCloud)
 
 #### 6.2 Backend (raiz)
 
@@ -121,15 +127,25 @@ cd painel
 npm run build
 ```
 
-#### 6.4 Dependência Evolution API (Docker)
+#### 6.4 Evolution API (legado)
 
-A integração de WhatsApp depende da Evolution API rodando via Docker. Em ambiente local, execute a Evolution API em container (normalmente em projeto/stack separado) antes de testar fluxo de webhook e envio de mensagens.
+Evolution continua como provedor padrão para manter a operação atual. Use `WHATSAPP_PROVIDER=evolution`; Evolution API deve estar disponível conforme configuração existente.
 
-Exemplo comum:
+#### 6.5 YCloud (WhatsApp Business Platform)
 
-```bash
-docker-compose up -d
-```
+Configure `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 com `+`) e `BARBER_PHONE`. O número do barbeiro não pode ser igual ao número conectado à YCloud.
+
+Durante validação, defina `WHATSAPP_ALLOWLIST` como números separados por vírgula. Só mensagens da lista passam pela rota YCloud; remetentes sem telefone também são ignorados. Remova a variável ou deixe-a vazia para desativar a lista. Inicialização registra apenas quantidade de números, nunca os números.
+
+Configure endpoint de webhook na YCloud para:
+
+`https://barbearia-agendamento-ia.up.railway.app/webhook/ycloud`
+
+Inscreva eventos de mensagem recebida (`whatsapp.inbound_message.received`) e eco do app (`whatsapp.smb.message.echoes`). Copie o segredo gerado no endpoint para `YCLOUD_WEBHOOK_SECRET`. O endpoint valida assinatura HMAC do corpo bruto.
+
+Para rollback, defina `WHATSAPP_PROVIDER=evolution` e restaure a configuração Evolution. Faça redeploy e confirme `/webhook/whatsapp` e envio Evolution antes de desativar o endpoint YCloud.
+
+Em modo YCloud, respostas dentro da conversa usam texto; notificações proativas usam os templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`.
 
 ### 7. Testes
 
@@ -183,7 +199,8 @@ During appointments, the barber was losing time by manually answering scheduling
 
 #### Integrations
 
-- Evolution API (WhatsApp)
+- Evolution API (WhatsApp, legacy transport)
+- YCloud (WhatsApp Business Platform)
 - Google Gemini (Function Calling)
 
 ### 3. Core features
@@ -230,6 +247,7 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `DATABASE_URL`
 - `PORT`
 - `GEMINI_API_KEY`
+- `WHATSAPP_PROVIDER` (`evolution` by default, or `ycloud`)
 - `EVOLUTION_API_KEY`
 - `JWT_SECRET`
 - `ADMIN_USER`
@@ -240,6 +258,10 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS`
+- `YCLOUD_API_KEY` (required with `WHATSAPP_PROVIDER=ycloud`)
+- `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
+- `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)
+- `WHATSAPP_ALLOWLIST` (optional temporary list of test numbers for YCloud)
 
 #### 6.2 Backend (root)
 
@@ -270,15 +292,25 @@ cd painel
 npm run build
 ```
 
-#### 6.4 Evolution API dependency (Docker)
+#### 6.4 Evolution API (legacy)
 
-WhatsApp integration depends on Evolution API running through Docker. In local environment, run Evolution API in a container (usually in a separate project/stack) before testing webhook and outbound message flows.
+Evolution remains the default provider to preserve current behavior. Set `WHATSAPP_PROVIDER=evolution`; keep Evolution API available as configured.
 
-Common example:
+#### 6.5 YCloud (WhatsApp Business Platform)
 
-```bash
-docker-compose up -d
-```
+Set `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 with `+`) and `BARBER_PHONE`. Barber and connected YCloud numbers must differ.
+
+During validation, set `WHATSAPP_ALLOWLIST` to comma-separated numbers. Only listed senders pass through the YCloud route; senders without visible phone numbers are also ignored. Remove the variable or leave it empty to disable the list. Startup logs only the number of entries, never the numbers themselves.
+
+Configure YCloud webhook endpoint:
+
+`https://barbearia-agendamento-ia.up.railway.app/webhook/ycloud`
+
+Subscribe to inbound message (`whatsapp.inbound_message.received`) and app echo (`whatsapp.smb.message.echoes`) events. Copy the endpoint secret to `YCLOUD_WEBHOOK_SECRET`; the endpoint verifies the HMAC signature against the raw body.
+
+To roll back, set `WHATSAPP_PROVIDER=evolution`, restore Evolution configuration, redeploy, and confirm `/webhook/whatsapp` plus outbound sending before disabling the YCloud endpoint.
+
+YCloud mode sends in-window replies as text and proactive notifications using approved templates `aviso_reagendamento`, `aviso_cancelamento` and `aviso_atendimento_humano`.
 
 ### 7. Tests
 

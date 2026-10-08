@@ -2,7 +2,11 @@ import fastifyJwt from '@fastify/jwt';
 import fp from 'fastify-plugin';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-const PUBLIC_POST_ROUTES = new Set(['/auth/login', '/webhook/whatsapp']);
+const PUBLIC_POST_ROUTES = new Set([
+    '/auth/login',
+    '/webhook/whatsapp',
+    '/webhook/ycloud',
+]);
 const PUBLIC_GET_ROUTES = new Set(['/health']);
 const revokedTokens = new Set<string>();
 

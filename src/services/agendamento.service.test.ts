@@ -1,6 +1,10 @@
 import { StatusAgendamento } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const notificationMock = vi.hoisted(() => ({
+    enviarNotificacaoWhatsApp: vi.fn(),
+}));
+
 vi.mock('../repositories/agendamento.repository', () => ({
     criar: vi.fn(),
     criarComNumeroNoPacote: vi.fn(),
@@ -49,6 +53,8 @@ vi.mock('./gemini.service', () => ({
     sendWhatsAppText: vi.fn(),
     addToHistory: vi.fn(),
 }));
+
+vi.mock('./whatsapp-notification.service', () => notificationMock);
 
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
@@ -137,6 +143,9 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-20T12:00:00Z'));
     vi.clearAllMocks();
+    notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
+        'Mensagem de notificação',
+    );
     mockarDependenciasPadrao();
 });
 
@@ -720,12 +729,14 @@ describe('agendamento.service.atualizar', () => {
                 status: StatusAgendamento.AGENDADO,
             }),
         );
-        expect(geminiService.sendWhatsAppText).toHaveBeenCalledTimes(1);
-        expect(geminiService.sendWhatsAppText).toHaveBeenCalledWith(
+        expect(notificationMock.enviarNotificacaoWhatsApp).toHaveBeenCalledTimes(1);
+        expect(notificationMock.enviarNotificacaoWhatsApp).toHaveBeenCalledWith(
+            'reagendamento',
             clienteBase.telefone,
-            expect.stringContaining(
-                'Seu agendamento foi remarcado pelo barbeiro.',
-            ),
+            expect.objectContaining({
+                nomeCliente: clienteBase.nome,
+                servico: servicoBase.nome,
+            }),
         );
         expect(resultado.dataHoraInicio).toEqual(
             new Date('2026-07-20T11:00:00-03:00'),
@@ -750,7 +761,7 @@ describe('agendamento.service.atualizar', () => {
             notificarCliente: false,
         });
 
-        expect(geminiService.sendWhatsAppText).not.toHaveBeenCalled();
+        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
     });
 
     it('não chama notificação quando reagendamento não muda horário nem serviço', async () => {
@@ -770,7 +781,7 @@ describe('agendamento.service.atualizar', () => {
             notificarCliente: true,
         });
 
-        expect(geminiService.sendWhatsAppText).not.toHaveBeenCalled();
+        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
     });
 
     it('mantém atualização quando envio de reagendamento falha', async () => {
@@ -782,7 +793,7 @@ describe('agendamento.service.atualizar', () => {
             dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
             dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
         });
-        vi.mocked(geminiService.sendWhatsAppText).mockRejectedValueOnce(
+        notificationMock.enviarNotificacaoWhatsApp.mockRejectedValueOnce(
             new Error('Evolution indisponível'),
         );
 
@@ -809,22 +820,18 @@ describe('agendamento.service.atualizar', () => {
 
         await agendamentoService.cancelar('agendamento-1', true);
 
-        expect(geminiService.sendWhatsAppText).toHaveBeenCalledWith(
+        expect(notificationMock.enviarNotificacaoWhatsApp).toHaveBeenCalledWith(
+            'cancelamento',
             clienteBase.telefone,
-            expect.stringContaining(
-                'Seu agendamento foi cancelado pelo barbeiro.',
-            ),
-        );
-        expect(geminiService.sendWhatsAppText).toHaveBeenCalledWith(
-            clienteBase.telefone,
-            expect.stringContaining('Serviço: Corte masculino'),
+            expect.objectContaining({
+                nomeCliente: clienteBase.nome,
+                servico: 'Corte masculino',
+            }),
         );
         expect(geminiService.addToHistory).toHaveBeenCalledWith(
             clienteBase.telefone,
             'model',
-            expect.stringContaining(
-                'Seu agendamento foi cancelado pelo barbeiro.',
-            ),
+            'Mensagem de notificação',
         );
     });
 
@@ -839,7 +846,7 @@ describe('agendamento.service.atualizar', () => {
 
         await agendamentoService.cancelar('agendamento-1', false);
 
-        expect(geminiService.sendWhatsAppText).not.toHaveBeenCalled();
+        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
     });
 
     it('mantém cancelamento quando envio de cancelamento falha', async () => {
@@ -850,7 +857,7 @@ describe('agendamento.service.atualizar', () => {
             ...agendamentoAtual,
             status: StatusAgendamento.CANCELADO,
         });
-        vi.mocked(geminiService.sendWhatsAppText).mockRejectedValueOnce(
+        notificationMock.enviarNotificacaoWhatsApp.mockRejectedValueOnce(
             new Error('Evolution indisponível'),
         );
 

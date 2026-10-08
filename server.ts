@@ -24,6 +24,7 @@ import { servicoRoutes } from './src/routes/servico.routes';
 import { webhookRoutes } from './src/routes/webhook.routes';
 import { horarioFuncionamentoRoutes } from './src/routes/horario-funcionamento.routes';
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
+import { validateWhatsAppConfiguration } from './src/whatsapp/config';
 
 const app = Fastify({
     logger: true,
@@ -94,6 +95,7 @@ const port = Number(process.env.PORT ?? 3333);
 
 const start = async (): Promise<void> => {
     try {
+        validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
     } catch (error) {
         app.log.error(error);
