@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     escalarParaHumano,
+    obterEstadoEscalonamento,
     processarMensagemWhatsapp,
     sendWhatsAppText,
 } from './gemini.service';
@@ -9,6 +10,7 @@ import { IncomingWhatsAppMessage } from '../whatsapp/types';
 
 vi.mock('./gemini.service', () => ({
     escalarParaHumano: vi.fn(),
+    obterEstadoEscalonamento: vi.fn(),
     processarMensagemWhatsapp: vi.fn(),
     sendWhatsAppText: vi.fn(),
 }));
@@ -30,6 +32,7 @@ function criarMensagem(text: string): IncomingWhatsAppMessage {
 beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(escalarParaHumano).mockResolvedValue();
+    vi.mocked(obterEstadoEscalonamento).mockResolvedValue(null);
     vi.mocked(processarMensagemWhatsapp).mockResolvedValue();
     vi.mocked(sendWhatsAppText).mockResolvedValue();
 });

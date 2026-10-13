@@ -39,6 +39,7 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
+const HUMAN_TAKEOVER_DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
 
 function getEscalationDefaultCooldownMs(): number {
     return Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
@@ -728,7 +729,7 @@ export function addToHistory(
     addToHistoryByPhone(phone, role, text);
 }
 
-async function obterEstadoEscalonamento(
+export async function obterEstadoEscalonamento(
     phone: string,
 ): Promise<EscalationState | null> {
     try {
@@ -740,6 +741,62 @@ async function obterEstadoEscalonamento(
         );
         return null;
     }
+}
+
+function getHumanTakeoverTtlMs(): number {
+    const configured = Number(
+        process.env.HUMAN_TAKEOVER_TTL_MS ?? HUMAN_TAKEOVER_DEFAULT_TTL_MS,
+    );
+    return Number.isFinite(configured) && configured > 0
+        ? configured
+        : HUMAN_TAKEOVER_DEFAULT_TTL_MS;
+}
+
+export function limparMemoriaConversa(phone: string): void {
+    const normalizedPhone = normalizeConversationKey(phone);
+    conversationHistory.delete(normalizedPhone);
+    confusionStreak.delete(normalizedPhone);
+    noProgressStreak.delete(normalizedPhone);
+}
+
+export async function registrarRespostaHumana(
+    phone: string,
+    sendTime: Date | null,
+): Promise<void> {
+    const normalizedPhone = normalizeConversationKey(phone);
+    const agora = new Date();
+    await getEscalationStateRepository().registrarRespostaHumana(
+        normalizedPhone,
+        sendTime ?? agora,
+        agora,
+        getHumanTakeoverTtlMs(),
+    );
+    limparMemoriaConversa(normalizedPhone);
+}
+
+export async function registrarRespostaHumanaIdempotente(
+    phone: string,
+    messageId: string,
+    sendTime: Date | null,
+): Promise<boolean> {
+    const normalizedPhone = normalizeConversationKey(phone);
+    const agora = new Date();
+    const resultado =
+        await getEscalationStateRepository().registrarRespostaHumanaIdempotente(
+            'ycloud',
+            messageId,
+            normalizedPhone,
+            sendTime ?? agora,
+            agora,
+            getHumanTakeoverTtlMs(),
+        );
+
+    if (resultado.duplicado) {
+        return false;
+    }
+
+    limparMemoriaConversa(normalizedPhone);
+    return true;
 }
 
 export async function escalarParaHumano(
@@ -1664,6 +1721,12 @@ export async function processarMensagemWhatsapp(
         if (estado?.estado === EstadoEscalonamento.ESCALADO) {
             return;
         }
+        if (estado?.estado === EstadoEscalonamento.HUMANO_ATIVO) {
+            console.debug(
+                `[GEMINI SERVICE] Mensagem ignorada durante atendimento humano | numero: ${phone}`,
+            );
+            return;
+        }
 
         const {
             text: reply,
@@ -1741,6 +1804,10 @@ export const __testables = {
     isGeminiRateLimitError,
     GeminiRateLimitError,
     escalarParaHumano,
+    limparMemoriaConversa,
+    registrarRespostaHumana,
+    registrarRespostaHumanaIdempotente,
+    obterEstadoEscalonamento,
     setEscalationStateRepository: (
         repository: EscalationStateRepository,
     ): void => setEscalationStateRepository(repository),

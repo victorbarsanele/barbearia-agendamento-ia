@@ -393,6 +393,53 @@ describe('gemini.service escalonamento humano', () => {
         ).toHaveLength(2);
     });
 
+    it('não chama Gemini nem responde durante takeover humano', async () => {
+        const gemini = await importGeminiModule();
+        await gemini.registrarRespostaHumana(
+            NUMERO_CLIENTE,
+            new Date(AGORA.getTime()),
+        );
+        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockClear();
+        mocks.generateContent.mockClear();
+
+        await gemini.processarMensagemWhatsapp(
+            TELEFONE_CLIENTE,
+            'mensagem do cliente',
+        );
+
+        expect(mocks.generateContent).not.toHaveBeenCalled();
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('takeover limpa histórico e cliente não renova TTL', async () => {
+        const gemini = await importGeminiModule();
+        const repository = await import(
+            '../repositories/escalation-state.repository'
+        );
+        gemini.addToHistory(NUMERO_CLIENTE, 'user', 'histórico antigo');
+        await gemini.registrarRespostaHumana(
+            NUMERO_CLIENTE,
+            new Date(AGORA.getTime()),
+        );
+        const before = await repository.getEscalationStateRepository().obter(
+            NUMERO_CLIENTE,
+            AGORA,
+        );
+
+        vi.advanceTimersByTime(30 * 60 * 1000);
+        await gemini.processarMensagemWhatsapp(
+            TELEFONE_CLIENTE,
+            'mensagem durante takeover',
+        );
+        const after = await repository.getEscalationStateRepository().obter(
+            NUMERO_CLIENTE,
+            new Date(AGORA.getTime() + 30 * 60 * 1000),
+        );
+
+        expect(after?.expiraEm).toEqual(before?.expiraEm);
+        expect(mocks.generateContent).not.toHaveBeenCalled();
+    });
+
     it('escala imediatamente para humano quando Gemini atinge limite de cota', async () => {
         process.env.BARBER_PHONE = NUMERO_BARBEIRO;
         vi.spyOn(Math, 'random').mockReturnValue(0);

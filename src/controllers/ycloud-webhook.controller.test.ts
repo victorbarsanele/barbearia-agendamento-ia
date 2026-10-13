@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { registrarRespostaHumanaIdempotente } from '../services/gemini.service';
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
 import { receberYCloudWebhook } from './ycloud-webhook.controller';
 import { createYCloudSignature } from '../whatsapp/ycloud-signature';
@@ -12,12 +13,16 @@ vi.mock('../services/processed-whatsapp-message.service', () => ({
 vi.mock('../services/whatsapp-incoming-message.service', () => ({
     processarMensagemRecebida: vi.fn(),
 }));
+vi.mock('../services/gemini.service', () => ({
+    registrarRespostaHumanaIdempotente: vi.fn(),
+}));
 vi.mock('../services/ycloud-username-notification.service', () => ({
     avisarBarbeiroUsuarioSemTelefone: vi.fn(),
 }));
 
 const registerMock = vi.mocked(registrarMensagemProcessada);
 const processMock = vi.mocked(processarMensagemRecebida);
+const takeoverMock = vi.mocked(registrarRespostaHumanaIdempotente);
 const usernameMock = vi.mocked(avisarBarbeiroUsuarioSemTelefone);
 const webhookSecret = 'ycloud-test-secret';
 
@@ -63,6 +68,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     registerMock.mockResolvedValue(true);
     processMock.mockResolvedValue();
+    takeoverMock.mockResolvedValue(true);
     usernameMock.mockResolvedValue();
 });
 
@@ -220,6 +226,95 @@ describe('YCloud webhook controller', () => {
             }),
         );
         log.mockRestore();
+    });
+
+    it('deduplicates real YCloud echo and registers takeover once', async () => {
+        const body = {
+            id: 'event-1',
+            type: 'whatsapp.smb.message.echoes',
+            apiVersion: 'v1',
+            createTime: '2026-10-12T21:00:00.000Z',
+            whatsappMessage: {
+                id: 'message-1',
+                wamid: 'wamid-real-1',
+                status: 'sent',
+                from: '+5511888888888',
+                to: '+5511999999999',
+                type: 'text',
+                text: { body: 'não deve ser usado' },
+                sendTime: '2026-10-12T21:00:01.000Z',
+            },
+        };
+        const firstReply = makeReply();
+        await receberYCloudWebhook(makeRequest(body), firstReply);
+
+        expect(takeoverMock).toHaveBeenCalledWith(
+            '5511999999999',
+            'wamid-real-1',
+            new Date('2026-10-12T21:00:01.000Z'),
+        );
+
+        takeoverMock.mockResolvedValueOnce(false);
+        const retryReply = makeReply();
+        await receberYCloudWebhook(makeRequest(body), retryReply);
+
+        expect(takeoverMock).toHaveBeenCalledTimes(2);
+        expect(takeoverMock).toHaveBeenLastCalledWith(
+            '5511999999999',
+            'wamid-real-1',
+            new Date('2026-10-12T21:00:01.000Z'),
+        );
+        expect(retryReply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('ignora eco fora da allowlist e eco sem destinatário', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const outsideReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: {
+                    wamid: 'outside-1',
+                    to: '5511999999999',
+                    type: 'text',
+                },
+            }),
+            outsideReply,
+        );
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(takeoverMock).not.toHaveBeenCalled();
+        expect(outsideReply.status).toHaveBeenCalledWith(200);
+
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '');
+        const noToReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: { wamid: 'without-to', toUserId: 'user-1' },
+            }),
+            noToReply,
+        );
+        expect(takeoverMock).not.toHaveBeenCalled();
+        expect(noToReply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('responde 500 quando takeover transacional falha', async () => {
+        takeoverMock.mockRejectedValueOnce(new Error('falha de banco'));
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: {
+                    wamid: 'failed-takeover',
+                    to: '5511999999999',
+                    type: 'text',
+                },
+            }),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
     });
 
     it('does not run Gemini for username-only sender', async () => {

@@ -80,4 +80,113 @@ describe('InMemoryEscalationStateRepository', () => {
             true,
         );
     });
+
+    it('cria takeover em BOT e renova TTL sem perder dados de escalada', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        await repository.registrarRespostaHumana(
+            PHONE,
+            NOW,
+            NOW,
+            2 * 60 * 60 * 1000,
+        );
+        const active = await repository.obter(PHONE, NOW);
+
+        expect(active?.estado).toBe(EstadoEscalonamento.HUMANO_ATIVO);
+        expect(active?.humanoUltimaMensagemEm).toEqual(NOW);
+
+        await repository.escalar(
+            PHONE,
+            'palavra_chave',
+            NOW,
+            new Date(NOW.getTime() + 1),
+        );
+        await repository.reivindicarAviso(PHONE, NOW);
+        const escalated = await repository.obter(PHONE, NOW);
+        await repository.registrarRespostaHumana(
+            PHONE,
+            new Date(NOW.getTime() + 1000),
+            new Date(NOW.getTime() + 1000),
+            2 * 60 * 60 * 1000,
+        );
+        const renewed = await repository.obter(
+            PHONE,
+            new Date(NOW.getTime() + 1000),
+        );
+
+        expect(escalated?.estado).toBe(EstadoEscalonamento.ESCALADO);
+        expect(renewed?.avisoEsperaEnviadoEm).toEqual(
+            escalated?.avisoEsperaEnviadoEm,
+        );
+        expect(renewed?.expiraEm?.getTime()).toBe(
+            NOW.getTime() + 1000 + 2 * 60 * 60 * 1000,
+        );
+    });
+
+    it('expira takeover para BOT limpando campos humanos', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        await repository.registrarRespostaHumana(PHONE, NOW, NOW, 1000);
+
+        const expired = await repository.obter(
+            PHONE,
+            new Date(NOW.getTime() + 1001),
+        );
+
+        expect(expired).toMatchObject({
+            estado: EstadoEscalonamento.BOT,
+            humanoUltimaMensagemEm: null,
+            expiraEm: null,
+        });
+    });
+
+    it('reverte marca quando upsert falha e permite retry', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        repository.falharProximoTakeover = true;
+
+        await expect(
+            repository.registrarRespostaHumanaIdempotente(
+                'ycloud',
+                'wamid-retry',
+                PHONE,
+                NOW,
+                NOW,
+                2 * 60 * 60 * 1000,
+            ),
+        ).rejects.toThrow('falha simulada');
+
+        const retry = await repository.registrarRespostaHumanaIdempotente(
+            'ycloud',
+            'wamid-retry',
+            PHONE,
+            NOW,
+            NOW,
+            2 * 60 * 60 * 1000,
+        );
+        expect(retry.duplicado).toBe(false);
+    });
+
+    it('não renova TTL em eco duplicado', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        const first = await repository.registrarRespostaHumanaIdempotente(
+            'ycloud',
+            'wamid-once',
+            PHONE,
+            NOW,
+            NOW,
+            2 * 60 * 60 * 1000,
+        );
+        const duplicate = await repository.registrarRespostaHumanaIdempotente(
+            'ycloud',
+            'wamid-once',
+            PHONE,
+            new Date(NOW.getTime() + 1000),
+            new Date(NOW.getTime() + 1000),
+            2 * 60 * 60 * 1000,
+        );
+
+        expect(first.duplicado).toBe(false);
+        expect(duplicate.duplicado).toBe(true);
+        expect(
+            (await repository.obter(PHONE, NOW))?.expiraEm,
+        ).toEqual(first.estado?.expiraEm);
+    });
 });

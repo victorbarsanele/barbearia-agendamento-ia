@@ -81,12 +81,64 @@ describe('YCloud inbound adapter', () => {
     it('parses echoes and ignores unknown event types', () => {
         expect(
             parseYCloudWebhookEvent({
+                id: 'event-1',
                 type: 'whatsapp.smb.message.echoes',
-                whatsappSMBMessage: { wamid: 'echo-id' },
+                apiVersion: 'v1',
+                createTime: '2026-10-12T21:00:00.000Z',
+                whatsappMessage: {
+                    id: 'echo-id',
+                    wamid: 'wamid-echo-id',
+                    status: 'sent',
+                    from: '+5511888888888',
+                    to: '+5511999999999',
+                    type: 'text',
+                    text: { body: 'conteúdo não deve ser logado' },
+                    sendTime: '2026-10-12T21:00:01.000Z',
+                    toUserId: 'username-ignored',
+                },
             }),
-        ).toMatchObject({ kind: 'echo', messageId: 'echo-id' });
+        ).toMatchObject({
+            kind: 'echo',
+            messageId: 'wamid-echo-id',
+            phone: '5511999999999',
+            sendTime: new Date('2026-10-12T21:00:01.000Z'),
+            messageType: 'text',
+        });
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappSMBMessage: {
+                    id: 'fallback-id',
+                    to: '5511999999999',
+                    type: 'text',
+                    sendTime: '2026-10-12T21:00:00.000Z',
+                },
+            }),
+        ).toMatchObject({
+            kind: 'echo',
+            messageId: 'fallback-id',
+            phone: '5511999999999',
+        });
         expect(
             parseYCloudWebhookEvent({ type: 'whatsapp.message.updated' }),
         ).toEqual({ kind: 'ignored' });
+    });
+
+    it('keeps echo without recipient as a no-op payload', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: {
+                    wamid: 'without-to',
+                    toUserId: 'username-only',
+                    type: 'text',
+                },
+            }),
+        ).toMatchObject({
+            kind: 'echo',
+            messageId: 'without-to',
+            phone: null,
+            sendTime: null,
+        });
     });
 });

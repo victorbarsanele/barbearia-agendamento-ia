@@ -8,6 +8,9 @@ export type YCloudWebhookEvent =
     | {
           kind: 'echo';
           messageId: string | null;
+          phone: string | null;
+          sendTime: Date | null;
+          messageType: string | null;
           structure: YCloudEchoStructure;
       }
     | { kind: 'ignored' };
@@ -18,6 +21,8 @@ export interface YCloudEchoStructure {
     messageKeys: string[];
     messageValueTypes: Record<string, string>;
     maskedPhoneValues: Record<string, string>;
+    status: string | null;
+    messageType: string | null;
 }
 
 function asRecord(value: unknown): AnyRecord | null {
@@ -69,7 +74,7 @@ function getEchoStructure(
             typeof value === 'string' &&
             /(phone|telefone|from|to|recipient|destinat)/i.test(key)
         ) {
-            maskedPhoneValues[`whatsappSMBMessage.${key}`] =
+            maskedPhoneValues[`whatsappMessage.${key}`] =
                 maskPhone(value);
         }
     }
@@ -80,7 +85,18 @@ function getEchoStructure(
         messageKeys,
         messageValueTypes,
         maskedPhoneValues,
+        status: stringField(message, 'status'),
+        messageType: stringField(message, 'type'),
     };
+}
+
+function parseDateField(record: AnyRecord | null, field: string): Date | null {
+    const value = stringField(record, field);
+    if (!value) {
+        return null;
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export function canonicalizeYCloudPhone(value: string): string | null {
@@ -107,8 +123,8 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
 
     if (eventType === 'whatsapp.smb.message.echoes') {
         const eventPayload =
-            asRecord(root?.whatsappSMBMessage) ??
             asRecord(root?.whatsappMessage) ??
+            asRecord(root?.whatsappSMBMessage) ??
             asRecord(root?.data) ??
             root;
 
@@ -117,6 +133,12 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             messageId:
                 stringField(eventPayload, 'wamid') ??
                 stringField(eventPayload, 'id'),
+            phone: (() => {
+                const to = stringField(eventPayload, 'to');
+                return to ? canonicalizeYCloudPhone(to) : null;
+            })(),
+            sendTime: parseDateField(eventPayload, 'sendTime'),
+            messageType: stringField(eventPayload, 'type'),
             structure: getEchoStructure(root, eventPayload),
         };
     }

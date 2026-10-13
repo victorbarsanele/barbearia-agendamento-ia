@@ -1,8 +1,10 @@
 import {
     escalarParaHumano,
+    obterEstadoEscalonamento,
     processarMensagemWhatsapp,
     sendWhatsAppText,
 } from './gemini.service';
+import { EstadoEscalonamento } from '@prisma/client';
 import { IncomingWhatsAppMessage } from '../whatsapp/types';
 
 const MAX_MESSAGE_LENGTH = 500;
@@ -61,6 +63,17 @@ export async function processarMensagemRecebida(
     }
 
     try {
+        const estado = await obterEstadoEscalonamento(phone);
+        if (
+            estado?.estado === EstadoEscalonamento.ESCALADO ||
+            estado?.estado === EstadoEscalonamento.HUMANO_ATIVO
+        ) {
+            console.debug(
+                `[WEBHOOK] Mensagem ignorada durante escalonamento | numero: ${mascararTelefone(phone)}`,
+            );
+            return;
+        }
+
         if (ESCALATION_KEYWORDS_PATTERN.test(text)) {
             console.log(
                 `[WEBHOOK] Escalonamento por palavra-chave | numero: ${mascararTelefone(phone)}`,

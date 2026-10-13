@@ -1,12 +1,17 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { registrarRespostaHumanaIdempotente } from '../services/gemini.service';
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
 import { IncomingWhatsAppMessage } from '../whatsapp/types';
 import { parseYCloudWebhookEvent } from '../whatsapp/ycloud-inbound.adapter';
 import { verifyYCloudSignature } from '../whatsapp/ycloud-signature';
 import { getWhatsAppProvider } from '../whatsapp/config';
 import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
+
+function mascararTelefone(phone: string): string {
+    return `${'*'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
+}
 
 export async function processarEventoYCloud(
     message: IncomingWhatsAppMessage,
@@ -56,7 +61,60 @@ export async function receberYCloudWebhook(
         console.info('[YCLOUD WEBHOOK] Estrutura de eco recebida', {
             ...event.structure,
             messageIdPresent: event.messageId !== null,
+            status: event.structure.status,
+            type: event.structure.messageType,
         });
+
+        if (getWhatsAppProvider() !== 'ycloud') {
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        if (!event.phone) {
+            console.warn(
+                '[YCLOUD WEBHOOK] Eco sem destinatário telefone; takeover ignorado.',
+            );
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        const allowlist = getWhatsAppAllowlist();
+        if (allowlist.active && !allowlist.phones.has(event.phone)) {
+            console.log(
+                '[YCLOUD WEBHOOK] Eco ignorado pela lista de teste.',
+            );
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        if (!event.messageId) {
+            console.warn(
+                '[YCLOUD WEBHOOK] Eco sem ID; takeover ignorado sem deduplicação.',
+            );
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        try {
+            const processado = await registrarRespostaHumanaIdempotente(
+                event.phone,
+                event.messageId,
+                event.sendTime,
+            );
+            if (!processado) {
+                console.debug(
+                    `[YCLOUD WEBHOOK] Eco duplicado ignorado | numero: ${mascararTelefone(event.phone)}`,
+                );
+                void reply.status(200).send({ ok: true });
+                return;
+            }
+        } catch {
+            console.error(
+                `[YCLOUD WEBHOOK] Falha ao registrar takeover do eco | numero: ${mascararTelefone(event.phone)}`,
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
         void reply.status(200).send({ ok: true });
         return;
     }
