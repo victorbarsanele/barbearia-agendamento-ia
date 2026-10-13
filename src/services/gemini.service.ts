@@ -41,7 +41,7 @@ const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
-const HUMAN_TAKEOVER_DEFAULT_TTL_MS = 2 * 60 * 60 * 1000;
+const HUMAN_TAKEOVER_DEFAULT_TTL_MS = 30 * 60 * 1000;
 
 function getEscalationDefaultCooldownMs(): number {
     return Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
@@ -619,10 +619,7 @@ export async function transcreverAudio(
 ): Promise<AudioTranscriptionResult> {
     const { transcribeTimeoutMs } = getAudioConfig();
     const controller = new AbortController();
-    const timeout = setTimeout(
-        () => controller.abort(),
-        transcribeTimeoutMs,
-    );
+    const timeout = setTimeout(() => controller.abort(), transcribeTimeoutMs);
 
     try {
         const ai = getGeminiClient();
@@ -704,9 +701,10 @@ export async function transcreverAudio(
         });
         return {
             ok: false,
-            reason: error instanceof GeminiRateLimitError
-                ? 'rate_limited'
-                : 'error',
+            reason:
+                error instanceof GeminiRateLimitError
+                    ? 'rate_limited'
+                    : 'error',
         };
     } finally {
         clearTimeout(timeout);
@@ -978,17 +976,12 @@ export async function escalarParaHumano(
                     : `motivo: ${motivo}`;
 
         try {
-            const { enviarNotificacaoWhatsApp } = await import(
-                './whatsapp-notification.service'
-            );
-            await enviarNotificacaoWhatsApp(
-                'atendimento_humano',
-                barberPhone,
-                {
-                    telefoneCliente: phone,
-                    motivo: descricaoMotivo,
-                },
-            );
+            const { enviarNotificacaoWhatsApp } =
+                await import('./whatsapp-notification.service');
+            await enviarNotificacaoWhatsApp('atendimento_humano', barberPhone, {
+                telefoneCliente: phone,
+                motivo: descricaoMotivo,
+            });
         } catch {
             console.error(
                 '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento.',
