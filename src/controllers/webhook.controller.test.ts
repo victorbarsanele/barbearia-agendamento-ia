@@ -173,6 +173,7 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
             rawType: null,
             rawSubtype: null,
             text: 'Quero agendar',
+            media: null,
             isGroup: false,
             isFromMe: false,
         });

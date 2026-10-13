@@ -56,7 +56,11 @@ import * as servicoRepository from '../repositories/servico.repository';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
 import * as pacoteRepository from '../repositories/pacote.repository';
 import * as agendamentoService from './agendamento.service';
-import { __testables, processarMensagemWhatsapp } from './gemini.service';
+import {
+    __testables,
+    processarMensagemWhatsapp,
+    transcreverAudio,
+} from './gemini.service';
 
 const clienteBase = {
     id: 'cliente-1',
@@ -1199,5 +1203,114 @@ describe('gemini.service retry 429', () => {
         ).rejects.toEqual({ status: 400 });
 
         expect(operation).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('gemini.service audio transcription', () => {
+    beforeEach(() => {
+        geminiMocks.generateContent.mockReset();
+    });
+
+    it('sends inline audio without history or tools', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: JSON.stringify({ status: 'ok', text: 'Quero agendar' }),
+        });
+
+        await expect(
+            transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+        ).resolves.toEqual({ ok: true, text: 'Quero agendar' });
+
+        const request = geminiMocks.generateContent.mock.calls.at(-1)?.[0];
+        expect(request.contents).toEqual([
+            {
+                role: 'user',
+                parts: [
+                    {
+                        inlineData: {
+                            mimeType: 'audio/ogg',
+                            data: Buffer.from('audio').toString('base64'),
+                        },
+                    },
+                    expect.objectContaining({ text: expect.any(String) }),
+                ],
+            },
+        ]);
+        expect(request.config.tools).toBeUndefined();
+        expect(request.config.temperature).toBeUndefined();
+        expect(request.config.thinkingConfig).toBeUndefined();
+        expect(request.config.responseMimeType).toBe('application/json');
+        expect(request.config.httpOptions.timeout).toBe(30000);
+    });
+
+    it.each([
+        [{ status: 'empty', text: '' }, 'empty'],
+        [{ status: 'unintelligible', text: '' }, 'unintelligible'],
+        [{ status: 'ok', text: '' }, 'invalid_response'],
+        ['not-json', 'invalid_response'],
+    ] as const)('rejects malformed transcription response', async (body, reason) => {
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: typeof body === 'string' ? body : JSON.stringify(body),
+        });
+
+        await expect(
+            transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+        ).resolves.toEqual({ ok: false, reason });
+    });
+
+    it('logs only safe error metadata', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        geminiMocks.generateContent.mockRejectedValueOnce(
+        Object.assign(
+            new Error(
+                'https://api.ycloud.com/media?sig=secret transcript text',
+            ),
+            {
+                cause: {
+                    message:
+                        'https://api.ycloud.com/media?sig=secret transcript text',
+                },
+            },
+        ),
+        );
+
+        await expect(
+        transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+        ).resolves.toEqual({ ok: false, reason: 'error' });
+        expect(JSON.stringify(errorLog.mock.calls)).not.toContain('sig=');
+        expect(JSON.stringify(errorLog.mock.calls)).not.toContain(
+        'transcript text',
+        );
+        errorLog.mockRestore();
+    });
+
+    it('logs generic tool name and argument keys without argument values', async () => {
+        const warnLog = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const sentinel = 'client-secret-argument-value';
+
+        await expect(
+            __testables.executeToolCall(
+                {
+                    name: 'manifestarInteresseEmPacote',
+                    args: {
+                        pacoteNome: '',
+                        extra: sentinel,
+                    },
+                },
+                '5511999999999',
+                '5511999999999',
+            ),
+        ).resolves.toMatchObject({
+            sucesso: false,
+        });
+
+        const serialized = JSON.stringify(warnLog.mock.calls);
+        expect(serialized).toContain('manifestarInteresseEmPacote');
+        expect(serialized).toContain('pacoteNome');
+        expect(serialized).toContain('extra');
+        expect(serialized).not.toContain(sentinel);
+        warnLog.mockRestore();
     });
 });

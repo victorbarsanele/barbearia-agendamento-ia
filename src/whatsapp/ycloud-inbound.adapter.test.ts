@@ -51,6 +51,69 @@ describe('YCloud inbound adapter', () => {
                 kind: 'non_text',
                 rawType: 'image',
                 text: null,
+                media: null,
+            },
+        });
+    });
+
+    it('preserves YCloud audio metadata without changing non-text classification', () => {
+        const result = parseYCloudWebhookEvent({
+            type: 'whatsapp.inbound_message.received',
+            whatsappInboundMessage: {
+                wamid: 'wamid-audio',
+                from: '5511999999999',
+                type: 'audio',
+                audio: {
+                    link: 'https://api.ycloud.com/v2/whatsapp/media/download/audio-1?sig=synthetic&payload=test',
+                    id: 'audio-1',
+                    sha256: 'c2ludGhldGljLXNoYTI1Ng==',
+                    mime_type: 'audio/ogg; codecs=opus',
+                },
+            },
+        });
+
+        expect(result).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'non_text',
+                rawType: 'audio',
+                text: null,
+                media: {
+                    link: 'https://api.ycloud.com/v2/whatsapp/media/download/audio-1?sig=synthetic&payload=test',
+                    id: 'audio-1',
+                    sha256: 'c2ludGhldGljLXNoYTI1Ng==',
+                    mimeType: 'audio/ogg; codecs=opus',
+                },
+            },
+        });
+    });
+
+    it('normalizes missing or invalid audio metadata to null', () => {
+        const result = parseYCloudWebhookEvent({
+            type: 'whatsapp.inbound_message.received',
+            whatsappInboundMessage: {
+                wamid: 'wamid-audio-invalid',
+                from: '5511999999999',
+                type: 'audio',
+                audio: {
+                    link: '',
+                    id: 123,
+                    sha256: {},
+                    mime_type: null,
+                },
+            },
+        });
+
+        expect(result).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'non_text',
+                media: {
+                    link: null,
+                    id: null,
+                    sha256: null,
+                    mimeType: null,
+                },
             },
         });
     });
@@ -104,7 +167,12 @@ describe('YCloud inbound adapter', () => {
             }),
         ).toMatchObject({
             kind: 'message',
-            message: { kind: 'unknown', rawType: type, text: null },
+            message: {
+                kind: 'unknown',
+                rawType: type,
+                text: null,
+                media: null,
+            },
         });
     });
 
