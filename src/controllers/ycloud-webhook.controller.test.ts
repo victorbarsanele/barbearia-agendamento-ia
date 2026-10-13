@@ -195,7 +195,7 @@ describe('YCloud webhook controller', () => {
 
     it('logs and acknowledges echo even when Evolution is active', async () => {
         vi.stubEnv('WHATSAPP_PROVIDER', 'evolution');
-        const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
         const reply = makeReply();
 
         await receberYCloudWebhook(
@@ -212,7 +212,12 @@ describe('YCloud webhook controller', () => {
         expect(registerMock).not.toHaveBeenCalled();
         expect(processMock).not.toHaveBeenCalled();
         expect(log).toHaveBeenCalledWith(
-            '[YCLOUD WEBHOOK] Eco recebido | tipo: whatsapp.smb.message.echoes | wamid: echo-2',
+            '[YCLOUD WEBHOOK] Estrutura de eco recebida',
+            expect.objectContaining({
+                eventKeys: ['type', 'whatsappSMBMessage'],
+                messageKeys: ['wamid'],
+                messageIdPresent: true,
+            }),
         );
         log.mockRestore();
     });

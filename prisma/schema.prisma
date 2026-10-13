@@ -29,6 +29,12 @@ enum RecorrenciaBloqueio {
   SEMANAL
 }
 
+enum EstadoEscalonamento {
+  BOT
+  ESCALADO
+  HUMANO_ATIVO
+}
+
 model Cliente {
   id           String        @id @default(cuid())
   nome         String
@@ -201,4 +207,17 @@ model MensagemWhatsAppProcessada {
 
   @@id([provedor, idMensagem])
   @@map("mensagens_whatsapp_processadas")
+}
+
+model EscalonamentoWhatsApp {
+  telefone                String               @id
+  estado                  EstadoEscalonamento  @default(BOT)
+  motivo                  String?
+  escaladoEm              DateTime?            @db.Timestamptz(3)
+  avisoEsperaEnviadoEm    DateTime?            @db.Timestamptz(3)
+  humanoUltimaMensagemEm  DateTime?            @db.Timestamptz(3)
+  expiraEm                DateTime?            @db.Timestamptz(3)
+  atualizadoEm            DateTime             @updatedAt @db.Timestamptz(3)
+
+  @@map("escalonamentos_whatsapp")
 }

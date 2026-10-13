@@ -91,7 +91,14 @@ const MENSAGEM_ESCALONAMENTO =
 type GeminiModule = Awaited<typeof import('./gemini.service')>;
 
 async function importGeminiModule(): Promise<GeminiModule> {
-    return import('./gemini.service');
+    const gemini = await import('./gemini.service');
+    const repository = await import(
+        '../repositories/escalation-state.repository'
+    );
+    gemini.__testables.setEscalationStateRepository(
+        new repository.InMemoryEscalationStateRepository(),
+    );
+    return gemini;
 }
 
 function getSentMessages() {
@@ -192,7 +199,7 @@ describe('gemini.service escalonamento humano', () => {
         ).toHaveLength(1);
         expect(
             messages.filter((message) => message.number === NUMERO_CLIENTE),
-        ).toHaveLength(2);
+        ).toHaveLength(1);
     });
 
     it('escala após 2 respostas consecutivas de confusão explícita', async () => {
@@ -340,6 +347,50 @@ describe('gemini.service escalonamento humano', () => {
         await gemini.processarMensagemWhatsapp(TELEFONE_CLIENTE, 'oi de novo');
 
         expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('trata falha de leitura do estado como BOT', async () => {
+        const gemini = await importGeminiModule();
+        const repositoryModule = await import(
+            '../repositories/escalation-state.repository'
+        );
+        const repository = new repositoryModule.InMemoryEscalationStateRepository();
+        vi.spyOn(repository, 'obter').mockRejectedValue(
+            new Error('falha de leitura'),
+        );
+        gemini.__testables.setEscalationStateRepository(repository);
+
+        await gemini.processarMensagemWhatsapp(TELEFONE_CLIENTE, 'oi');
+
+        expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('reverte claim de aviso quando envio falha', async () => {
+        const gemini = await importGeminiModule();
+        const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+        fetchMock.mockRejectedValueOnce(new Error('falha de envio'));
+
+        await expect(
+            gemini.__testables.escalarParaHumano(
+                TELEFONE_CLIENTE,
+                'palavra_chave',
+            ),
+        ).rejects.toThrow('falha de envio');
+
+        fetchMock.mockResolvedValue({
+            ok: true,
+            text: vi.fn().mockResolvedValue(''),
+        });
+        await gemini.__testables.escalarParaHumano(
+            TELEFONE_CLIENTE,
+            'palavra_chave',
+        );
+
+        expect(
+            getSentMessages().filter(
+                (message) => message.number === NUMERO_CLIENTE,
+            ),
+        ).toHaveLength(2);
     });
 
     it('escala imediatamente para humano quando Gemini atinge limite de cota', async () => {

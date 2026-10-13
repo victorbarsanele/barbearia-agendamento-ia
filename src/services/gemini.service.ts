@@ -21,6 +21,13 @@ import {
 import { carregarConfiguracao } from './horario-funcionamento.service';
 import { normalizarTelefone } from '../utils/telefone';
 import { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
+import {
+    getEscalationStateRepository,
+    setEscalationStateRepository,
+    type EscalationStateRepository,
+    type EscalationState,
+} from '../repositories/escalation-state.repository';
+import { EstadoEscalonamento } from '@prisma/client';
 
 export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
@@ -109,7 +116,6 @@ type EscalationMotivo =
 type HistoricoRole = 'user' | 'model';
 
 const conversationHistory = new Map<string, ConversaItem[]>();
-const escalationState = new Map<string, { since: number; motivo: string }>();
 const confusionStreak = new Map<string, number>();
 const noProgressStreak = new Map<string, number>();
 
@@ -722,25 +728,18 @@ export function addToHistory(
     addToHistoryByPhone(phone, role, text);
 }
 
-function estaEmCooldownDeEscalonamento(phone: string): boolean {
-    const estado = escalationState.get(phone);
-    if (!estado) return false;
-
-    const cooldownsPorMotivo = getEscalationCooldownMsPorMotivo();
-    const cooldownPadrao = cooldownsPorMotivo.palavra_chave;
-    const cooldownDoMotivo =
-        cooldownsPorMotivo[estado.motivo as keyof typeof cooldownsPorMotivo] ??
-        cooldownPadrao;
-
-    const expirado = Date.now() - estado.since > cooldownDoMotivo;
-    if (expirado) {
-        escalationState.delete(phone);
-        confusionStreak.delete(phone);
-        noProgressStreak.delete(phone);
-        return false;
+async function obterEstadoEscalonamento(
+    phone: string,
+): Promise<EscalationState | null> {
+    try {
+        return await getEscalationStateRepository().obter(phone, new Date());
+    } catch (error) {
+        console.error(
+            '[GEMINI SERVICE] Falha ao ler estado de escalonamento; tratando como BOT.',
+            error,
+        );
+        return null;
     }
-
-    return true;
 }
 
 export async function escalarParaHumano(
@@ -748,10 +747,23 @@ export async function escalarParaHumano(
     motivo: EscalationMotivo,
 ): Promise<void> {
     const phone = normalizeConversationKey(remoteJid);
-    const jaEscalado = escalationState.has(phone);
+    const agora = new Date();
+    const cooldown =
+        getEscalationCooldownMsPorMotivo()[motivo] ??
+        getEscalationDefaultCooldownMs();
+    const resultado = await getEscalationStateRepository().escalar(
+        phone,
+        motivo,
+        agora,
+        new Date(agora.getTime() + cooldown),
+    );
 
-    if (!jaEscalado) {
-        escalationState.set(phone, { since: Date.now(), motivo });
+    const claim = await getEscalationStateRepository().reivindicarAviso(
+        phone,
+        agora,
+    );
+    if (!claim.reivindicado) {
+        return;
     }
 
     const mensagem =
@@ -759,38 +771,57 @@ export async function escalarParaHumano(
             Math.floor(Math.random() * ESCALATION_WAIT_MESSAGES.length)
         ];
 
-    await sendWhatsAppText(remoteJid, mensagem);
+    try {
+        await sendWhatsAppText(remoteJid, mensagem);
+    } catch (error) {
+        try {
+            await getEscalationStateRepository().liberarAviso(
+                phone,
+                claim.reivindicadoEm,
+            );
+        } catch (releaseError) {
+            console.error(
+                '[GEMINI SERVICE] Falha ao reverter aviso de espera reivindicado.',
+                releaseError,
+            );
+        }
+        console.error(
+            '[GEMINI SERVICE] Falha ao enviar aviso de espera; claim revertido.',
+            error,
+        );
+        throw error;
+    }
     addToHistory(remoteJid, 'model', mensagem);
 
-    if (!jaEscalado) {
-        const barberPhone = process.env.BARBER_PHONE?.trim();
-        if (barberPhone) {
-            const descricaoMotivo =
-                motivo === 'limite_de_cota'
-                    ? 'sistema atingiu limite de uso da API'
-                    : motivo === 'agendamento_recorrente'
-                      ? 'cliente quer pacote de cortes recorrentes'
-                      : motivo === 'interesse_pacote'
-                        ? 'cliente interessado em pacote de serviços'
-                        : `motivo: ${motivo}`;
+    const barberPhone = resultado.novaEscalada
+        ? process.env.BARBER_PHONE?.trim()
+        : undefined;
+    if (barberPhone) {
+        const descricaoMotivo =
+            motivo === 'limite_de_cota'
+                ? 'sistema atingiu limite de uso da API'
+                : motivo === 'agendamento_recorrente'
+                  ? 'cliente quer pacote de cortes recorrentes'
+                  : motivo === 'interesse_pacote'
+                    ? 'cliente interessado em pacote de serviços'
+                    : `motivo: ${motivo}`;
 
-            try {
-                const { enviarNotificacaoWhatsApp } = await import(
-                    './whatsapp-notification.service'
-                );
-                await enviarNotificacaoWhatsApp(
-                    'atendimento_humano',
-                    barberPhone,
-                    {
-                        telefoneCliente: phone,
-                        motivo: descricaoMotivo,
-                    },
-                );
-            } catch {
-                console.error(
-                    '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento.',
-                );
-            }
+        try {
+            const { enviarNotificacaoWhatsApp } = await import(
+                './whatsapp-notification.service'
+            );
+            await enviarNotificacaoWhatsApp(
+                'atendimento_humano',
+                barberPhone,
+                {
+                    telefoneCliente: phone,
+                    motivo: descricaoMotivo,
+                },
+            );
+        } catch {
+            console.error(
+                '[GEMINI SERVICE] Falha ao notificar barbeiro sobre escalonamento.',
+            );
         }
     }
 }
@@ -1625,8 +1656,12 @@ export async function processarMensagemWhatsapp(
     try {
         const phone = normalizeConversationKey(remoteJid);
 
-        if (estaEmCooldownDeEscalonamento(phone)) {
-            await escalarParaHumano(remoteJid, 'sem_progresso');
+        const estado = await obterEstadoEscalonamento(phone);
+        if (estado?.estado === EstadoEscalonamento.BOT && estado.escaladoEm) {
+            confusionStreak.delete(phone);
+            noProgressStreak.delete(phone);
+        }
+        if (estado?.estado === EstadoEscalonamento.ESCALADO) {
             return;
         }
 
@@ -1706,4 +1741,7 @@ export const __testables = {
     isGeminiRateLimitError,
     GeminiRateLimitError,
     escalarParaHumano,
+    setEscalationStateRepository: (
+        repository: EscalationStateRepository,
+    ): void => setEscalationStateRepository(repository),
 };

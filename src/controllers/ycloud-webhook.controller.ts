@@ -53,9 +53,10 @@ export async function receberYCloudWebhook(
 
     const event = parseYCloudWebhookEvent(body);
     if (event.kind === 'echo') {
-        console.log(
-            `[YCLOUD WEBHOOK] Eco recebido | tipo: whatsapp.smb.message.echoes | wamid: ${event.messageId ?? 'ausente'}`,
-        );
+        console.info('[YCLOUD WEBHOOK] Estrutura de eco recebida', {
+            ...event.structure,
+            messageIdPresent: event.messageId !== null,
+        });
         void reply.status(200).send({ ok: true });
         return;
     }

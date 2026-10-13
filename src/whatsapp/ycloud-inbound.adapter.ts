@@ -5,8 +5,20 @@ type AnyRecord = Record<string, unknown>;
 
 export type YCloudWebhookEvent =
     | { kind: 'message'; message: IncomingWhatsAppMessage }
-    | { kind: 'echo'; messageId: string | null }
+    | {
+          kind: 'echo';
+          messageId: string | null;
+          structure: YCloudEchoStructure;
+      }
     | { kind: 'ignored' };
+
+export interface YCloudEchoStructure {
+    eventKeys: string[];
+    eventValueTypes: Record<string, string>;
+    messageKeys: string[];
+    messageValueTypes: Record<string, string>;
+    maskedPhoneValues: Record<string, string>;
+}
 
 function asRecord(value: unknown): AnyRecord | null {
     return typeof value === 'object' && value !== null
@@ -17,6 +29,58 @@ function asRecord(value: unknown): AnyRecord | null {
 function stringField(record: AnyRecord | null, field: string): string | null {
     const value = record?.[field];
     return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function valueType(value: unknown): string {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) return 'array';
+    return typeof value;
+}
+
+function maskPhone(value: string): string {
+    const digits = value.replace(/\D/g, '');
+    return digits.length <= 4
+        ? '****'
+        : `${'*'.repeat(digits.length - 4)}${digits.slice(-4)}`;
+}
+
+function getEchoStructure(
+    root: AnyRecord | null,
+    message: AnyRecord | null,
+): YCloudEchoStructure {
+    const eventKeys = root ? Object.keys(root) : [];
+    const messageKeys = message ? Object.keys(message) : [];
+    const eventValueTypes: Record<string, string> = {};
+    const messageValueTypes: Record<string, string> = {};
+    const maskedPhoneValues: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(root ?? {})) {
+        eventValueTypes[key] = valueType(value);
+        if (
+            typeof value === 'string' &&
+            /(phone|telefone|from|to|recipient|destinat)/i.test(key)
+        ) {
+            maskedPhoneValues[`event.${key}`] = maskPhone(value);
+        }
+    }
+    for (const [key, value] of Object.entries(message ?? {})) {
+        messageValueTypes[key] = valueType(value);
+        if (
+            typeof value === 'string' &&
+            /(phone|telefone|from|to|recipient|destinat)/i.test(key)
+        ) {
+            maskedPhoneValues[`whatsappSMBMessage.${key}`] =
+                maskPhone(value);
+        }
+    }
+
+    return {
+        eventKeys,
+        eventValueTypes,
+        messageKeys,
+        messageValueTypes,
+        maskedPhoneValues,
+    };
 }
 
 export function canonicalizeYCloudPhone(value: string): string | null {
@@ -53,6 +117,7 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             messageId:
                 stringField(eventPayload, 'wamid') ??
                 stringField(eventPayload, 'id'),
+            structure: getEchoStructure(root, eventPayload),
         };
     }
 

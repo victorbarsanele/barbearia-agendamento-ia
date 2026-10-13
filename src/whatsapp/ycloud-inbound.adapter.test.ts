@@ -84,7 +84,7 @@ describe('YCloud inbound adapter', () => {
                 type: 'whatsapp.smb.message.echoes',
                 whatsappSMBMessage: { wamid: 'echo-id' },
             }),
-        ).toEqual({ kind: 'echo', messageId: 'echo-id' });
+        ).toMatchObject({ kind: 'echo', messageId: 'echo-id' });
         expect(
             parseYCloudWebhookEvent({ type: 'whatsapp.message.updated' }),
         ).toEqual({ kind: 'ignored' });
