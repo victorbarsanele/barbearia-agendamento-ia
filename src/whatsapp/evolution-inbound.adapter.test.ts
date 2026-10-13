@@ -23,6 +23,7 @@ describe('parseEvolutionIncomingMessage', () => {
             rawType: null,
             rawSubtype: null,
             text: 'Olá',
+            media: null,
             isGroup: false,
             isFromMe: false,
         });

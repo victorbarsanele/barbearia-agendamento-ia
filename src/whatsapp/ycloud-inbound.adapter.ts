@@ -181,6 +181,16 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             ? stringField(unsupportedRecord, 'type')
             : null;
     const from = stringField(payload, 'from');
+    const audioRecord = messageType === 'audio' ? asRecord(payload.audio) : null;
+    const media =
+        messageType === 'audio'
+            ? {
+                  link: stringField(audioRecord, 'link'),
+                  id: stringField(audioRecord, 'id'),
+                  sha256: stringField(audioRecord, 'sha256'),
+                  mimeType: stringField(audioRecord, 'mime_type'),
+              }
+            : null;
 
     return {
         kind: 'message',
@@ -194,6 +204,7 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             rawType: messageType,
             rawSubtype,
             text: kind === 'text' ? textBody : null,
+            media,
             isGroup: false,
             isFromMe: false,
         },

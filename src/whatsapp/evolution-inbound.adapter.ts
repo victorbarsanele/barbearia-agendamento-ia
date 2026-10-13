@@ -77,6 +77,7 @@ export function parseEvolutionIncomingMessage(
         rawType,
         rawSubtype: null,
         text: kind === 'text' ? conversation : null,
+        media: null,
         isGroup: remoteJid?.endsWith('@g.us') ?? false,
         isFromMe: readBoolean(key, 'fromMe') ?? false,
     };
