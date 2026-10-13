@@ -19,6 +19,9 @@ describe('parseEvolutionIncomingMessage', () => {
             messageId: 'message-1',
             phone: '5519999999999',
             alternateUserId: null,
+            kind: 'text',
+            rawType: null,
+            rawSubtype: null,
             text: 'Olá',
             isGroup: false,
             isFromMe: false,
@@ -75,5 +78,64 @@ describe('parseEvolutionIncomingMessage', () => {
                 },
             }),
         ).toMatchObject({ phone: '48220470251628' });
+    });
+
+    it.each([
+        'audioMessage',
+        'imageMessage',
+        'videoMessage',
+        'stickerMessage',
+        'documentMessage',
+        'locationMessage',
+        'contactMessage',
+        'contactsArrayMessage',
+    ])('classifica %s como não textual', (key) => {
+        expect(
+            parseEvolutionIncomingMessage({
+                data: {
+                    key: {
+                        id: `media-${key}`,
+                        remoteJid: '5511999999999@s.whatsapp.net',
+                    },
+                    message: { [key]: { caption: 'não usar' } },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'non_text',
+            rawType: key,
+            text: null,
+        });
+    });
+
+    it.each([
+        'reactionMessage',
+        'protocolMessage',
+        'editedMessage',
+        'pollUpdateMessage',
+        'senderKeyDistributionMessage',
+    ])('classifica %s como unknown', (key) => {
+        expect(
+            parseEvolutionIncomingMessage({
+                data: {
+                    key: { remoteJid: '5511999999999@s.whatsapp.net' },
+                    message: { [key]: {} },
+                },
+            }),
+        ).toMatchObject({ kind: 'unknown', rawType: key, text: null });
+    });
+
+    it('classifica chave desconhecida como unknown e preserva nome', () => {
+        expect(
+            parseEvolutionIncomingMessage({
+                data: {
+                    key: { remoteJid: '5511999999999@s.whatsapp.net' },
+                    message: { futureMessage: {} },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'unknown',
+            rawType: 'futureMessage',
+            text: null,
+        });
     });
 });

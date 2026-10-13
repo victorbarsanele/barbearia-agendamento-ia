@@ -50,6 +50,54 @@ describe('PrismaEscalationStateRepository claim integration', () => {
         ).toBe(EstadoEscalonamento.ESCALADO);
     });
 
+    it('allows one concurrent media notice claim in BOT during cooldown', async () => {
+        const repository = new PrismaEscalationStateRepository(prisma);
+        const now = new Date();
+        const claims = await Promise.all(
+            Array.from({ length: 10 }, () =>
+                repository.reivindicarAvisoMidia(
+                    PHONE,
+                    now,
+                    10 * 60 * 1000,
+                ),
+            ),
+        );
+
+        expect(claims.filter((claim) => claim.reivindicado)).toHaveLength(1);
+        expect(
+            (await prisma.escalonamentoWhatsApp.findUnique({
+                where: { telefone: PHONE },
+            }))?.estado,
+        ).toBe(EstadoEscalonamento.BOT);
+    });
+
+    it('preserves media cooldown across escalation and expiration', async () => {
+        const repository = new PrismaEscalationStateRepository(prisma);
+        const now = new Date();
+        const firstClaim = await repository.reivindicarAvisoMidia(
+            PHONE,
+            now,
+            10 * 60 * 1000,
+        );
+
+        await repository.escalar(
+            PHONE,
+            'palavra_chave',
+            now,
+            new Date(now.getTime() + 1000),
+        );
+        await repository.obter(PHONE, new Date(now.getTime() + 1001));
+
+        const afterExpiration = await repository.reivindicarAvisoMidia(
+            PHONE,
+            new Date(now.getTime() + 1001),
+            10 * 60 * 1000,
+        );
+
+        expect(firstClaim.reivindicado).toBe(true);
+        expect(afterExpiration.reivindicado).toBe(false);
+    });
+
     it('handles two concurrent human takeover upserts atomically', async () => {
         const repository = new PrismaEscalationStateRepository(prisma);
         const now = new Date();

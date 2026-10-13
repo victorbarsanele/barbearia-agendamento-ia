@@ -2,6 +2,16 @@ import { normalizarTelefone } from '../utils/telefone';
 import { IncomingWhatsAppMessage } from './types';
 
 type AnyRecord = Record<string, unknown>;
+const YCLOUD_NON_TEXT_TYPES = [
+    'image',
+    'video',
+    'audio',
+    'document',
+    'sticker',
+    'location',
+    'contacts',
+    'contact',
+] as const;
 
 export type YCloudWebhookEvent =
     | { kind: 'message'; message: IncomingWhatsAppMessage }
@@ -154,7 +164,22 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
 
     const messageType = stringField(payload, 'type');
     const textRecord = asRecord(payload.text);
-    const text = messageType === 'text' ? stringField(textRecord, 'body') : null;
+    const textBody =
+        messageType === 'text' ? stringField(textRecord, 'body') : null;
+    const kind =
+        messageType === 'text' && textBody !== null
+            ? 'text'
+            : messageType !== null &&
+                YCLOUD_NON_TEXT_TYPES.includes(
+                    messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
+                )
+              ? 'non_text'
+              : 'unknown';
+    const unsupportedRecord = asRecord(payload.unsupported);
+    const rawSubtype =
+        messageType === 'unsupported'
+            ? stringField(unsupportedRecord, 'type')
+            : null;
     const from = stringField(payload, 'from');
 
     return {
@@ -165,7 +190,10 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
                 stringField(payload, 'wamid') ?? stringField(payload, 'id'),
             phone: from ? canonicalizeYCloudPhone(from) : null,
             alternateUserId: stringField(payload, 'fromUserId'),
-            text,
+            kind,
+            rawType: messageType,
+            rawSubtype,
+            text: kind === 'text' ? textBody : null,
             isGroup: false,
             isFromMe: false,
         },

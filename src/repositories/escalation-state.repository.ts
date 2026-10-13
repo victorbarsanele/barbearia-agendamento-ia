@@ -7,6 +7,7 @@ export interface EscalationState {
     motivo: string | null;
     escaladoEm: Date | null;
     avisoEsperaEnviadoEm: Date | null;
+    avisoMidiaEnviadoEm: Date | null;
     humanoUltimaMensagemEm: Date | null;
     expiraEm: Date | null;
     atualizadoEm: Date;
@@ -28,6 +29,15 @@ export interface EscalationStateRepository {
         agora: Date,
     ): Promise<{ reivindicado: boolean; reivindicadoEm: Date }>;
     liberarAviso(
+        telefone: string,
+        reivindicadoEm: Date,
+    ): Promise<void>;
+    reivindicarAvisoMidia(
+        telefone: string,
+        agora: Date,
+        cooldownMs: number,
+    ): Promise<{ reivindicado: boolean; reivindicadoEm: Date }>;
+    liberarAvisoMidia(
         telefone: string,
         reivindicadoEm: Date,
     ): Promise<void>;
@@ -53,6 +63,7 @@ function toState(value: {
     motivo: string | null;
     escaladoEm: Date | null;
     avisoEsperaEnviadoEm: Date | null;
+    avisoMidiaEnviadoEm: Date | null;
     humanoUltimaMensagemEm: Date | null;
     expiraEm: Date | null;
     atualizadoEm: Date;
@@ -271,6 +282,62 @@ export class PrismaEscalationStateRepository
             data: { avisoEsperaEnviadoEm: null },
         });
     }
+
+    async reivindicarAvisoMidia(
+        telefone: string,
+        agora: Date,
+        cooldownMs: number,
+    ): Promise<{ reivindicado: boolean; reivindicadoEm: Date }> {
+        // Linha BOT criada por mídia é intencional; leitores não usam existência da linha para escalonar.
+        const prisma = await this.getPrisma();
+        const limite = new Date(agora.getTime() - cooldownMs);
+
+        try {
+            await prisma.escalonamentoWhatsApp.create({
+                data: {
+                    telefone,
+                    avisoMidiaEnviadoEm: agora,
+                },
+            });
+            return { reivindicado: true, reivindicadoEm: agora };
+        } catch (error) {
+            if (
+                !(
+                    error instanceof Prisma.PrismaClientKnownRequestError &&
+                    error.code === 'P2002'
+                )
+            ) {
+                throw error;
+            }
+        }
+
+        const result = await prisma.escalonamentoWhatsApp.updateMany({
+            where: {
+                telefone,
+                estado: EstadoEscalonamento.BOT,
+                OR: [
+                    { avisoMidiaEnviadoEm: null },
+                    { avisoMidiaEnviadoEm: { lte: limite } },
+                ],
+            },
+            data: { avisoMidiaEnviadoEm: agora },
+        });
+        return { reivindicado: result.count === 1, reivindicadoEm: agora };
+    }
+
+    async liberarAvisoMidia(
+        telefone: string,
+        reivindicadoEm: Date,
+    ): Promise<void> {
+        const prisma = await this.getPrisma();
+        await prisma.escalonamentoWhatsApp.updateMany({
+            where: {
+                telefone,
+                avisoMidiaEnviadoEm: reivindicadoEm,
+            },
+            data: { avisoMidiaEnviadoEm: null },
+        });
+    }
 }
 
 export class InMemoryEscalationStateRepository
@@ -323,6 +390,7 @@ export class InMemoryEscalationStateRepository
             motivo: current?.motivo ?? null,
             escaladoEm: current?.escaladoEm ?? null,
             avisoEsperaEnviadoEm: current?.avisoEsperaEnviadoEm ?? null,
+            avisoMidiaEnviadoEm: current?.avisoMidiaEnviadoEm ?? null,
             humanoUltimaMensagemEm: mensagemEm,
             expiraEm: new Date(agora.getTime() + ttlMs),
             atualizadoEm: agora,
@@ -380,6 +448,7 @@ export class InMemoryEscalationStateRepository
             motivo,
             escaladoEm,
             avisoEsperaEnviadoEm: null,
+            avisoMidiaEnviadoEm: current?.avisoMidiaEnviadoEm ?? null,
             humanoUltimaMensagemEm: null,
             expiraEm,
             atualizadoEm: escaladoEm,
@@ -415,6 +484,55 @@ export class InMemoryEscalationStateRepository
             state.avisoEsperaEnviadoEm?.getTime() === reivindicadoEm.getTime()
         ) {
             state.avisoEsperaEnviadoEm = null;
+            state.atualizadoEm = new Date();
+        }
+    }
+
+    async reivindicarAvisoMidia(
+        telefone: string,
+        agora: Date,
+        cooldownMs: number,
+    ): Promise<{ reivindicado: boolean; reivindicadoEm: Date }> {
+        // Linha BOT criada por mídia é intencional; leitores não usam existência da linha para escalonar.
+        const state = this.states.get(telefone);
+        const last = state?.avisoMidiaEnviadoEm;
+        if (state && state.estado !== EstadoEscalonamento.BOT) {
+            return { reivindicado: false, reivindicadoEm: agora };
+        }
+        if (
+            last &&
+            agora.getTime() - last.getTime() < cooldownMs
+        ) {
+            return { reivindicado: false, reivindicadoEm: agora };
+        }
+
+        const next: EscalationState = state ?? {
+            telefone,
+            estado: EstadoEscalonamento.BOT,
+            motivo: null,
+            escaladoEm: null,
+            avisoEsperaEnviadoEm: null,
+            avisoMidiaEnviadoEm: null,
+            humanoUltimaMensagemEm: null,
+            expiraEm: null,
+            atualizadoEm: agora,
+        };
+        next.avisoMidiaEnviadoEm = agora;
+        next.atualizadoEm = agora;
+        this.states.set(telefone, next);
+        return { reivindicado: true, reivindicadoEm: agora };
+    }
+
+    async liberarAvisoMidia(
+        telefone: string,
+        reivindicadoEm: Date,
+    ): Promise<void> {
+        const state = this.states.get(telefone);
+        if (
+            state?.avisoMidiaEnviadoEm?.getTime() ===
+            reivindicadoEm.getTime()
+        ) {
+            state.avisoMidiaEnviadoEm = null;
             state.atualizadoEm = new Date();
         }
     }

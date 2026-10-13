@@ -22,6 +22,8 @@ describe('YCloud inbound adapter', () => {
                 provider: 'ycloud',
                 messageId: 'wamid-1',
                 phone: '5511999999999',
+                kind: 'text',
+                rawType: 'text',
                 text: 'Olá',
                 isGroup: false,
                 isFromMe: false,
@@ -46,8 +48,116 @@ describe('YCloud inbound adapter', () => {
             kind: 'message',
             message: {
                 messageId: 'fallback-id',
+                kind: 'non_text',
+                rawType: 'image',
                 text: null,
             },
+        });
+    });
+
+    it.each([
+        'image',
+        'video',
+        'audio',
+        'document',
+        'sticker',
+        'location',
+        'contacts',
+        'contact',
+    ])('classifies YCloud %s as non-text', (type) => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: `wamid-${type}`,
+                    from: '5511999999999',
+                    type,
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'non_text',
+                rawType: type,
+                text: null,
+            },
+        });
+    });
+
+    it.each([
+        'reaction',
+        'button',
+        'interactive',
+        'order',
+        'system',
+        'request_welcome',
+        'future_type',
+    ])('classifies YCloud %s as unknown', (type) => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: `wamid-${type}`,
+                    from: '5511999999999',
+                    type,
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: { kind: 'unknown', rawType: type, text: null },
+        });
+    });
+
+    it('preserves unsupported subtype while classifying as unknown', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'wamid-unsupported',
+                    from: '5511999999999',
+                    type: 'unsupported',
+                    unsupported: { type: 'poll_update' },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'unknown',
+                rawType: 'unsupported',
+                rawSubtype: 'poll_update',
+            },
+        });
+    });
+
+    it('classifies text without valid body as unknown', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'wamid-empty-text',
+                    from: '5511999999999',
+                    type: 'text',
+                    text: {},
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: { kind: 'unknown', rawType: 'text', text: null },
+        });
+    });
+
+    it('classifies missing YCloud type as unknown', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'wamid-unknown',
+                    from: '5511999999999',
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: { kind: 'unknown', rawType: null, text: null },
         });
     });
 

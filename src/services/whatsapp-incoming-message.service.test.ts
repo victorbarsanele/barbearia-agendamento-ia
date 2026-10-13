@@ -7,6 +7,10 @@ import {
 } from './gemini.service';
 import { processarMensagemRecebida } from './whatsapp-incoming-message.service';
 import { IncomingWhatsAppMessage } from '../whatsapp/types';
+import {
+    InMemoryEscalationStateRepository,
+    setEscalationStateRepository,
+} from '../repositories/escalation-state.repository';
 
 vi.mock('./gemini.service', () => ({
     escalarParaHumano: vi.fn(),
@@ -23,6 +27,9 @@ function criarMensagem(text: string): IncomingWhatsAppMessage {
         messageId: 'message-1',
         phone,
         alternateUserId: null,
+        kind: 'text',
+        rawType: null,
+        rawSubtype: null,
         text,
         isGroup: false,
         isFromMe: false,
@@ -35,6 +42,7 @@ beforeEach(() => {
     vi.mocked(obterEstadoEscalonamento).mockResolvedValue(null);
     vi.mocked(processarMensagemWhatsapp).mockResolvedValue();
     vi.mocked(sendWhatsAppText).mockResolvedValue();
+    setEscalationStateRepository(new InMemoryEscalationStateRepository());
 });
 
 describe('processarMensagemRecebida', () => {
@@ -79,6 +87,82 @@ describe('processarMensagemRecebida', () => {
             phone,
             'Quero agendar',
         );
+    });
+
+    it('envia aviso único para mídia em BOT durante cooldown', async () => {
+        const media = {
+            ...criarMensagem(''),
+            kind: 'non_text' as const,
+            rawType: 'audio',
+            messageId: 'audio-1',
+        };
+
+        await processarMensagemRecebida(media);
+        await processarMensagemRecebida({
+            ...media,
+            messageId: 'audio-2',
+            rawType: 'image',
+        });
+
+        expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
+        expect(sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            'Olá! No momento só consigo entender mensagens escritas. Pode me enviar sua dúvida por texto?',
+        );
+        expect(processarMensagemWhatsapp).not.toHaveBeenCalled();
+    });
+
+    it.each(['ESCALADO', 'HUMANO_ATIVO'] as const)(
+        'não envia aviso no estado %s',
+        async (estado) => {
+            const repository = new InMemoryEscalationStateRepository();
+            const now = new Date();
+            if (estado === 'ESCALADO') {
+                await repository.escalar(
+                    phone,
+                    'palavra_chave',
+                    now,
+                    new Date(now.getTime() + 60_000),
+                );
+            } else {
+                await repository.registrarRespostaHumana(
+                    phone,
+                    now,
+                    now,
+                    60_000,
+                );
+            }
+            setEscalationStateRepository(repository);
+
+            await processarMensagemRecebida({
+                ...criarMensagem(''),
+                kind: 'non_text',
+                rawType: 'image',
+            });
+
+            expect(sendWhatsAppText).not.toHaveBeenCalled();
+            expect(processarMensagemWhatsapp).not.toHaveBeenCalled();
+        },
+    );
+
+    it('libera aviso quando envio falha', async () => {
+        vi.mocked(sendWhatsAppText)
+            .mockRejectedValueOnce(new Error('falha de envio'))
+            .mockResolvedValueOnce();
+        const media = {
+            ...criarMensagem(''),
+            kind: 'non_text' as const,
+            rawType: 'video',
+        };
+
+        await processarMensagemRecebida(media);
+        await processarMensagemRecebida({
+            ...media,
+            messageId: 'video-2',
+        });
+
+        expect(sendWhatsAppText).toHaveBeenCalledTimes(2);
+        expect(processarMensagemWhatsapp).not.toHaveBeenCalled();
     });
 
     it('captura falha sem rejeição não tratada nem conteúdo nos logs', async () => {

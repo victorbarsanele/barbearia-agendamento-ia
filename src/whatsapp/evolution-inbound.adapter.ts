@@ -43,13 +43,40 @@ export function parseEvolutionIncomingMessage(
     const remoteJid =
         addressingMode === 'lid' && remoteJidAlt ? remoteJidAlt : remoteJidRaw;
     const normalizedPhone = remoteJid ? normalizarTelefone(remoteJid) : '';
+    const conversation = readString(message, 'conversation');
+    const mediaKeys = [
+        'audioMessage',
+        'imageMessage',
+        'videoMessage',
+        'stickerMessage',
+        'documentMessage',
+        'locationMessage',
+        'contactMessage',
+        'contactsArrayMessage',
+    ];
+    const unknownType =
+        Object.keys(message ?? {}).find(
+            (key) => key !== 'messageContextInfo',
+        ) ?? null;
+    const mediaType =
+        mediaKeys.find((key) => message && key in message) ?? null;
+    const kind =
+        mediaType !== null
+            ? 'non_text'
+            : conversation !== null
+              ? 'text'
+              : 'unknown';
+    const rawType = kind === 'unknown' ? unknownType : mediaType;
 
     return {
         provider: 'evolution',
         messageId: readString(key, 'id'),
         phone: normalizedPhone || null,
         alternateUserId: null,
-        text: readString(message, 'conversation'),
+        kind,
+        rawType,
+        rawSubtype: null,
+        text: kind === 'text' ? conversation : null,
         isGroup: remoteJid?.endsWith('@g.us') ?? false,
         isFromMe: readBoolean(key, 'fromMe') ?? false,
     };
