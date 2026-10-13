@@ -30,7 +30,24 @@ export async function receberWhatsappWebhook(
         return;
     }
 
-    if (!message.phone || !message.text) {
+    if (!message.phone) {
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (message.kind === 'unknown') {
+        if (message.rawType) {
+            console.info('[WEBHOOK] Tipo de mensagem ignorado', {
+                provider: message.provider,
+                rawType: message.rawType,
+                motivo: 'tipo_ignorado',
+            });
+        }
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (message.kind !== 'non_text' && !message.text) {
         void reply.status(200).send({ ok: true });
         return;
     }

@@ -154,6 +154,93 @@ describe('YCloud webhook controller', () => {
         expect(processMock).toHaveBeenCalledTimes(1);
     });
 
+    it('registra mídia não textual e despacha após ACK', async () => {
+        const reply = makeReply();
+        const order: string[] = [];
+        processMock.mockImplementation(async () => {
+            order.push('processamento');
+        });
+        vi.mocked(reply.send).mockImplementation(() => {
+            order.push('ack');
+            return reply;
+        });
+
+        await receberYCloudWebhook(
+            makeRequest(
+                inboundBody({
+                    wamid: 'image-1',
+                    type: 'image',
+                    text: undefined,
+                    image: { id: 'media-1' },
+                }),
+            ),
+            reply,
+        );
+
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'image-1');
+        expect(order).toEqual(['ack', 'processamento']);
+        expect(processMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'non_text',
+                rawType: 'image',
+                text: null,
+            }),
+        );
+    });
+
+    it('ignora tipo YCloud desconhecido dentro da allowlist sem registrar ID', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511999999999');
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                inboundBody({
+                    wamid: 'reaction-1',
+                    type: 'reaction',
+                    reaction: { message_id: 'wamid-old', emoji: '👍' },
+                }),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Tipo de mensagem ignorado',
+            {
+                provider: 'ycloud',
+                rawType: 'reaction',
+                motivo: 'tipo_ignorado',
+            },
+        );
+        log.mockRestore();
+    });
+
+    it('não registra log de tipo desconhecido fora da allowlist', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                inboundBody({
+                    wamid: 'reaction-outside',
+                    type: 'reaction',
+                }),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(log).not.toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Tipo de mensagem ignorado',
+            expect.anything(),
+        );
+        log.mockRestore();
+    });
+
     it('ACKs before processing promise finishes', async () => {
         const reply = makeReply();
         const order: string[] = [];

@@ -143,7 +143,6 @@ export async function receberYCloudWebhook(
     }
 
     if (
-        !event.message.text ||
         (!event.message.phone && !event.message.alternateUserId)
     ) {
         if (
@@ -154,6 +153,26 @@ export async function receberYCloudWebhook(
                 '[YCLOUD WEBHOOK] Mensagem ignorada: remetente sem telefone e identificador alternativo.',
             );
         }
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (event.message.kind === 'unknown') {
+        if (event.message.rawType) {
+            console.info('[YCLOUD WEBHOOK] Tipo de mensagem ignorado', {
+                provider: event.message.provider,
+                rawType: event.message.rawType,
+                ...(event.message.rawSubtype
+                    ? { rawSubtype: event.message.rawSubtype }
+                    : {}),
+                motivo: 'tipo_ignorado',
+            });
+        }
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (event.message.kind !== 'non_text' && !event.message.text) {
         void reply.status(200).send({ ok: true });
         return;
     }

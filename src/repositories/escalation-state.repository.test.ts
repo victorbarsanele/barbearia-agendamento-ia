@@ -19,6 +19,75 @@ async function escalate(
 }
 
 describe('InMemoryEscalationStateRepository', () => {
+    it('reivindica aviso de mídia em BOT e respeita cooldown', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        const first = await repository.reivindicarAvisoMidia(
+            PHONE,
+            NOW,
+            10 * 60 * 1000,
+        );
+        const second = await repository.reivindicarAvisoMidia(
+            PHONE,
+            new Date(NOW.getTime() + 1),
+            10 * 60 * 1000,
+        );
+
+        expect(first.reivindicado).toBe(true);
+        expect(second.reivindicado).toBe(false);
+    });
+
+    it('libera aviso de mídia para novo envio após falha', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        const claim = await repository.reivindicarAvisoMidia(
+            PHONE,
+            NOW,
+            10 * 60 * 1000,
+        );
+
+        await repository.liberarAvisoMidia(PHONE, claim.reivindicadoEm);
+
+        expect(
+            (
+                await repository.reivindicarAvisoMidia(
+                    PHONE,
+                    NOW,
+                    10 * 60 * 1000,
+                )
+            ).reivindicado,
+        ).toBe(true);
+    });
+
+    it('preserva cooldown de mídia através de escalada e expiração', async () => {
+        const repository = new InMemoryEscalationStateRepository();
+        const firstClaim = await repository.reivindicarAvisoMidia(
+            PHONE,
+            NOW,
+            10 * 60 * 1000,
+        );
+
+        await repository.escalar(
+            PHONE,
+            'palavra_chave',
+            NOW,
+            new Date(NOW.getTime() + 1000),
+        );
+        expect(
+            (await repository.obter(PHONE, NOW))?.avisoMidiaEnviadoEm,
+        ).toEqual(firstClaim.reivindicadoEm);
+
+        await repository.obter(
+            PHONE,
+            new Date(NOW.getTime() + 1001),
+        );
+        const afterExpiration = await repository.reivindicarAvisoMidia(
+            PHONE,
+            new Date(NOW.getTime() + 1001),
+            10 * 60 * 1000,
+        );
+
+        expect(afterExpiration.reivindicado).toBe(false);
+    });
+
     it('reivindica aviso uma única vez em N mensagens no cooldown', async () => {
         const repository = new InMemoryEscalationStateRepository();
         await escalate(repository);

@@ -215,6 +215,7 @@ model EscalonamentoWhatsApp {
   motivo                  String?
   escaladoEm              DateTime?            @db.Timestamptz(3)
   avisoEsperaEnviadoEm    DateTime?            @db.Timestamptz(3)
+  avisoMidiaEnviadoEm     DateTime?            @db.Timestamptz(3)
   humanoUltimaMensagemEm  DateTime?            @db.Timestamptz(3)
   expiraEm                DateTime?            @db.Timestamptz(3)
   atualizadoEm            DateTime             @updatedAt @db.Timestamptz(3)

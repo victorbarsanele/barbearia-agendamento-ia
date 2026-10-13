@@ -49,6 +49,7 @@ function criarPayload(overrides: {
     addressingMode?: string;
     fromMe?: boolean;
     text?: string;
+    mediaKey?: string;
 } = {}) {
     const key: Record<string, unknown> = {
         remoteJid: overrides.remoteJid ?? '5511999999999@s.whatsapp.net',
@@ -63,10 +64,15 @@ function criarPayload(overrides: {
         key.addressingMode = overrides.addressingMode;
     }
 
+    const message =
+        overrides.mediaKey !== undefined
+            ? { [overrides.mediaKey]: {} }
+            : { conversation: overrides.text ?? 'Olá' };
+
     return {
         data: {
             key,
-            message: { conversation: overrides.text ?? 'Olá' },
+            message,
         },
     };
 }
@@ -105,6 +111,36 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
         expect(reply.send).toHaveBeenCalledWith({ ok: true });
     });
 
+    it('registra mídia não textual e despacha após ACK', async () => {
+        const reply = criarReplyMock();
+        const request = criarRequestMock(
+            criarPayload({ id: 'audio-1', mediaKey: 'audioMessage' }),
+        );
+        const order: string[] = [];
+        processarMensagemRecebidaMock.mockImplementation(async () => {
+            order.push('processamento');
+        });
+        vi.mocked(reply.send).mockImplementation(() => {
+            order.push('ack');
+            return reply;
+        });
+
+        await receberWhatsappWebhook(request, reply);
+
+        expect(registrarMensagemProcessadaMock).toHaveBeenCalledWith(
+            'evolution',
+            'audio-1',
+        );
+        expect(order).toEqual(['ack', 'processamento']);
+        expect(processarMensagemRecebidaMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                kind: 'non_text',
+                rawType: 'audioMessage',
+                text: null,
+            }),
+        );
+    });
+
     it('registra e inicia processamento uma vez, após enviar resposta HTTP', async () => {
         const reply = criarReplyMock();
         const request = criarRequestMock(
@@ -133,6 +169,9 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
             messageId: 'message-1',
             phone: '5511999999999',
             alternateUserId: null,
+            kind: 'text',
+            rawType: null,
+            rawSubtype: null,
             text: 'Quero agendar',
             isGroup: false,
             isFromMe: false,
