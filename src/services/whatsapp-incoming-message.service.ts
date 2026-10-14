@@ -17,6 +17,7 @@ import {
     normalizeAudioMimeType,
 } from '../whatsapp/ycloud-media-download';
 import { AudioLimiter, AudioQueueFullError } from '../whatsapp/audio-limiter';
+import { runExclusive } from '../utils/phone-queue';
 
 const MAX_MESSAGE_LENGTH = 500;
 const URL_PATTERN = /(https?:\/\/|www\.)/i;
@@ -277,7 +278,11 @@ async function processarAudio(
                 throw new AudioProcessingError(AUDIO_MAX_FAILURE_REASON);
             }
 
-            await processarTextoDeCliente(phone, transcription.text);
+            await processarTextoDeCliente(
+                phone,
+                transcription.text,
+                message.messageId,
+            );
             result = 'success';
         } finally {
             release();
@@ -331,6 +336,7 @@ async function processarAudio(
 async function processarTextoDeCliente(
     phone: string,
     text: string,
+    messageId: string | null,
 ): Promise<void> {
     const estado = await obterEstadoEscalonamento(phone);
 
@@ -362,10 +368,10 @@ async function processarTextoDeCliente(
         return;
     }
 
-    await processarMensagemWhatsapp(phone, text);
+    await processarMensagemWhatsapp(phone, text, messageId);
 }
 
-export async function processarMensagemRecebida(
+async function processarMensagemRecebidaInterno(
     message: IncomingWhatsAppMessage,
 ): Promise<void> {
     const { phone, text } = message;
@@ -419,8 +425,24 @@ export async function processarMensagemRecebida(
             return;
         }
 
-        await processarTextoDeCliente(phone, text);
+        await processarTextoDeCliente(phone, text, message.messageId);
     } catch {
         console.error('[WEBHOOK] Falha no processamento assíncrono.');
     }
+}
+
+export function processarMensagemRecebida(
+    message: IncomingWhatsAppMessage,
+): Promise<void> {
+    if (!message.phone) {
+        return processarMensagemRecebidaInterno(message);
+    }
+
+    return runExclusive(message.phone, async () => {
+        try {
+            await processarMensagemRecebidaInterno(message);
+        } catch {
+            console.error('[WEBHOOK] Falha no processamento assíncrono.');
+        }
+    });
 }

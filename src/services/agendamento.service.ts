@@ -292,6 +292,7 @@ async function validarConflito(
     dataHoraInicio: Date,
     dataHoraFim: Date,
     ignorarAgendamentoId?: string,
+    clienteId?: string,
 ): Promise<void> {
     // Há conflito quando um intervalo existente começa antes do novo fim
     // e termina depois do novo início.
@@ -302,6 +303,12 @@ async function validarConflito(
     });
 
     if (conflito) {
+        if (clienteId && conflito.clienteId === clienteId) {
+            throw new AppError(
+                'Você já tem agendamento nesse horário.',
+                409,
+            );
+        }
         throw new AppError('Já existe um agendamento nesse horário.', 409);
     }
 }
@@ -379,12 +386,13 @@ function validarStatusPermiteVinculo(agendamento: {
     }
 }
 
-async function validarDisponibilidade(
+export async function validarDisponibilidade(
     dataHoraInicioStr: string,
     duracaoMinutos: number,
     permiteExtensaoFechamento: boolean,
     registroRetroativo = false,
     origem: 'PAINEL' | 'GEMINI' = 'PAINEL',
+    clienteId?: string,
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
@@ -399,7 +407,7 @@ async function validarDisponibilidade(
     );
     validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim, horario);
     await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim, origem);
-    await validarConflito(dataHoraInicio, dataHoraFim);
+    await validarConflito(dataHoraInicio, dataHoraFim, undefined, clienteId);
 
     return { dataHoraInicio, dataHoraFim };
 }

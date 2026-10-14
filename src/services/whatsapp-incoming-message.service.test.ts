@@ -139,6 +139,7 @@ describe('processarMensagemRecebida', () => {
         expect(processarMensagemWhatsapp).toHaveBeenCalledWith(
             phone,
             'Quero agendar',
+            'message-1',
         );
     });
 
@@ -277,6 +278,7 @@ describe('processarMensagemRecebida', () => {
         expect(processarMensagemWhatsapp).toHaveBeenCalledWith(
             phone,
             'transcrição',
+            'message-1',
         );
         expect(sendWhatsAppText).not.toHaveBeenCalled();
     });

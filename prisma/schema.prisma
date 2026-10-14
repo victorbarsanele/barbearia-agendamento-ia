@@ -57,6 +57,7 @@ model Servico {
   pacotes                   PacoteServico[]
   pacotesClientes           PacoteClienteServico[]
   lotes                     LoteAgendamento[]
+  rascunhosAgendamento      RascunhoAgendamento[]
 
   @@map("servicos")
 }
@@ -221,4 +222,21 @@ model EscalonamentoWhatsApp {
   atualizadoEm            DateTime             @updatedAt @db.Timestamptz(3)
 
   @@map("escalonamentos_whatsapp")
+}
+
+model RascunhoAgendamento {
+  telefoneSessao    String   @id
+  nomeCliente       String
+  telefoneCliente   String
+  servicoId        String
+  dataHoraInicio   DateTime @db.Timestamptz(3)
+  mensagemCriacaoId String
+  criadoEm         DateTime @default(now()) @db.Timestamptz(3)
+  expiraEm         DateTime @db.Timestamptz(3)
+
+  servico          Servico  @relation(fields: [servicoId], references: [id], onDelete: Cascade)
+
+  @@index([expiraEm])
+  @@index([servicoId])
+  @@map("rascunhos_agendamento")
 }
