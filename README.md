@@ -94,6 +94,7 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
 - `HUMAN_TAKEOVER_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos; TTL deslizante contado desde a última mensagem do barbeiro na conversa)
+- `PENDING_BOOKING_TTL_MS` (opcional, em milissegundos; padrão `600000` ou 10 minutos)
 - `YCLOUD_API_KEY` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_WEBHOOK_SECRET` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
@@ -260,6 +261,7 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (optional, in milliseconds; default `900000` or 15 minutes)
 - `HUMAN_TAKEOVER_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes; sliding TTL counted from the barber's last message in the conversation)
+- `PENDING_BOOKING_TTL_MS` (optional, in milliseconds; default `600000` or 10 minutes)
 - `YCLOUD_API_KEY` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)

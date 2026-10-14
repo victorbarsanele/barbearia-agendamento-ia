@@ -45,6 +45,7 @@ vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     criar: vi.fn(),
+    validarDisponibilidade: vi.fn(),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
 }));
@@ -55,6 +56,7 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
 import * as pacoteRepository from '../repositories/pacote.repository';
+import { InMemoryPendingAgendamentoRepository } from '../repositories/pending-agendamento.repository';
 import * as agendamentoService from './agendamento.service';
 import {
     __testables,
@@ -139,11 +141,103 @@ beforeEach(() => {
     vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValue(
         criarConfiguracoesHorario(),
     );
+    __testables.setPendingAgendamentoRepository(
+        new InMemoryPendingAgendamentoRepository(),
+    );
 });
 
 afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
+});
+
+describe('gemini.service confirmação explícita de novo agendamento', () => {
+    const phone = '5511999999999';
+    const messageBase = {
+        nomeCliente: 'João Silva',
+        servicoId: 'servico-1',
+        dataHoraInicio: '2026-07-22T11:00:00',
+    };
+
+    beforeEach(() => {
+        vi.mocked(agendamentoService.validarDisponibilidade).mockResolvedValue({
+            dataHoraInicio: new Date('2026-07-22T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-22T11:30:00-03:00'),
+        });
+        vi.mocked(agendamentoService.criar).mockResolvedValue(
+            agendamentoAtivoProximo,
+        );
+    });
+
+    it('prepara sem criar e bloqueia confirmação na mesma mensagem', async () => {
+        const prepared = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-1',
+            messageBase,
+        );
+
+        expect(prepared.sucesso).toBe(true);
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+
+        const confirmed = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-1',
+        );
+
+        expect(confirmed.sucesso).toBe(false);
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+    });
+
+    it('confirma em mensagem posterior uma única vez', async () => {
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'message-1',
+            messageBase,
+        );
+
+        const confirmed = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-2',
+        );
+        const duplicate = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-3',
+        );
+
+        expect(confirmed.sucesso).toBe(true);
+        expect(duplicate.sucesso).toBe(false);
+        expect(agendamentoService.criar).toHaveBeenCalledOnce();
+    });
+
+    it('usa telefone da sessão por padrão e valida telefone informado', async () => {
+        const defaultPhone = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-1',
+            messageBase,
+        );
+        expect(defaultPhone.resumo).toContain('(11) 99999-9999');
+
+        const invalidPhone = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-2',
+            { ...messageBase, telefone: '551198765432' },
+        );
+        expect(invalidPhone).toMatchObject({
+            sucesso: false,
+            mensagem: expect.stringContaining('Telefone inválido'),
+        });
+    });
+
+    it('falha fechado sem messageId', async () => {
+        await expect(
+            __testables.prepararAgendamentoTool(phone, null, messageBase),
+        ).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, null),
+        ).resolves.toMatchObject({ sucesso: false });
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+    });
+
 });
 
 describe('gemini.service tools de reagendamento e cancelamento', () => {

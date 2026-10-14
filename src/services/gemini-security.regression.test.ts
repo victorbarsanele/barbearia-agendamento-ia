@@ -19,6 +19,11 @@ vi.mock('@google/genai', () => ({
 // --- Mocks dos repositórios: nenhuma chamada real ao banco neste teste. ---
 vi.mock('../repositories/agendamento.repository', () => ({
     listarTodos: vi.fn(),
+    isViolacaoDeSobreposicao: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../repositories/bloqueio.repository', () => ({
+    listarTodos: vi.fn(),
 }));
 
 vi.mock('../repositories/cliente.repository', () => ({
@@ -28,6 +33,17 @@ vi.mock('../repositories/cliente.repository', () => ({
 }));
 
 vi.mock('../repositories/servico.repository', () => ({
+    listarTodos: vi.fn().mockResolvedValue([
+        {
+            id: 'servico-corte-barba',
+            nome: 'Corte e Barba',
+            duracaoMinutos: 60,
+            permiteExtensaoFechamento: false,
+        },
+    ]),
+}));
+
+vi.mock('../repositories/horarioFuncionamento.repository', () => ({
     listarTodos: vi.fn(),
 }));
 
@@ -39,6 +55,12 @@ vi.mock('../repositories/pacote.repository', () => ({
 // atualizar()/cancelar() (não exercitados neste arquivo de teste).
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
+    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
+    criar: vi.fn(),
+    validarDisponibilidade: vi.fn().mockResolvedValue({
+        dataHoraInicio: new Date('2026-07-28T14:00:00Z'),
+        dataHoraFim: new Date('2026-07-28T15:00:00Z'),
+    }),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
 }));
@@ -46,6 +68,8 @@ vi.mock('./agendamento.service', () => ({
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as pacoteRepository from '../repositories/pacote.repository';
+import * as agendamentoService from './agendamento.service';
+import { InMemoryPendingAgendamentoRepository } from '../repositories/pending-agendamento.repository';
 import { __testables } from './gemini.service';
 import { processarMensagemWhatsapp } from './gemini.service';
 
@@ -105,7 +129,19 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
     beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(AGORA);
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        vi.stubEnv('EVOLUTION_API_KEY', 'evolution-test-key');
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                text: vi.fn().mockResolvedValue(''),
+            }),
+        );
         vi.clearAllMocks();
+        __testables.setPendingAgendamentoRepository(
+            new InMemoryPendingAgendamentoRepository(),
+        );
 
         // Repositório de clientes: só resolve pelo telefone real de sessão.
         (
@@ -189,6 +225,93 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
         expect(resultadoCancelamento.sucesso).toBe(false);
         expect(resultadoCancelamento.mensagem).toContain(
             'Nenhum agendamento ativo encontrado',
+        );
+    });
+});
+
+describe('Regressão de segurança: confirmação usa somente rascunho do backend', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(AGORA);
+        vi.clearAllMocks();
+        __testables.setPendingAgendamentoRepository(
+            new InMemoryPendingAgendamentoRepository(),
+        );
+        (
+            clienteRepository.buscarPorTelefone as ReturnType<typeof vi.fn>
+        ).mockResolvedValue(CLIENTE_SESSAO);
+        (
+            agendamentoService.criar as ReturnType<typeof vi.fn>
+        ).mockResolvedValue(AGENDAMENTO_DO_ALVO);
+    });
+
+    afterEach(() => vi.useRealTimers());
+
+    it('declara prepararAgendamento e confirmarAgendamento, mas não criarAgendamento', async () => {
+        geminiMocks.generateContent.mockResolvedValue({
+            functionCalls: [],
+            text: 'ok',
+        });
+        await processarMensagemWhatsapp(
+            REMOTE_JID_SESSAO_REAL,
+            'quero agendar um corte',
+        );
+        const [request] = geminiMocks.generateContent.mock.calls.at(-1)!;
+        const nomes = (request.config as any).tools[0].functionDeclarations.map(
+            (tool: { name: string }) => tool.name,
+        );
+        expect(nomes).toContain('prepararAgendamento');
+        expect(nomes).toContain('confirmarAgendamento');
+        expect(nomes).not.toContain('criarAgendamento');
+    });
+
+    it('prepararAgendamento não chama criar e telefone inválido é recusado', async () => {
+        const prepared = await __testables.executeToolCall(
+            {
+                name: 'prepararAgendamento',
+                args: {
+                    nomeCliente: 'Cliente',
+                    telefone: '551198765432',
+                    servicoId: SERVICO_ALVO.id,
+                    dataHoraInicio: '2026-07-28T11:00:00',
+                },
+                id: 'prepare-1',
+            } as any,
+            TELEFONE_SESSAO_REAL,
+            REMOTE_JID_SESSAO_REAL,
+            'prepare-1',
+        );
+        expect(prepared).toMatchObject({ sucesso: false });
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+    });
+
+    it('confirmarAgendamento ignora argumentos do modelo', async () => {
+        await __testables.prepararAgendamentoTool(
+            TELEFONE_SESSAO_REAL,
+            'prepare-1',
+            {
+                nomeCliente: 'Cliente',
+                servicoId: SERVICO_ALVO.id,
+                dataHoraInicio: '2026-07-28T11:00:00',
+            },
+        );
+        const result = await __testables.executeToolCall(
+            {
+                name: 'confirmarAgendamento',
+                args: {
+                    nomeCliente: 'Atacante',
+                    telefone: TELEFONE_OUTRO_CLIENTE,
+                    servicoId: 'outro',
+                },
+                id: 'confirm-1',
+            } as any,
+            TELEFONE_SESSAO_REAL,
+            REMOTE_JID_SESSAO_REAL,
+            'confirm-1',
+        );
+        expect(result).toMatchObject({ sucesso: true });
+        expect(agendamentoService.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ clienteId: CLIENTE_SESSAO.id }),
         );
     });
 });
