@@ -70,6 +70,37 @@ describe('InMemoryPendingAgendamentoRepository', () => {
         expect(second).toBeNull();
     });
 
+    it('obterValido lê sem consumir e ignora expirado', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        await repository.salvar(baseDraft);
+
+        await expect(
+            repository.obterValido(
+                baseDraft.telefoneSessao,
+                new Date('2026-10-20T12:05:00-03:00'),
+            ),
+        ).resolves.toMatchObject({ mensagemCriacaoId: 'message-1' });
+        await expect(
+            repository.obterValido(
+                baseDraft.telefoneSessao,
+                new Date('2026-10-20T12:05:00-03:00'),
+            ),
+        ).resolves.not.toBeNull();
+        await expect(
+            repository.obterValido(
+                baseDraft.telefoneSessao,
+                new Date('2026-10-20T12:10:00-03:00'),
+            ),
+        ).resolves.toBeNull();
+        await expect(
+            repository.consumir(
+                baseDraft.telefoneSessao,
+                'message-2',
+                new Date('2026-10-20T12:05:00-03:00'),
+            ),
+        ).resolves.not.toBeNull();
+    });
+
     it('não restaura rascunho antigo sobre rascunho novo', async () => {
         const repository = new InMemoryPendingAgendamentoRepository();
         await repository.salvar(baseDraft);

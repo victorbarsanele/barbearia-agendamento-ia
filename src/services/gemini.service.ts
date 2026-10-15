@@ -48,6 +48,22 @@ import {
 import { EstadoEscalonamento } from '@prisma/client';
 import { describeSafeError } from '../whatsapp/audio-error';
 import { getAudioConfig } from '../whatsapp/audio-config';
+import {
+    ResumoEnviadoStore,
+    obterValido as obterResumoEnviadoValido,
+    registrar as registrarResumoEnviado,
+    limpar as limparResumoEnviado,
+} from './resumo-enviado.store';
+import {
+    RecentConfirmationStore,
+    obterValido as obterRecentConfirmationValido,
+    registrar as registrarRecentConfirmation,
+    limpar as limparRecentConfirmation,
+} from './recent-confirmation.store';
+import {
+    ehConfirmacaoInequivoca,
+    ehConfirmacaoRepetida,
+} from '../utils/confirmacao-cliente';
 
 export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
@@ -149,6 +165,29 @@ type HistoricoRole = 'user' | 'model';
 const conversationHistory = new Map<string, ConversaItem[]>();
 const confusionStreak = new Map<string, number>();
 const noProgressStreak = new Map<string, number>();
+type ResumoEnviadoStorePort = Pick<
+    ResumoEnviadoStore,
+    'registrar' | 'obterValido' | 'limpar'
+>;
+type RecentConfirmationStorePort = Pick<
+    RecentConfirmationStore,
+    'registrar' | 'obterValido' | 'limpar'
+>;
+type PreparacaoAgendamentoBemSucedida = {
+    mensagemCriacaoId: string;
+    resumo: string;
+};
+
+let resumoEnviadoStore: ResumoEnviadoStorePort = {
+    registrar: registrarResumoEnviado,
+    obterValido: obterResumoEnviadoValido,
+    limpar: limparResumoEnviado,
+};
+let recentConfirmationStore: RecentConfirmationStorePort = {
+    registrar: registrarRecentConfirmation,
+    obterValido: obterRecentConfirmationValido,
+    limpar: limparRecentConfirmation,
+};
 
 const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
@@ -173,7 +212,7 @@ const BASE_SYSTEM_PROMPT = [
     'Chame prepararAgendamento, envie o resumo retornado literalmente e só chame confirmarAgendamento quando uma NOVA mensagem confirmar claramente o último resumo.',
     'Qualquer alteração exige nova chamada de prepararAgendamento. Nunca chame prepararAgendamento e confirmarAgendamento na mesma rodada.',
     'Se o cliente fizer outra pergunta, responda e reapresente o último resumo. Se informar outro telefone, passe-o em telefone; nunca invente telefone.',
-    'Se a confirmação falhar por horário ocupado, repasse a mensagem da tool, busque novos horários e prepare novo rascunho reaproveitando nome e telefone.',
+    'Se a confirmação falhar por horário ocupado, repasse a mensagem da tool e aguarde o cliente escolher outro horário.',
     'Quando necessário, faça perguntas curtas para coletar dados faltantes.',
     'Ao pedir data ao cliente, nunca mencione formato técnico (ex.: YYYY-MM-DD); peça data de forma natural e converta internamente para usar as tools.',
     'Quando o cliente enviar perguntas curtas e vagas após sua mensagem (ex.: "por que?", "como assim?", "o que aconteceu?"), interprete sempre no contexto imediato da conversa antes de recusar por escopo.',
@@ -185,7 +224,9 @@ const BASE_SYSTEM_PROMPT = [
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
     'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data ao cliente, diga dia da semana e dd/MM copiados da tabela ou do campo diaSemana das tools. Fora da tabela, use o número do dia informado pelo cliente.',
     'Se cliente citar dia da semana e número incompatíveis, não peça desculpas: informe divergência e pergunte qual quis dizer. Sempre que cliente citar dia da semana, preencha diaDaSemana nas tools exatamente como ele falou; nunca deduza pela data.',
-    'Se prepararAgendamento ou confirmarAgendamento retornar sucesso=false, explique ao cliente exatamente o texto de mensagem retornado pela tool, sem trocar por "erro interno" genérico.',
+    'Se confirmarAgendamento retornar sucesso=false com instrucao, siga instrucao; nos demais casos, repasse exatamente mensagem retornada pela tool.',
+    'Nunca diga que houve erro, problema ou falha de processamento, a menos que a tool diga isso. Nunca prometa ação futura, como "um instante", "vou refazer" ou "vou verificar".',
+    'Se o cliente confirmar ("sim", "pode", "isso") e houver na conversa um resumo recente enviado por você, chame confirmarAgendamento sem argumentos e NUNCA chame prepararAgendamento apenas porque o cliente confirmou.',
     'Só chame atualizarAgendamento ou cancelarAgendamento depois de confirmação explícita do cliente em uma mensagem separada (ex.: "sim", "pode confirmar").',
     'Nunca chame atualizarAgendamento ou cancelarAgendamento no mesmo turno em que você sugere novo horário ou ação.',
     'Se cliente já tiver agendamento ativo e mensagem puder significar tanto novo agendamento quanto reagendamento, pergunte explicitamente a intenção antes de chamar prepararAgendamento ou atualizarAgendamento.',
@@ -1101,6 +1142,9 @@ async function apagarRascunhoAgendamento(phone: string): Promise<void> {
             '[GEMINI SERVICE] Falha ao apagar rascunho de agendamento.',
             { erro: describeSafeError(error) },
         );
+    } finally {
+        resumoEnviadoStore.limpar(phone);
+        recentConfirmationStore.limpar(phone);
     }
 }
 
@@ -1530,7 +1574,13 @@ type ResultadoCriacaoAgendamento =
           tipo: 'sucesso';
           sucesso: true;
           mensagem: string;
-          agendamento: unknown;
+          agendamento: {
+              id: string;
+              cliente: string;
+              servico: string;
+              dataHoraInicio: string;
+              status: string;
+          };
       }
     | {
           tipo: 'conflito' | 'regra' | 'inesperado';
@@ -1806,17 +1856,34 @@ async function prepararAgendamentoTool(
         expiraEm: new Date(agora.getTime() + getPendingBookingTtlMs()),
     });
 
+    recentConfirmationStore.limpar(phone);
     logPrepararAgendamento('rascunho_salvo');
     return { sucesso: true, mensagem: resumo, resumo };
+}
+
+type ResultadoConfirmacaoTool = {
+    sucesso: boolean;
+    mensagem: string;
+    motivoRecusa?: string;
+    rascunhoRestaurado: boolean;
+    jaConfirmado?: boolean;
+    instrucao?: string;
+};
+
+function logConfirmacao(motivo: 'confirmado' | 'ja_confirmado'): void {
+    console.info(`[GEMINI TOOL] confirmarAgendamento ${motivo}`, {
+        tool: 'confirmarAgendamento',
+        motivo,
+    });
 }
 
 async function confirmarAgendamentoTool(
     phone: string,
     messageId: string | null,
-): Promise<{ sucesso: boolean; mensagem: string; motivoRecusa?: string }> {
+): Promise<ResultadoConfirmacaoTool> {
     if (!messageId) {
         logFalhaConfirmacao('sem_message_id');
-        return mensagemSemMessageId();
+        return { ...mensagemSemMessageId(), rascunhoRestaurado: false };
     }
 
     const estado = await obterEstadoEscalonamento(phone);
@@ -1826,6 +1893,7 @@ async function confirmarAgendamentoTool(
             sucesso: false,
             mensagem:
                 'Não posso confirmar enquanto o atendimento estiver com o barbeiro.',
+            rascunhoRestaurado: false,
         };
     }
 
@@ -1835,11 +1903,27 @@ async function confirmarAgendamentoTool(
         new Date(),
     );
     if (!draft) {
+        const confirmacao = recentConfirmationStore.obterValido(phone);
+        if (
+            confirmacao &&
+            confirmacao.mensagemConfirmacaoId !== messageId
+        ) {
+            logConfirmacao('ja_confirmado');
+            return {
+                sucesso: true,
+                jaConfirmado: true,
+                mensagem: `Esse agendamento já está confirmado: ${confirmacao.servicoNome}, ${confirmacao.diaSemana}, ${confirmacao.data}, ${confirmacao.hora}.`,
+                rascunhoRestaurado: false,
+            };
+        }
+
         logFalhaConfirmacao('sem_rascunho');
         return {
             sucesso: false,
-            mensagem:
-                'Não encontrei um resumo válido para confirmar. Reapresente o resumo ou prepare o agendamento novamente.',
+            mensagem: 'Não encontrei um resumo pendente para confirmar.',
+            instrucao:
+                'Não diga que houve erro nem que vai refazer. Se a conversa já tem serviço, data/hora e nome, chame prepararAgendamento agora e envie o resumo retornado; caso contrário peça apenas os dados que faltam.',
+            rascunhoRestaurado: false,
         };
     }
 
@@ -1856,8 +1940,12 @@ async function confirmarAgendamentoTool(
             ),
         });
     } catch (error) {
+        let rascunhoRestaurado = false;
         try {
-            await getPendingAgendamentoRepository().restaurarSeAusente(draft);
+            rascunhoRestaurado =
+                await getPendingAgendamentoRepository().restaurarSeAusente(
+                    draft,
+                );
         } catch (restoreError) {
             console.error(
                 '[GEMINI TOOL] Falha ao restaurar rascunho após erro de infraestrutura.',
@@ -1869,17 +1957,35 @@ async function confirmarAgendamentoTool(
             sucesso: false,
             mensagem:
                 'Não foi possível confirmar o agendamento agora. Tente novamente em instantes.',
+            rascunhoRestaurado,
         };
     }
+
     if (resultado.sucesso) {
-        const agendamento = resultado.agendamento as
-            | { servico: string; dataHoraInicio: string }
-            | undefined;
+        const agendamento = resultado.agendamento;
+        const dataHoraInicio = new Date(draft.dataHoraInicio);
+        const diaSemana = nomeDiaDaSemana(
+            diaDaSemanaEmBrasilia(dataHoraInicio),
+        );
+        const data = formatInTimeZone(
+            dataHoraInicio,
+            TIME_ZONE,
+            'dd/MM/yyyy',
+        );
+        const hora = formatInTimeZone(dataHoraInicio, TIME_ZONE, 'HH:mm');
+        recentConfirmationStore.registrar(phone, {
+            servicoNome: agendamento.servico,
+            diaSemana,
+            data,
+            hora,
+            mensagemConfirmacaoId: messageId,
+        });
+        resumoEnviadoStore.limpar(phone);
+        logConfirmacao('confirmado');
         return {
             sucesso: true,
-            mensagem: agendamento
-                ? `Agendamento confirmado: ${agendamento.servico}, ${agendamento.dataHoraInicio}.`
-                : 'Agendamento confirmado com sucesso.',
+            mensagem: `Agendamento confirmado: ${agendamento.servico}, ${diaSemana}, ${data}, ${hora}.`,
+            rascunhoRestaurado: false,
         };
     }
 
@@ -1893,14 +1999,19 @@ async function confirmarAgendamentoTool(
         return {
             sucesso: false,
             mensagem:
-                'Esse horário foi reservado por outro cliente. Vou buscar outro horário para você.',
+                'Esse horário foi reservado por outro cliente. Escolha outro horário para continuar.',
             motivoRecusa: resultado.mensagem,
+            rascunhoRestaurado: false,
         };
     }
 
     if (resultado.tipo === 'inesperado') {
+        let rascunhoRestaurado = false;
         try {
-            await getPendingAgendamentoRepository().restaurarSeAusente(draft);
+            rascunhoRestaurado =
+                await getPendingAgendamentoRepository().restaurarSeAusente(
+                    draft,
+                );
         } catch (restoreError) {
             console.error(
                 '[GEMINI TOOL] Falha ao restaurar rascunho após falha inesperada.',
@@ -1917,6 +2028,7 @@ async function confirmarAgendamentoTool(
             sucesso: false,
             mensagem:
                 'Não foi possível confirmar o agendamento agora. Tente novamente em instantes.',
+            rascunhoRestaurado,
         };
     }
 
@@ -1930,7 +2042,159 @@ async function confirmarAgendamentoTool(
         sucesso: false,
         mensagem: resultado.mensagem,
         motivoRecusa: resultado.motivoRecusa,
+        rascunhoRestaurado: false,
     };
+}
+
+function atualizarMarcadorResumoEnviado(
+    phone: string,
+    respostaFinal: string,
+    preparacoes: PreparacaoAgendamentoBemSucedida[],
+): void {
+    for (let index = preparacoes.length - 1; index >= 0; index -= 1) {
+        const preparacao = preparacoes[index];
+        if (respostaFinal.includes(preparacao.resumo)) {
+            resumoEnviadoStore.registrar(phone, preparacao);
+            return;
+        }
+    }
+
+    if (preparacoes.length > 0) {
+        resumoEnviadoStore.limpar(phone);
+        return;
+    }
+
+    const resumoAnterior = resumoEnviadoStore.obterValido(phone);
+    if (resumoAnterior && respostaFinal.includes(resumoAnterior.resumo)) {
+        resumoEnviadoStore.registrar(phone, {
+            mensagemCriacaoId: resumoAnterior.mensagemCriacaoId,
+            resumo: resumoAnterior.resumo,
+        });
+        return;
+    }
+    resumoEnviadoStore.limpar(phone);
+}
+
+type MotivoFallbackAtalho =
+    | 'sem_marcador'
+    | 'sem_rascunho'
+    | 'message_id_ausente';
+
+function logAtalho(evento: string, motivo?: MotivoFallbackAtalho): void {
+    console.info(`[GEMINI SERVICE] ${evento}`, motivo ? { motivo } : {});
+}
+
+async function responderAtalho(
+    remoteJid: string,
+    phone: string,
+    texto: string,
+    resposta: string,
+): Promise<void> {
+    addToHistory(remoteJid, 'user', texto);
+    addToHistory(remoteJid, 'model', resposta);
+    confusionStreak.delete(phone);
+    noProgressStreak.delete(phone);
+    await sendWhatsAppText(remoteJid, resposta);
+}
+
+async function tentarAtalhoConfirmacao(
+    phone: string,
+    remoteJid: string,
+    texto: string,
+    messageId: string | null,
+): Promise<boolean> {
+    if (!ehConfirmacaoInequivoca(texto)) {
+        return false;
+    }
+
+    if (!messageId) {
+        logAtalho('atalho_fallback', 'message_id_ausente');
+        return false;
+    }
+
+    const rascunhoRepository = getPendingAgendamentoRepository();
+    const rascunho = await rascunhoRepository.obterValido(phone, new Date());
+
+    if (!rascunho) {
+        const confirmacao = recentConfirmationStore.obterValido(phone);
+        if (
+            confirmacao &&
+            confirmacao.mensagemConfirmacaoId !== messageId &&
+            ehConfirmacaoRepetida(texto)
+        ) {
+            const resposta = `Esse agendamento já está confirmado: ${confirmacao.servicoNome}, ${confirmacao.diaSemana}, ${confirmacao.data}, ${confirmacao.hora}.`;
+            logAtalho('atalho_ja_confirmado');
+            await responderAtalho(remoteJid, phone, texto, resposta);
+            return true;
+        }
+
+        logAtalho('atalho_fallback', 'sem_rascunho');
+        return false;
+    }
+
+    if (rascunho.mensagemCriacaoId === messageId) {
+        return false;
+    }
+
+    const resumoEnviado = resumoEnviadoStore.obterValido(phone);
+    if (
+        !resumoEnviado ||
+        resumoEnviado.mensagemCriacaoId !== rascunho.mensagemCriacaoId
+    ) {
+        logAtalho('atalho_fallback', 'sem_marcador');
+        return false;
+    }
+
+    logAtalho('atalho_confirmacao');
+    let resultado: ResultadoConfirmacaoTool;
+    try {
+        resultado = await confirmarAgendamentoTool(phone, messageId);
+    } catch (error) {
+        console.error('[GEMINI SERVICE] Falha inesperada no atalho de confirmação', {
+            erro: describeSafeError(error),
+        });
+        await responderAtalho(
+            remoteJid,
+            phone,
+            texto,
+            'Não consegui concluir o agendamento agora. Pode me informar de novo o serviço, o dia e o horário?',
+        );
+        return true;
+    }
+
+    if ('instrucao' in resultado) {
+        logAtalho('atalho_fallback', 'sem_rascunho');
+        return false;
+    }
+
+    if (
+        resultado.mensagem ===
+        'Não posso confirmar enquanto o atendimento estiver com o barbeiro.'
+    ) {
+        return false;
+    }
+
+    let resposta: string;
+    if (resultado.sucesso) {
+        resposta = resultado.mensagem;
+    } else if (
+        resultado.mensagem ===
+        'Esse horário foi reservado por outro cliente. Escolha outro horário para continuar.'
+    ) {
+        resposta =
+            'Esse horário acabou de ser reservado por outro cliente. Qual outro dia ou horário você prefere? Posso verificar a disponibilidade.';
+    } else if (resultado.motivoRecusa) {
+        resposta = `${resultado.mensagem} Qual outro horário você prefere?`;
+    } else if (resultado.rascunhoRestaurado) {
+        resposta =
+            'Não consegui concluir o agendamento agora. Envie "sim" de novo para eu tentar mais uma vez.';
+    } else {
+        resposta =
+            'Não consegui concluir o agendamento agora. Pode me informar de novo o serviço, o dia e o horário?';
+    }
+
+    await responderAtalho(remoteJid, phone, texto, resposta);
+    return true;
 }
 
 async function consultarAgendamentoTool(telefone: string): Promise<{
@@ -2339,6 +2603,7 @@ async function runGeminiFunctionCalling(
     let finalText = '';
     let usouTool = false;
     let escalonado = false;
+    const preparacoesBemSucedidas: PreparacaoAgendamentoBemSucedida[] = [];
 
     const toolResponseIndicaSucesso = (toolResponse: unknown): boolean => {
         if (!toolResponse || typeof toolResponse !== 'object') {
@@ -2395,6 +2660,20 @@ async function runGeminiFunctionCalling(
                 messageId,
             );
 
+            if (
+                call.name === 'prepararAgendamento' &&
+                messageId &&
+                toolResponseIndicaSucesso(toolResponse)
+            ) {
+                const response = toolResponse as { resumo?: unknown };
+                if (typeof response.resumo === 'string') {
+                    preparacoesBemSucedidas.push({
+                        mensagemCriacaoId: messageId,
+                        resumo: response.resumo,
+                    });
+                }
+            }
+
             contents.push({
                 role: 'user',
                 parts: [
@@ -2433,13 +2712,25 @@ async function runGeminiFunctionCalling(
     }
 
     if (!finalText) {
+        const fallback =
+            'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?';
+        atualizarMarcadorResumoEnviado(
+            phone,
+            fallback,
+            preparacoesBemSucedidas,
+        );
         return {
-            text: 'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?',
+            text: fallback,
             usouTool,
             escalonado: false,
         };
     }
 
+    atualizarMarcadorResumoEnviado(
+        phone,
+        finalText,
+        preparacoesBemSucedidas,
+    );
     return { text: finalText, usouTool, escalonado: false };
 }
 
@@ -2464,6 +2755,18 @@ export async function processarMensagemWhatsapp(
                 `[GEMINI SERVICE] Mensagem ignorada durante atendimento humano | numero: ${mascararTelefone(phone)}`,
             );
             return;
+        }
+
+        if (!estado || estado.estado === EstadoEscalonamento.BOT) {
+            const atalhoUsado = await tentarAtalhoConfirmacao(
+                phone,
+                remoteJid,
+                texto,
+                messageId,
+            );
+            if (atalhoUsado) {
+                return;
+            }
         }
 
         const {
@@ -2564,4 +2867,13 @@ export const __testables = {
     buscarHorariosDisponiveisTool,
     buildSystemPrompt,
     functionDeclarations,
+    atualizarMarcadorResumoEnviado,
+    setResumoEnviadoStore: (store: ResumoEnviadoStorePort): void => {
+        resumoEnviadoStore = store;
+    },
+    setRecentConfirmationStore: (
+        store: RecentConfirmationStorePort,
+    ): void => {
+        recentConfirmationStore = store;
+    },
 };
