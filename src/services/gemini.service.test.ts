@@ -237,7 +237,6 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
         ).resolves.toMatchObject({ sucesso: false });
         expect(agendamentoService.criar).not.toHaveBeenCalled();
     });
-
 });
 
 describe('gemini.service tools de reagendamento e cancelamento', () => {
@@ -1342,40 +1341,45 @@ describe('gemini.service audio transcription', () => {
         [{ status: 'unintelligible', text: '' }, 'unintelligible'],
         [{ status: 'ok', text: '' }, 'invalid_response'],
         ['not-json', 'invalid_response'],
-    ] as const)('rejects malformed transcription response', async (body, reason) => {
-        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
-        geminiMocks.generateContent.mockResolvedValueOnce({
-            text: typeof body === 'string' ? body : JSON.stringify(body),
-        });
+    ] as const)(
+        'rejects malformed transcription response',
+        async (body, reason) => {
+            vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+            geminiMocks.generateContent.mockResolvedValueOnce({
+                text: typeof body === 'string' ? body : JSON.stringify(body),
+            });
 
-        await expect(
-            transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
-        ).resolves.toEqual({ ok: false, reason });
-    });
+            await expect(
+                transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+            ).resolves.toEqual({ ok: false, reason });
+        },
+    );
 
     it('logs only safe error metadata', async () => {
         vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
-        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
         geminiMocks.generateContent.mockRejectedValueOnce(
-        Object.assign(
-            new Error(
-                'https://api.ycloud.com/media?sig=secret transcript text',
-            ),
-            {
-                cause: {
-                    message:
-                        'https://api.ycloud.com/media?sig=secret transcript text',
+            Object.assign(
+                new Error(
+                    'https://api.ycloud.com/media?sig=secret transcript text',
+                ),
+                {
+                    cause: {
+                        message:
+                            'https://api.ycloud.com/media?sig=secret transcript text',
+                    },
                 },
-            },
-        ),
+            ),
         );
 
         await expect(
-        transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+            transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
         ).resolves.toEqual({ ok: false, reason: 'error' });
         expect(JSON.stringify(errorLog.mock.calls)).not.toContain('sig=');
         expect(JSON.stringify(errorLog.mock.calls)).not.toContain(
-        'transcript text',
+            'transcript text',
         );
         errorLog.mockRestore();
     });
