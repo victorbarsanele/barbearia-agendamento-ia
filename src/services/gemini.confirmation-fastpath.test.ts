@@ -86,15 +86,13 @@ import type {
 import type { IncomingWhatsAppMessage } from '../whatsapp/types';
 import { RecentConfirmationStore } from './recent-confirmation.store';
 import { ResumoEnviadoStore } from './resumo-enviado.store';
-import {
-    __testables,
-    processarMensagemWhatsapp,
-} from './gemini.service';
+import { __testables, processarMensagemWhatsapp } from './gemini.service';
 import { processarMensagemRecebida } from './whatsapp-incoming-message.service';
 
 const phone = '5511999999999';
 const creationId = 'message-created';
-const summary = 'Resumo: Corte, terça-feira, 20/10/2026, nome Cliente. Está tudo certo?';
+const summary =
+    'Resumo: Corte, terça-feira, 20/10/2026, nome Cliente. Está tudo certo?';
 const draftValues = {
     nomeCliente: 'Cliente',
     telefoneCliente: phone,
@@ -341,9 +339,15 @@ describe('gemini confirmation fast path', () => {
     it('limpa marcador se resposta LLM não reapresenta resumo', async () => {
         await seedDraft();
         seedSummary();
-        mocks.generateContent.mockResolvedValueOnce({ text: 'Resposta do Gemini.' });
+        mocks.generateContent.mockResolvedValueOnce({
+            text: 'Resposta do Gemini.',
+        });
 
-        await processarMensagemWhatsapp(phone, 'Tenho uma dúvida', 'message-question');
+        await processarMensagemWhatsapp(
+            phone,
+            'Tenho uma dúvida',
+            'message-question',
+        );
         expect(summaryStore.obterValido(phone)).toBeNull();
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
@@ -356,7 +360,11 @@ describe('gemini confirmation fast path', () => {
         seedSummary();
         mocks.generateContent.mockResolvedValueOnce({ text: summary });
 
-        await processarMensagemWhatsapp(phone, 'Tenho uma dúvida', 'message-question');
+        await processarMensagemWhatsapp(
+            phone,
+            'Tenho uma dúvida',
+            'message-question',
+        );
         expect(summaryStore.obterValido(phone)?.mensagemCriacaoId).toBe(
             creationId,
         );
@@ -382,28 +390,45 @@ describe('gemini confirmation fast path', () => {
     it('conflito usa texto fixo, consome rascunho e próximo sim usa contrato LLM', async () => {
         await seedDraft();
         seedSummary();
-        mocks.createBooking.mockRejectedValueOnce(new Error('EXCLUSION_CONFLICT'));
+        mocks.createBooking.mockRejectedValueOnce(
+            new Error('EXCLUSION_CONFLICT'),
+        );
         mocks.generateContent
             .mockResolvedValueOnce({
                 functionCalls: [
-                    { name: 'confirmarAgendamento', id: 'call-confirm', args: {} },
+                    {
+                        name: 'confirmarAgendamento',
+                        id: 'call-confirm',
+                        args: {},
+                    },
                 ],
                 candidates: [{ content: { parts: [] } }],
             })
-            .mockImplementationOnce(async (request: {
-                contents: Array<{ parts?: Array<Record<string, unknown>> }>;
-            }) => {
-                const functionResponse = request.contents
-                    .flatMap((content) => content.parts ?? [])
-                    .map((part) => part.functionResponse as {
-                        response?: { result?: { instrucao?: string } };
-                    } | undefined)
-                    .find((response) => response?.response?.result?.instrucao);
-                expect(functionResponse?.response?.result?.instrucao).toContain(
-                    'chame prepararAgendamento agora',
-                );
-                return { text: 'Vou preparar um novo resumo.' };
-            });
+            .mockImplementationOnce(
+                async (request: {
+                    contents: Array<{ parts?: Array<Record<string, unknown>> }>;
+                }) => {
+                    const functionResponse = request.contents
+                        .flatMap((content) => content.parts ?? [])
+                        .map(
+                            (part) =>
+                                part.functionResponse as
+                                    | {
+                                          response?: {
+                                              result?: { instrucao?: string };
+                                          };
+                                      }
+                                    | undefined,
+                        )
+                        .find(
+                            (response) => response?.response?.result?.instrucao,
+                        );
+                    expect(
+                        functionResponse?.response?.result?.instrucao,
+                    ).toContain('chame prepararAgendamento agora');
+                    return { text: 'Vou preparar um novo resumo.' };
+                },
+            );
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-conflict');
         expect(mocks.sendWhatsAppText).toHaveBeenLastCalledWith(
@@ -429,7 +454,9 @@ describe('gemini confirmation fast path', () => {
             phone,
             'Não consegui concluir o agendamento agora. Envie "sim" de novo para eu tentar mais uma vez.',
         );
-        expect(await pendingRepository.obterValido(phone, currentTime)).not.toBeNull();
+        expect(
+            await pendingRepository.obterValido(phone, currentTime),
+        ).not.toBeNull();
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-retry-2');
         expect(mocks.createBooking).toHaveBeenCalledTimes(2);
@@ -439,22 +466,22 @@ describe('gemini confirmation fast path', () => {
         );
     });
 
-    it.each([
-        EstadoEscalonamento.ESCALADO,
-        EstadoEscalonamento.HUMANO_ATIVO,
-    ])('não usa atalho em estado %s', async (estado) => {
-        await seedDraft();
-        seedSummary();
-        escalationRepository.obter = vi.fn().mockResolvedValue({
-            estado,
-            escaladoEm: currentTime,
-        });
+    it.each([EstadoEscalonamento.ESCALADO, EstadoEscalonamento.HUMANO_ATIVO])(
+        'não usa atalho em estado %s',
+        async (estado) => {
+            await seedDraft();
+            seedSummary();
+            escalationRepository.obter = vi.fn().mockResolvedValue({
+                estado,
+                escaladoEm: currentTime,
+            });
 
-        await processarMensagemWhatsapp(phone, 'sim', 'message-state');
+            await processarMensagemWhatsapp(phone, 'sim', 'message-state');
 
-        expect(mocks.createBooking).not.toHaveBeenCalled();
-        expect(mocks.generateContent).not.toHaveBeenCalled();
-    });
+            expect(mocks.createBooking).not.toHaveBeenCalled();
+            expect(mocks.generateContent).not.toHaveBeenCalled();
+        },
+    );
 
     it('messageId ausente segue para Gemini sem confirmar', async () => {
         await seedDraft();
