@@ -265,6 +265,45 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
         expect(nomes).not.toContain('criarAgendamento');
     });
 
+    it('declara diaDaSemana opcional nas tools e mantém confirmação sem parâmetros', () => {
+        const declarations = __testables.functionDeclarations as Array<{
+            name: string;
+            parametersJsonSchema: {
+                properties?: Record<string, { enum?: string[] }>;
+                required?: string[];
+            };
+        }>;
+        const prepare = declarations.find(
+            (tool) => tool.name === 'prepararAgendamento',
+        )!;
+        const availability = declarations.find(
+            (tool) => tool.name === 'buscarHorariosDisponiveis',
+        )!;
+        const confirmation = declarations.find(
+            (tool) => tool.name === 'confirmarAgendamento',
+        )!;
+
+        expect(prepare.parametersJsonSchema.properties?.diaDaSemana?.enum).toEqual([
+            'domingo',
+            'segunda',
+            'terca',
+            'quarta',
+            'quinta',
+            'sexta',
+            'sabado',
+        ]);
+        expect(prepare.parametersJsonSchema.required).not.toContain(
+            'diaDaSemana',
+        );
+        expect(
+            availability.parametersJsonSchema.properties?.diaDaSemana?.enum,
+        ).toEqual(prepare.parametersJsonSchema.properties?.diaDaSemana?.enum);
+        expect(
+            availability.parametersJsonSchema.required,
+        ).not.toContain('diaDaSemana');
+        expect(confirmation.parametersJsonSchema.properties).toEqual({});
+    });
+
     it('prepararAgendamento não chama criar e telefone inválido é recusado', async () => {
         const prepared = await __testables.executeToolCall(
             {
