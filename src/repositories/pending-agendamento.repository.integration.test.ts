@@ -51,6 +51,65 @@ describe('PrismaPendingAgendamentoRepository', () => {
         expect(results.filter(Boolean)).toHaveLength(1);
     });
 
+    it('obterValido lê sem consumir e ignora rascunho expirado', async () => {
+        await prisma.servico.upsert({
+            where: { id: servicoId },
+            create: {
+                id: servicoId,
+                nome: 'Serviço de integração',
+                duracaoMinutos: 30,
+            },
+            update: {},
+        });
+
+        await repository.salvar({
+            telefoneSessao,
+            nomeCliente: 'João',
+            telefoneCliente: telefoneSessao,
+            servicoId,
+            dataHoraInicio: new Date('2026-10-20T13:00:00-03:00'),
+            mensagemCriacaoId: 'integration-message-read',
+            expiraEm: new Date('2026-10-20T13:10:00-03:00'),
+        });
+
+        const agora = new Date('2026-10-20T13:05:00-03:00');
+        await expect(
+            repository.obterValido(telefoneSessao, agora),
+        ).resolves.toMatchObject({
+            mensagemCriacaoId: 'integration-message-read',
+        });
+        await expect(
+            repository.obterValido(telefoneSessao, agora),
+        ).resolves.toMatchObject({
+            mensagemCriacaoId: 'integration-message-read',
+        });
+        await expect(
+            repository.consumir(
+                telefoneSessao,
+                'integration-message-after-read',
+                agora,
+            ),
+        ).resolves.toMatchObject({
+            mensagemCriacaoId: 'integration-message-read',
+        });
+
+        await repository.salvar({
+            telefoneSessao,
+            nomeCliente: 'João',
+            telefoneCliente: telefoneSessao,
+            servicoId,
+            dataHoraInicio: new Date('2026-10-20T13:00:00-03:00'),
+            mensagemCriacaoId: 'integration-message-expired',
+            expiraEm: new Date('2026-10-20T13:10:00-03:00'),
+        });
+        await expect(
+            repository.obterValido(
+                telefoneSessao,
+                new Date('2026-10-20T13:10:00-03:00'),
+            ),
+        ).resolves.toBeNull();
+    });
+
     it('não restaura rascunho antigo quando outro já ocupa telefone', async () => {
         await prisma.servico.upsert({
             where: { id: servicoId },

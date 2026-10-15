@@ -16,6 +16,10 @@ export interface PendingAgendamentoRepository {
         draft: Omit<PendingAgendamento, 'criadoEm'> & { criadoEm?: Date },
     ): Promise<PendingAgendamento>;
     restaurarSeAusente(draft: PendingAgendamento): Promise<boolean>;
+    obterValido(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<PendingAgendamento | null>;
     consumir(
         telefoneSessao: string,
         messageIdAtual: string,
@@ -96,6 +100,17 @@ export class PrismaPendingAgendamentoRepository
         return result === 1;
     }
 
+    async obterValido(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<PendingAgendamento | null> {
+        const prisma = await this.getPrisma();
+        const draft = await prisma.rascunhoAgendamento.findFirst({
+            where: { telefoneSessao, expiraEm: { gt: agora } },
+        });
+        return draft ? toPending(draft) : null;
+    }
+
     async consumir(
         telefoneSessao: string,
         messageIdAtual: string,
@@ -142,6 +157,17 @@ export class InMemoryPendingAgendamentoRepository
         };
         this.drafts.set(saved.telefoneSessao, saved);
         return { ...saved };
+    }
+
+    async obterValido(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<PendingAgendamento | null> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (!draft || draft.expiraEm <= agora) {
+            return null;
+        }
+        return { ...draft };
     }
 
     async consumir(

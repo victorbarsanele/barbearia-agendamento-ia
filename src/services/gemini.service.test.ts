@@ -205,7 +205,7 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
         );
 
         expect(confirmed.sucesso).toBe(true);
-        expect(duplicate.sucesso).toBe(false);
+        expect(duplicate).toMatchObject({ sucesso: true, jaConfirmado: true });
         expect(agendamentoService.criar).toHaveBeenCalledOnce();
     });
 
