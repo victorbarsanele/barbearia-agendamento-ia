@@ -189,7 +189,9 @@ function seedSummary(resumo = 'Resumo enviado literalmente'): void {
     });
 }
 
-async function processTurnWithPreparation(finalText: (resumo: string) => string) {
+async function processTurnWithPreparation(
+    finalText: (resumo: string) => string,
+) {
     mocks.generateContent
         .mockResolvedValueOnce({
             functionCalls: [
@@ -214,26 +216,30 @@ async function processTurnWithPreparation(finalText: (resumo: string) => string)
                 },
             ],
         })
-        .mockImplementationOnce(async (request: {
-            contents: Array<Record<string, unknown>>;
-        }) => {
-            const result = request.contents
-                .flatMap((content) =>
-                    Array.isArray(content.parts) ? content.parts : [],
-                )
-                .map((part) => {
-                    const response = (
-                        part as {
-                            functionResponse?: {
-                                response?: { result?: { resumo?: unknown } };
-                            };
-                        }
-                    ).functionResponse;
-                    return response?.response?.result?.resumo;
-                })
-                .find((value): value is string => typeof value === 'string');
-            return { text: finalText(result ?? '') };
-        });
+        .mockImplementationOnce(
+            async (request: { contents: Array<Record<string, unknown>> }) => {
+                const result = request.contents
+                    .flatMap((content) =>
+                        Array.isArray(content.parts) ? content.parts : [],
+                    )
+                    .map((part) => {
+                        const response = (
+                            part as {
+                                functionResponse?: {
+                                    response?: {
+                                        result?: { resumo?: unknown };
+                                    };
+                                };
+                            }
+                        ).functionResponse;
+                        return response?.response?.result?.resumo;
+                    })
+                    .find(
+                        (value): value is string => typeof value === 'string',
+                    );
+                return { text: finalText(result ?? '') };
+            },
+        );
 
     await processarMensagemWhatsapp(phone, 'Quero agendar', messageId);
 }
@@ -279,13 +285,19 @@ beforeEach(() => {
     mocks.sendWhatsAppText.mockResolvedValue(undefined);
     escalationRepository.obter = vi
         .fn()
-        .mockResolvedValue({ estado: EstadoEscalonamento.BOT, escaladoEm: null });
+        .mockResolvedValue({
+            estado: EstadoEscalonamento.BOT,
+            escaladoEm: null,
+        });
     escalationRepository.escalar = vi
         .fn()
         .mockResolvedValue({ novaEscalada: true, estado: {} });
     escalationRepository.reivindicarAviso = vi
         .fn()
-        .mockResolvedValue({ reivindicado: false, reivindicadoEm: currentTime });
+        .mockResolvedValue({
+            reivindicado: false,
+            reivindicadoEm: currentTime,
+        });
     escalationRepository.registrarRespostaHumana = vi
         .fn()
         .mockResolvedValue({});
@@ -471,7 +483,9 @@ describe('ciclo de vida do resumo enviado pelo LLM', () => {
         const previousTime = resumoStore.obterValido(phone)?.registradoEm;
         currentTime = new Date('2026-10-15T12:01:00.000Z');
 
-        await processTurnWithoutTools('Relembrando: Resumo enviado literalmente');
+        await processTurnWithoutTools(
+            'Relembrando: Resumo enviado literalmente',
+        );
 
         expect(resumoStore.obterValido(phone)?.registradoEm).not.toEqual(
             previousTime,
