@@ -6,6 +6,14 @@ import {
 } from '@google/genai';
 import { formatInTimeZone } from 'date-fns-tz';
 import { StatusAgendamento } from '@prisma/client';
+import {
+    DIAS_SEMANA,
+    dataMaisProximaComDiaDaSemana,
+    diaDaSemanaEmBrasilia,
+    nomeDiaDaSemana,
+    somarDiasAChaveData,
+    type DiaDaSemana,
+} from '../utils/dia-semana';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import { isViolacaoDeSobreposicao } from '../repositories/agendamento.repository';
@@ -93,6 +101,7 @@ interface ConversaItem {
 interface BuscarHorariosDisponiveisArgs {
     data: string;
     servicoId?: string;
+    diaDaSemana?: string;
 }
 
 interface CriarAgendamentoArgs {
@@ -107,6 +116,7 @@ interface PrepararAgendamentoArgs {
     servicoId: string;
     dataHoraInicio: string;
     telefone?: string;
+    diaDaSemana?: string;
 }
 
 interface AtualizarAgendamentoArgs {
@@ -173,6 +183,8 @@ const BASE_SYSTEM_PROMPT = [
     'Se não tiver certeza absoluta do id do serviço no momento de chamar prepararAgendamento ou atualizarAgendamento, chame buscarServicos novamente antes de prosseguir, mesmo que já tenha chamado antes na conversa.',
     'Nunca revele ao cliente qualquer identificador interno do sistema (servicoId, clienteId, agendamentoId ou qualquer código técnico). Se um agendamento falhar, explique o motivo em linguagem natural e peça para o cliente confirmar novamente o nome do serviço desejado, sem mencionar nenhum código.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
+    'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data ao cliente, diga dia da semana e dd/MM copiados da tabela ou do campo diaSemana das tools. Fora da tabela, use o número do dia informado pelo cliente.',
+    'Se cliente citar dia da semana e número incompatíveis, não peça desculpas: informe divergência e pergunte qual quis dizer. Sempre que cliente citar dia da semana, preencha diaDaSemana nas tools exatamente como ele falou; nunca deduza pela data.',
     'Se prepararAgendamento ou confirmarAgendamento retornar sucesso=false, explique ao cliente exatamente o texto de mensagem retornado pela tool, sem trocar por "erro interno" genérico.',
     'Só chame atualizarAgendamento ou cancelarAgendamento depois de confirmação explícita do cliente em uma mensagem separada (ex.: "sim", "pode confirmar").',
     'Nunca chame atualizarAgendamento ou cancelarAgendamento no mesmo turno em que você sugere novo horário ou ação.',
@@ -218,7 +230,21 @@ function getNowInBrasiliaIso(): string {
 }
 
 function buildSystemPrompt(): string {
-    return `${BASE_SYSTEM_PROMPT} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.`;
+    const hojeIso = getDateKeyInBrasilia(new Date());
+    const calendario = Array.from({ length: 21 }, (_, index) => {
+        const dataIso = somarDiasAChaveData(hojeIso, index);
+        const instante = new Date(`${dataIso}T12:00:00-03:00`);
+        const partes = new Intl.DateTimeFormat('pt-BR', {
+            timeZone: TIME_ZONE,
+            day: '2-digit',
+            month: '2-digit',
+        }).format(instante);
+        const marcador =
+            index === 0 ? ' — hoje' : index === 1 ? ' — amanhã' : '';
+        return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${partes} (${dataIso})${marcador}`;
+    }).join('\n');
+
+    return `${BASE_SYSTEM_PROMPT} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
 }
 
 const functionDeclarations: FunctionDeclaration[] = [
@@ -242,6 +268,12 @@ const functionDeclarations: FunctionDeclaration[] = [
                     type: 'string',
                     description:
                         'Data desejada para consulta de disponibilidade.',
+                },
+                diaDaSemana: {
+                    type: 'string',
+                    enum: [...DIAS_SEMANA],
+                    description:
+                        'Preencha SEMPRE que o cliente citou um dia da semana, exatamente como ele falou; nunca deduza a partir da data.',
                 },
                 servicoId: {
                     type: 'string',
@@ -276,6 +308,12 @@ const functionDeclarations: FunctionDeclaration[] = [
                     type: 'string',
                     description:
                         'Outro telefone informado explicitamente pelo cliente. Omita para usar o WhatsApp da conversa.',
+                },
+                diaDaSemana: {
+                    type: 'string',
+                    enum: [...DIAS_SEMANA],
+                    description:
+                        'Preencha SEMPRE que o cliente citou um dia da semana, exatamente como ele falou; nunca deduza a partir da data.',
                 },
             },
             required: ['nomeCliente', 'servicoId', 'dataHoraInicio'],
@@ -750,6 +788,21 @@ function formatInBrasilia(date: Date): string {
     }).format(date);
 }
 
+function formatarDataComDiaDaSemana(date: Date): string {
+    const parts = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: TIME_ZONE,
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    }).formatToParts(date);
+    const value = (type: Intl.DateTimeFormatPartTypes) =>
+        parts.find((part) => part.type === type)?.value ?? '';
+    return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(date))}, ${value('day')}/${value('month')}/${value('year')}, ${value('hour')}:${value('minute')}`;
+}
+
 function toBrasiliaDate(date: Date): Date {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: TIME_ZONE,
@@ -807,6 +860,145 @@ function getDateKeyInBrasilia(date: Date): string {
         month: '2-digit',
         day: '2-digit',
     }).format(date);
+}
+
+interface OpcaoDataDia {
+    diaSemana: string;
+    data: string;
+    dataISO: string;
+}
+
+type ValidacaoDiaInformado =
+    | { tipo: 'valido' }
+    | { tipo: 'invalido' }
+    | {
+          tipo: 'divergente';
+          mensagem: string;
+          opcoes: [OpcaoDataDia, OpcaoDataDia];
+      };
+
+type MotivoPrepararAgendamento =
+    | 'rascunho_salvo'
+    | 'sem_message_id'
+    | 'nome_invalido'
+    | 'nome_longo'
+    | 'telefone_invalido'
+    | 'servico_nao_encontrado'
+    | 'horario_rejeitado'
+    | 'dia_semana_divergente'
+    | 'dia_semana_invalido';
+
+function logToolData(
+    tool: 'prepararAgendamento' | 'buscarHorariosDisponiveis',
+    motivo: MotivoPrepararAgendamento,
+    status?: number,
+    mensagem?: string,
+): void {
+    const fields: Record<string, unknown> = { tool, motivo };
+    if (status !== undefined) {
+        fields.status = status;
+    }
+    if (mensagem) {
+        fields.mensagem = mensagem.slice(0, 160).replace(/\d+/g, '[mascarado]');
+    }
+    const logger = motivo === 'rascunho_salvo' ? console.info : console.warn;
+    logger(`[GEMINI TOOL] ${tool} ${motivo}`, fields);
+}
+
+function statusDoErro(error: unknown): number | undefined {
+    if (typeof error !== 'object' || error === null) {
+        return undefined;
+    }
+    const record = error as Record<string, unknown>;
+    if (typeof record.statusCode === 'number') {
+        return record.statusCode;
+    }
+    return typeof record.status === 'number' ? record.status : undefined;
+}
+
+function logPrepararAgendamento(
+    motivo: MotivoPrepararAgendamento,
+    status?: number,
+    mensagem?: string,
+): void {
+    logToolData('prepararAgendamento', motivo, status, mensagem);
+}
+
+function logBuscaHorarios(
+    motivo: 'dia_semana_divergente' | 'dia_semana_invalido',
+): void {
+    logToolData('buscarHorariosDisponiveis', motivo);
+}
+
+function chaveDataDeEntrada(value: string): string | null {
+    const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (!match || !parseDateOnly(match[1])) {
+        return null;
+    }
+    return match[1];
+}
+
+function formatarChaveData(chave: string): string {
+    const [ano, mes, dia] = chave.split('-');
+    return `${dia}/${mes}/${ano}`;
+}
+
+function opcaoData(dia: DiaDaSemana, dataISO: string): OpcaoDataDia {
+    return {
+        diaSemana: nomeDiaDaSemana(dia),
+        data: formatarChaveData(dataISO),
+        dataISO,
+    };
+}
+
+function validarDiaDaSemanaInformado(
+    dataISO: string | null,
+    diaRaw: string | undefined,
+): ValidacaoDiaInformado {
+    if (diaRaw === undefined) {
+        return { tipo: 'valido' };
+    }
+    if (!DIAS_SEMANA.includes(diaRaw as DiaDaSemana)) {
+        return { tipo: 'invalido' };
+    }
+    if (!dataISO) {
+        return { tipo: 'valido' };
+    }
+
+    const diaCitado = diaRaw as DiaDaSemana;
+    const diaReal = diaDaSemanaEmBrasilia(dataISO);
+    if (diaCitado === diaReal) {
+        return { tipo: 'valido' };
+    }
+
+    const dataCitada = dataMaisProximaComDiaDaSemana(dataISO, diaCitado);
+    const dataReal = dataISO;
+    const [dia, mes] = formatarChaveData(dataReal).split('/');
+    const [diaCitadoTexto, mesCitadoTexto] =
+        formatarChaveData(dataCitada).split('/');
+    return {
+        tipo: 'divergente',
+        mensagem: `A data ${dia}/${mes} é ${nomeDiaDaSemana(diaReal)}, mas foi informado ${nomeDiaDaSemana(diaCitado)}. Opções: ${nomeDiaDaSemana(diaCitado)} ${diaCitadoTexto}/${mesCitadoTexto} ou ${nomeDiaDaSemana(diaReal)} ${dia}/${mes}. Se o cliente informou só o dia da semana, use a data do dia citado e chame a tool de novo; se informou também o número do dia, NÃO escolha: pergunte ao cliente qual das opções ele quis dizer.`,
+        opcoes: [opcaoData(diaCitado, dataCitada), opcaoData(diaReal, dataReal)],
+    };
+}
+
+function resultadoDiaInvalido() {
+    return {
+        sucesso: false as const,
+        mensagem:
+            `diaDaSemana inválido. Reenvie com valor válido (${DIAS_SEMANA.join(', ')}) ou omita o campo.`,
+    };
+}
+
+function mensagemValidacaoDia(
+    validacao: Extract<ValidacaoDiaInformado, { tipo: 'divergente' }>,
+) {
+    return {
+        sucesso: false as const,
+        mensagem: validacao.mensagem,
+        opcoes: validacao.opcoes,
+    };
 }
 
 function getMinutesInBrasilia(date: Date): number {
@@ -1117,19 +1309,55 @@ async function buscarHorariosDisponiveisTool(
     args: BuscarHorariosDisponiveisArgs,
 ): Promise<{
     data: string;
+    diaSemana: string | null;
     horarios: string[];
     bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
     observacao?: string;
+    sucesso?: false;
+    mensagem?: string;
+    opcoes?: [OpcaoDataDia, OpcaoDataDia];
 }> {
+    if (
+        args.diaDaSemana !== undefined &&
+        !DIAS_SEMANA.includes(args.diaDaSemana as DiaDaSemana)
+    ) {
+        logBuscaHorarios('dia_semana_invalido');
+        return {
+            sucesso: false,
+            data: args.data,
+            diaSemana: null,
+            horarios: [],
+            bloqueios: [],
+            mensagem: resultadoDiaInvalido().mensagem,
+        };
+    }
+
     const date = parseDateOnly(args.data);
 
     if (!date) {
         return {
             data: args.data,
+            diaSemana: null,
             horarios: [],
             bloqueios: [],
             observacao:
                 'Data inválida. Informe dia, mês e ano para eu verificar horários.',
+        };
+    }
+
+    const diaReal = diaDaSemanaEmBrasilia(args.data);
+    const validacaoDia = validarDiaDaSemanaInformado(
+        args.data,
+        args.diaDaSemana,
+    );
+    if (validacaoDia.tipo === 'divergente') {
+        logBuscaHorarios('dia_semana_divergente');
+        return {
+            data: args.data,
+            diaSemana: nomeDiaDaSemana(diaReal),
+            horarios: [],
+            bloqueios: [],
+            ...mensagemValidacaoDia(validacaoDia),
         };
     }
 
@@ -1138,6 +1366,7 @@ async function buscarHorariosDisponiveisTool(
     if (!isWorkingDay(configuracao, date)) {
         return {
             data: args.data,
+            diaSemana: nomeDiaDaSemana(diaReal),
             horarios: [],
             bloqueios: [],
             observacao:
@@ -1209,6 +1438,7 @@ async function buscarHorariosDisponiveisTool(
     if (!horario) {
         return {
             data: args.data,
+            diaSemana: nomeDiaDaSemana(diaReal),
             horarios: [],
             bloqueios: [],
             observacao: 'A barbearia não funciona aos domingos.',
@@ -1273,6 +1503,7 @@ async function buscarHorariosDisponiveisTool(
 
     return {
         data: args.data,
+        diaSemana: nomeDiaDaSemana(diaReal),
         horarios: freeSlots,
         bloqueios: bloqueios.flatMap((bloqueio) => {
             if (
@@ -1410,7 +1641,7 @@ async function criarAgendamentoInterno(
                 id: agendamento.id,
                 cliente: agendamento.cliente.nome,
                 servico: agendamento.servico.nome,
-                dataHoraInicio: formatInBrasilia(
+                dataHoraInicio: formatarDataComDiaDaSemana(
                     new Date(agendamento.dataHoraInicio),
                 ),
                 status: agendamento.status,
@@ -1459,19 +1690,45 @@ async function prepararAgendamentoTool(
     phone: string,
     messageId: string | null,
     args: PrepararAgendamentoArgs,
-): Promise<{ sucesso: boolean; mensagem: string; resumo?: string }> {
+): Promise<{
+    sucesso: boolean;
+    mensagem: string;
+    resumo?: string;
+    opcoes?: [OpcaoDataDia, OpcaoDataDia];
+}> {
     if (!messageId) {
+        logPrepararAgendamento('sem_message_id');
         return mensagemSemMessageId();
+    }
+
+    if (
+        args.diaDaSemana !== undefined &&
+        !DIAS_SEMANA.includes(args.diaDaSemana as DiaDaSemana)
+    ) {
+        logPrepararAgendamento('dia_semana_invalido');
+        return resultadoDiaInvalido();
+    }
+
+    const dataHoraInicio = normalizeDateTimeInput(args.dataHoraInicio);
+    const validacaoDia = validarDiaDaSemanaInformado(
+        chaveDataDeEntrada(dataHoraInicio),
+        args.diaDaSemana,
+    );
+    if (validacaoDia.tipo === 'divergente') {
+        logPrepararAgendamento('dia_semana_divergente');
+        return { ...mensagemValidacaoDia(validacaoDia) };
     }
 
     const nomeCliente = args.nomeCliente?.trim();
     if (!nomeCliente) {
+        logPrepararAgendamento('nome_invalido');
         return {
             sucesso: false,
             mensagem: 'Nome não informado. Pode me dizer seu nome?',
         };
     }
     if (nomeCliente.length > 120) {
+        logPrepararAgendamento('nome_longo');
         return {
             sucesso: false,
             mensagem: 'Nome muito longo. Pode informar um nome mais curto?',
@@ -1485,6 +1742,7 @@ async function prepararAgendamentoTool(
         args.telefone?.trim() &&
         !validarTelefoneCelularBrasileiro(telefoneCliente)
     ) {
+        logPrepararAgendamento('telefone_invalido');
         return {
             sucesso: false,
             mensagem:
@@ -1499,15 +1757,14 @@ async function prepararAgendamentoTool(
           )
         : null;
     if (!servicoId || !servico) {
+        logPrepararAgendamento('servico_nao_encontrado');
         return {
             sucesso: false,
             mensagem:
                 'Não encontrei esse serviço. Pode confirmar o nome exato?',
         };
     }
-
     const cliente = await buscarClientePorTelefoneVariantes(telefoneCliente);
-    const dataHoraInicio = normalizeDateTimeInput(args.dataHoraInicio);
     try {
         await agendamentoService.validarDisponibilidade(
             dataHoraInicio,
@@ -1518,6 +1775,11 @@ async function prepararAgendamentoTool(
             cliente?.id,
         );
     } catch (error) {
+        logPrepararAgendamento(
+            'horario_rejeitado',
+            statusDoErro(error),
+            error instanceof Error ? error.message : undefined,
+        );
         return {
             sucesso: false,
             mensagem:
@@ -1527,7 +1789,7 @@ async function prepararAgendamentoTool(
         };
     }
 
-    const resumo = `Resumo: ${servico.nome}, ${formatInBrasilia(new Date(dataHoraInicio))}, nome ${nomeCliente}, telefone ${formatarTelefoneResumo(telefoneCliente)}.${
+    const resumo = `Resumo: ${servico.nome}, ${formatarDataComDiaDaSemana(new Date(dataHoraInicio))}, nome ${nomeCliente}, telefone ${formatarTelefoneResumo(telefoneCliente)}.${
         args.telefone?.trim()
             ? ''
             : ` Vou usar o número deste WhatsApp, ${formatarTelefoneResumo(telefoneCliente)}. Se preferir outro, é só me enviar.`
@@ -1544,6 +1806,7 @@ async function prepararAgendamentoTool(
         expiraEm: new Date(agora.getTime() + getPendingBookingTtlMs()),
     });
 
+    logPrepararAgendamento('rascunho_salvo');
     return { sucesso: true, mensagem: resumo, resumo };
 }
 
@@ -1719,7 +1982,9 @@ async function consultarAgendamentoTool(telefone: string): Promise<{
         agendamentos: futuros.map((item) => ({
             id: item.id,
             servico: item.servico.nome,
-            dataHoraInicio: formatInBrasilia(new Date(item.dataHoraInicio)),
+            dataHoraInicio: formatarDataComDiaDaSemana(
+                new Date(item.dataHoraInicio),
+            ),
             status: item.status,
         })),
     };
@@ -1831,7 +2096,7 @@ async function atualizarAgendamentoTool(
                 id: agendamento.id,
                 cliente: agendamento.cliente.nome,
                 servico: agendamento.servico.nome,
-                dataHoraInicio: formatInBrasilia(
+                dataHoraInicio: formatarDataComDiaDaSemana(
                     new Date(agendamento.dataHoraInicio),
                 ),
                 status: agendamento.status,
@@ -1886,7 +2151,7 @@ async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
                 id: agendamento.id,
                 cliente: agendamento.cliente.nome,
                 servico: agendamento.servico.nome,
-                dataHoraInicio: formatInBrasilia(
+                dataHoraInicio: formatarDataComDiaDaSemana(
                     new Date(agendamento.dataHoraInicio),
                 ),
                 status: agendamento.status,
@@ -2296,4 +2561,7 @@ export const __testables = {
     setPendingAgendamentoRepository: (
         repository: PendingAgendamentoRepository,
     ): void => setPendingAgendamentoRepository(repository),
+    buscarHorariosDisponiveisTool,
+    buildSystemPrompt,
+    functionDeclarations,
 };
