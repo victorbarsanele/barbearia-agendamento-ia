@@ -1020,15 +1020,17 @@ function validarDiaDaSemanaInformado(
     return {
         tipo: 'divergente',
         mensagem: `A data ${dia}/${mes} é ${nomeDiaDaSemana(diaReal)}, mas foi informado ${nomeDiaDaSemana(diaCitado)}. Opções: ${nomeDiaDaSemana(diaCitado)} ${diaCitadoTexto}/${mesCitadoTexto} ou ${nomeDiaDaSemana(diaReal)} ${dia}/${mes}. Se o cliente informou só o dia da semana, use a data do dia citado e chame a tool de novo; se informou também o número do dia, NÃO escolha: pergunte ao cliente qual das opções ele quis dizer.`,
-        opcoes: [opcaoData(diaCitado, dataCitada), opcaoData(diaReal, dataReal)],
+        opcoes: [
+            opcaoData(diaCitado, dataCitada),
+            opcaoData(diaReal, dataReal),
+        ],
     };
 }
 
 function resultadoDiaInvalido() {
     return {
         sucesso: false as const,
-        mensagem:
-            `diaDaSemana inválido. Reenvie com valor válido (${DIAS_SEMANA.join(', ')}) ou omita o campo.`,
+        mensagem: `diaDaSemana inválido. Reenvie com valor válido (${DIAS_SEMANA.join(', ')}) ou omita o campo.`,
     };
 }
 
@@ -1126,8 +1128,7 @@ function getHumanTakeoverTtlMs(): number {
 
 function getPendingBookingTtlMs(): number {
     const configured = Number(
-        process.env.PENDING_BOOKING_TTL_MS ??
-            PENDING_BOOKING_DEFAULT_TTL_MS,
+        process.env.PENDING_BOOKING_TTL_MS ?? PENDING_BOOKING_DEFAULT_TTL_MS,
     );
     return Number.isFinite(configured) && configured > 0
         ? configured
@@ -1904,10 +1905,7 @@ async function confirmarAgendamentoTool(
     );
     if (!draft) {
         const confirmacao = recentConfirmationStore.obterValido(phone);
-        if (
-            confirmacao &&
-            confirmacao.mensagemConfirmacaoId !== messageId
-        ) {
+        if (confirmacao && confirmacao.mensagemConfirmacaoId !== messageId) {
             logConfirmacao('ja_confirmado');
             return {
                 sucesso: true,
@@ -1967,11 +1965,7 @@ async function confirmarAgendamentoTool(
         const diaSemana = nomeDiaDaSemana(
             diaDaSemanaEmBrasilia(dataHoraInicio),
         );
-        const data = formatInTimeZone(
-            dataHoraInicio,
-            TIME_ZONE,
-            'dd/MM/yyyy',
-        );
+        const data = formatInTimeZone(dataHoraInicio, TIME_ZONE, 'dd/MM/yyyy');
         const hora = formatInTimeZone(dataHoraInicio, TIME_ZONE, 'HH:mm');
         recentConfirmationStore.registrar(phone, {
             servicoNome: agendamento.servico,
@@ -1990,12 +1984,7 @@ async function confirmarAgendamentoTool(
     }
 
     if (resultado.tipo === 'conflito') {
-        logFalhaConfirmacao(
-            'conflito',
-            undefined,
-            undefined,
-            resultado.status,
-        );
+        logFalhaConfirmacao('conflito', undefined, undefined, resultado.status);
         return {
             sucesso: false,
             mensagem:
@@ -2150,9 +2139,12 @@ async function tentarAtalhoConfirmacao(
     try {
         resultado = await confirmarAgendamentoTool(phone, messageId);
     } catch (error) {
-        console.error('[GEMINI SERVICE] Falha inesperada no atalho de confirmação', {
-            erro: describeSafeError(error),
-        });
+        console.error(
+            '[GEMINI SERVICE] Falha inesperada no atalho de confirmação',
+            {
+                erro: describeSafeError(error),
+            },
+        );
         await responderAtalho(
             remoteJid,
             phone,
@@ -2726,11 +2718,7 @@ async function runGeminiFunctionCalling(
         };
     }
 
-    atualizarMarcadorResumoEnviado(
-        phone,
-        finalText,
-        preparacoesBemSucedidas,
-    );
+    atualizarMarcadorResumoEnviado(phone, finalText, preparacoesBemSucedidas);
     return { text: finalText, usouTool, escalonado: false };
 }
 
@@ -2773,12 +2761,7 @@ export async function processarMensagemWhatsapp(
             text: reply,
             usouTool,
             escalonado,
-        } = await runGeminiFunctionCalling(
-            phone,
-            remoteJid,
-            texto,
-            messageId,
-        );
+        } = await runGeminiFunctionCalling(phone, remoteJid, texto, messageId);
 
         addToHistory(remoteJid, 'user', texto);
 
@@ -2871,9 +2854,7 @@ export const __testables = {
     setResumoEnviadoStore: (store: ResumoEnviadoStorePort): void => {
         resumoEnviadoStore = store;
     },
-    setRecentConfirmationStore: (
-        store: RecentConfirmationStorePort,
-    ): void => {
+    setRecentConfirmationStore: (store: RecentConfirmationStorePort): void => {
         recentConfirmationStore = store;
     },
 };
