@@ -4,6 +4,7 @@ import {
     type FunctionDeclaration,
     GoogleGenAI,
 } from '@google/genai';
+import { formatInTimeZone } from 'date-fns-tz';
 import { StatusAgendamento } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
@@ -1305,18 +1306,62 @@ type ResultadoCriacaoAgendamento =
           sucesso: false;
           mensagem: string;
           motivoRecusa?: string;
+          status?: number;
       };
 
 function resultadoFalhaCriacao(
     tipo: 'conflito' | 'regra' | 'inesperado',
     mensagem: string,
+    status?: number,
 ): ResultadoCriacaoAgendamento {
     return {
         tipo,
         sucesso: false,
         mensagem,
         motivoRecusa: mensagem,
+        ...(status === undefined ? {} : { status }),
     };
+}
+
+type MotivoFalhaConfirmacao =
+    | 'sem_message_id'
+    | 'estado_nao_bot'
+    | 'sem_rascunho'
+    | 'excecao'
+    | 'conflito'
+    | 'regra'
+    | 'inesperado';
+
+function logFalhaConfirmacao(
+    motivo: MotivoFalhaConfirmacao,
+    error?: unknown,
+    mensagem?: string,
+    status?: number,
+): void {
+    const errorRecord =
+        typeof error === 'object' && error !== null
+            ? (error as Record<string, unknown>)
+            : undefined;
+    const statusValue =
+        status ??
+        (typeof errorRecord?.status === 'number'
+            ? errorRecord.status
+            : typeof errorRecord?.statusCode === 'number'
+              ? errorRecord.statusCode
+              : undefined);
+    const fields: Record<string, unknown> = {
+        tool: 'confirmarAgendamento',
+        motivo,
+    };
+
+    if (statusValue !== undefined) {
+        fields.status = statusValue;
+    }
+    if (motivo === 'regra' && mensagem) {
+        fields.mensagem = mensagem.slice(0, 160).replace(/\d+/g, '[mascarado]');
+    }
+
+    console.warn('[GEMINI TOOL] confirmarAgendamento recusado', fields);
 }
 
 async function criarAgendamentoInterno(
@@ -1353,7 +1398,7 @@ async function criarAgendamentoInterno(
         const agendamento = await agendamentoService.criar({
             clienteId: cliente.id,
             servicoId: servicoIdResolvido,
-            dataHoraInicio: normalizeDateTimeInput(args.dataHoraInicio),
+            dataHoraInicio: args.dataHoraInicio,
             origem: 'GEMINI',
         });
 
@@ -1383,14 +1428,11 @@ async function criarAgendamentoInterno(
               ? 'regra'
               : 'inesperado';
 
-        console.warn('[GEMINI TOOL] confirmarAgendamento recusado', {
-            tool: 'confirmarAgendamento',
-            telefone: mascararTelefone(telefoneNormalizado),
-            argumentKeys: Object.keys(args),
-            erro: describeSafeError(error),
-        });
-
-        return resultadoFalhaCriacao(tipo, message);
+        return resultadoFalhaCriacao(
+            tipo,
+            message,
+            error instanceof AppError ? error.statusCode : undefined,
+        );
     }
 }
 
@@ -1510,11 +1552,13 @@ async function confirmarAgendamentoTool(
     messageId: string | null,
 ): Promise<{ sucesso: boolean; mensagem: string; motivoRecusa?: string }> {
     if (!messageId) {
+        logFalhaConfirmacao('sem_message_id');
         return mensagemSemMessageId();
     }
 
     const estado = await obterEstadoEscalonamento(phone);
     if (estado && estado.estado !== EstadoEscalonamento.BOT) {
+        logFalhaConfirmacao('estado_nao_bot');
         return {
             sucesso: false,
             mensagem:
@@ -1528,6 +1572,7 @@ async function confirmarAgendamentoTool(
         new Date(),
     );
     if (!draft) {
+        logFalhaConfirmacao('sem_rascunho');
         return {
             sucesso: false,
             mensagem:
@@ -1541,7 +1586,11 @@ async function confirmarAgendamentoTool(
             nomeCliente: draft.nomeCliente,
             telefone: draft.telefoneCliente,
             servicoId: draft.servicoId,
-            dataHoraInicio: draft.dataHoraInicio.toISOString(),
+            dataHoraInicio: formatInTimeZone(
+                draft.dataHoraInicio,
+                TIME_ZONE,
+                "yyyy-MM-dd'T'HH:mm:ssXXX",
+            ),
         });
     } catch (error) {
         try {
@@ -1552,9 +1601,7 @@ async function confirmarAgendamentoTool(
                 { erro: describeSafeError(restoreError) },
             );
         }
-        console.error('[GEMINI TOOL] Falha inesperada ao confirmar agendamento.', {
-            erro: describeSafeError(error),
-        });
+        logFalhaConfirmacao('excecao', error);
         return {
             sucesso: false,
             mensagem:
@@ -1574,6 +1621,12 @@ async function confirmarAgendamentoTool(
     }
 
     if (resultado.tipo === 'conflito') {
+        logFalhaConfirmacao(
+            'conflito',
+            undefined,
+            undefined,
+            resultado.status,
+        );
         return {
             sucesso: false,
             mensagem:
@@ -1591,6 +1644,12 @@ async function confirmarAgendamentoTool(
                 { erro: describeSafeError(restoreError) },
             );
         }
+        logFalhaConfirmacao(
+            'inesperado',
+            undefined,
+            undefined,
+            resultado.status,
+        );
         return {
             sucesso: false,
             mensagem:
@@ -1598,6 +1657,12 @@ async function confirmarAgendamentoTool(
         };
     }
 
+    logFalhaConfirmacao(
+        'regra',
+        undefined,
+        resultado.mensagem,
+        resultado.status,
+    );
     return {
         sucesso: false,
         mensagem: resultado.mensagem,
