@@ -25,6 +25,7 @@ import * as agendamentoService from './agendamento.service';
 import {
     getPendingAgendamentoRepository,
     setPendingAgendamentoRepository,
+    type PendingAgendamento,
     type PendingAgendamentoRepository,
 } from '../repositories/pending-agendamento.repository';
 import {
@@ -270,7 +271,7 @@ function getNowInBrasiliaIso(): string {
     return `${year}-${month}-${day}T${hour}:${minute}:${second}-03:00`;
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(contextoRascunho?: string): string {
     const hojeIso = getDateKeyInBrasilia(new Date());
     const calendario = Array.from({ length: 21 }, (_, index) => {
         const dataIso = somarDiasAChaveData(hojeIso, index);
@@ -285,7 +286,8 @@ function buildSystemPrompt(): string {
         return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${partes} (${dataIso})${marcador}`;
     }).join('\n');
 
-    return `${BASE_SYSTEM_PROMPT} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
+    const prompt = `${BASE_SYSTEM_PROMPT} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
+    return contextoRascunho ? `${prompt}\n${contextoRascunho}` : prompt;
 }
 
 const functionDeclarations: FunctionDeclaration[] = [
@@ -946,6 +948,19 @@ function logToolData(
     logger(`[GEMINI TOOL] ${tool} ${motivo}`, fields);
 }
 
+function logServicoNaoEncontrado(
+    servicoArg: string,
+    servicoArgTipo: TipoArgumentoServico,
+): void {
+    console.warn('[GEMINI TOOL] prepararAgendamento servico_nao_encontrado', {
+        tool: 'prepararAgendamento',
+        motivo: 'servico_nao_encontrado',
+        servicoArgTipo,
+        servicoArgComprimento: servicoArg.length,
+        servicoArg: servicoArg.slice(0, 80).replace(/\d+/g, '[mascarado]'),
+    });
+}
+
 function statusDoErro(error: unknown): number | undefined {
     if (typeof error !== 'object' || error === null) {
         return undefined;
@@ -1141,7 +1156,9 @@ async function apagarRascunhoAgendamento(phone: string): Promise<void> {
     } catch (error) {
         console.error(
             '[GEMINI SERVICE] Falha ao apagar rascunho de agendamento.',
-            { erro: describeSafeError(error) },
+            {
+                erro: describeSafeError(error),
+            },
         );
     } finally {
         resumoEnviadoStore.limpar(phone);
@@ -1334,20 +1351,48 @@ async function buscarServicosTool(): Promise<{
     };
 }
 
-async function resolverServicoId(
+type Servico = Awaited<
+    ReturnType<typeof servicoRepository.listarTodos>
+>[number];
+type TipoArgumentoServico = 'id' | 'nome' | 'vazio' | 'desconhecido';
+
+function normalizarNomeServico(nome: string): string {
+    return nome
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLocaleLowerCase('pt-BR')
+        .trim()
+        .replace(/\s+/g, ' ');
+}
+
+async function resolverServico(
     servicoIdOuNome: string,
-): Promise<string | null> {
+): Promise<{ servico: Servico | null; tipo: TipoArgumentoServico }> {
     const servicos = await servicoRepository.listarTodos();
 
     const porId = servicos.find((s) => s.id === servicoIdOuNome);
-    if (porId) return porId.id;
+    if (porId) return { servico: porId, tipo: 'id' };
 
-    const normalizado = servicoIdOuNome.trim().toLowerCase();
-    const porNome = servicos.find(
-        (s) => s.nome.trim().toLowerCase() === normalizado,
+    const normalizado = normalizarNomeServico(servicoIdOuNome);
+    if (!normalizado) return { servico: null, tipo: 'vazio' };
+
+    const porNome = servicos.filter(
+        (s) => normalizarNomeServico(s.nome) === normalizado,
     );
+    if (porNome.length !== 1) {
+        return {
+            servico: null,
+            tipo: porNome.length > 0 ? 'nome' : 'desconhecido',
+        };
+    }
 
-    return porNome?.id ?? null;
+    return { servico: porNome[0], tipo: 'nome' };
+}
+
+async function resolverServicoId(
+    servicoIdOuNome: string,
+): Promise<string | null> {
+    return (await resolverServico(servicoIdOuNome)).servico?.id ?? null;
 }
 
 async function buscarHorariosDisponiveisTool(
@@ -1726,6 +1771,46 @@ function formatarTelefoneResumo(telefone: string): string {
     return telefone;
 }
 
+function construirResumoAgendamento(args: {
+    servicoNome: string;
+    dataHoraInicio: Date;
+    nomeCliente: string;
+    telefoneCliente: string;
+    telefoneSessao: string;
+}): string {
+    const usaTelefoneDoWhatsApp =
+        normalizePhone(args.telefoneCliente) ===
+        normalizePhone(args.telefoneSessao);
+    return `Resumo: ${args.servicoNome}, ${formatarDataComDiaDaSemana(args.dataHoraInicio)}, nome ${args.nomeCliente}, telefone ${formatarTelefoneResumo(args.telefoneCliente)}.${
+        usaTelefoneDoWhatsApp
+            ? ` Vou usar o número deste WhatsApp, ${formatarTelefoneResumo(args.telefoneCliente)}. Se preferir outro, é só me enviar.`
+            : ''
+    } Está tudo certo?`;
+}
+
+async function construirContextoRascunho(
+    telefoneSessao: string,
+    rascunho: PendingAgendamento,
+): Promise<string | undefined> {
+    const { servico } = await resolverServico(rascunho.servicoId);
+    if (!servico) return undefined;
+
+    const resumo = construirResumoAgendamento({
+        servicoNome: servico.nome,
+        dataHoraInicio: rascunho.dataHoraInicio,
+        nomeCliente: rascunho.nomeCliente,
+        telefoneCliente: rascunho.telefoneCliente,
+        telefoneSessao,
+    });
+    const telefoneDescricao =
+        normalizePhone(rascunho.telefoneCliente) ===
+        normalizePhone(telefoneSessao)
+            ? 'é o número deste WhatsApp'
+            : 'é outro número informado pelo cliente';
+
+    return `Rascunho pendente aguardando confirmação do cliente: ${resumo} Dados do rascunho: servicoId=${servico.id}; nome=${rascunho.nomeCliente}; o telefone do rascunho ${telefoneDescricao}. Regras: se a mensagem do cliente confirmar claramente (ex.: sim, pode, isso), chame confirmarAgendamento (sem argumentos) e NÃO chame prepararAgendamento; se o cliente alterar algum dado, chame prepararAgendamento com os dados novos reaproveitando servicoId, nome e telefone do rascunho (não informe telefone quando o rascunho usa o número deste WhatsApp); se perguntar outra coisa, responda e reapresente o resumo EXATAMENTE como está acima.`;
+}
+
 function mensagemSemMessageId(): {
     sucesso: false;
     mensagem: string;
@@ -1744,6 +1829,7 @@ async function prepararAgendamentoTool(
 ): Promise<{
     sucesso: boolean;
     mensagem: string;
+    instrucao?: string;
     resumo?: string;
     opcoes?: [OpcaoDataDia, OpcaoDataDia];
 }> {
@@ -1801,18 +1887,16 @@ async function prepararAgendamentoTool(
         };
     }
 
-    const servicoId = await resolverServicoId(args.servicoId);
-    const servico = servicoId
-        ? (await servicoRepository.listarTodos()).find(
-              (item) => item.id === servicoId,
-          )
-        : null;
+    const resolucaoServico = await resolverServico(args.servicoId);
+    const servicoId = resolucaoServico.servico?.id ?? null;
+    const servico = resolucaoServico.servico;
     if (!servicoId || !servico) {
-        logPrepararAgendamento('servico_nao_encontrado');
+        logServicoNaoEncontrado(args.servicoId ?? '', resolucaoServico.tipo);
         return {
             sucesso: false,
-            mensagem:
-                'Não encontrei esse serviço. Pode confirmar o nome exato?',
+            mensagem: 'Não encontrei esse serviço.',
+            instrucao:
+                'Chame buscarServicos e use o campo id retornado como servicoId.',
         };
     }
     const cliente = await buscarClientePorTelefoneVariantes(telefoneCliente);
@@ -1840,11 +1924,13 @@ async function prepararAgendamentoTool(
         };
     }
 
-    const resumo = `Resumo: ${servico.nome}, ${formatarDataComDiaDaSemana(new Date(dataHoraInicio))}, nome ${nomeCliente}, telefone ${formatarTelefoneResumo(telefoneCliente)}.${
-        args.telefone?.trim()
-            ? ''
-            : ` Vou usar o número deste WhatsApp, ${formatarTelefoneResumo(telefoneCliente)}. Se preferir outro, é só me enviar.`
-    } Está tudo certo?`;
+    const resumo = construirResumoAgendamento({
+        servicoNome: servico.nome,
+        dataHoraInicio: new Date(dataHoraInicio),
+        nomeCliente,
+        telefoneCliente,
+        telefoneSessao: phone,
+    });
 
     const agora = new Date();
     await getPendingAgendamentoRepository().salvar({
@@ -2091,6 +2177,7 @@ async function tentarAtalhoConfirmacao(
     remoteJid: string,
     texto: string,
     messageId: string | null,
+    rascunho: PendingAgendamento | null,
 ): Promise<boolean> {
     if (!ehConfirmacaoInequivoca(texto)) {
         return false;
@@ -2100,9 +2187,6 @@ async function tentarAtalhoConfirmacao(
         logAtalho('atalho_fallback', 'message_id_ausente');
         return false;
     }
-
-    const rascunhoRepository = getPendingAgendamentoRepository();
-    const rascunho = await rascunhoRepository.obterValido(phone, new Date());
 
     if (!rascunho) {
         const confirmacao = recentConfirmationStore.obterValido(phone);
@@ -2585,6 +2669,9 @@ async function runGeminiFunctionCalling(
     remoteJid: string,
     userMessage: string,
     messageId: string | null,
+    contextoRascunho?: string,
+    confirmarDisponivel = false,
+    rascunhoPendenteNoInicio = false,
 ): Promise<{ text: string; usouTool: boolean; escalonado: boolean }> {
     const ai = getGeminiClient();
     const contents: Array<Record<string, unknown>> = buildConversationContents(
@@ -2595,6 +2682,13 @@ async function runGeminiFunctionCalling(
     let finalText = '';
     let usouTool = false;
     let escalonado = false;
+    let iteracoes = 0;
+    const toolsChamadas: string[] = [];
+    const declarationsDisponiveis = confirmarDisponivel
+        ? functionDeclarations
+        : functionDeclarations.filter(
+              (declaration) => declaration.name !== 'confirmarAgendamento',
+          );
     const preparacoesBemSucedidas: PreparacaoAgendamentoBemSucedida[] = [];
 
     const toolResponseIndicaSucesso = (toolResponse: unknown): boolean => {
@@ -2606,120 +2700,142 @@ async function runGeminiFunctionCalling(
         return response.sucesso === true;
     };
 
-    for (let i = 0; i < 6; i += 1) {
-        const result = await executeWith429Retry(
-            () =>
-                ai.models.generateContent({
-                    model: GEMINI_MODEL,
-                    contents,
-                    config: {
-                        systemInstruction: buildSystemPrompt(),
-                        tools: [{ functionDeclarations }],
-                        toolConfig: {
-                            functionCallingConfig: {
-                                mode: FunctionCallingConfigMode.AUTO,
+    try {
+        for (let i = 0; i < 6; i += 1) {
+            iteracoes += 1;
+            const result = await executeWith429Retry(
+                () =>
+                    ai.models.generateContent({
+                        model: GEMINI_MODEL,
+                        contents,
+                        config: {
+                            systemInstruction:
+                                buildSystemPrompt(contextoRascunho),
+                            tools: [
+                                {
+                                    functionDeclarations:
+                                        declarationsDisponiveis,
+                                },
+                            ],
+                            toolConfig: {
+                                functionCallingConfig: {
+                                    mode: FunctionCallingConfigMode.AUTO,
+                                },
                             },
                         },
-                    },
-                }),
-            {
-                url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-            },
-        );
-
-        const functionCalls = result.functionCalls ?? [];
-
-        if (functionCalls.length === 0) {
-            finalText = result.text ?? '';
-            break;
-        }
-
-        const modelContent = result.candidates?.[0]?.content;
-
-        if (modelContent?.parts?.length) {
-            contents.push({
-                role: 'model',
-                parts: modelContent.parts,
-            });
-        }
-
-        for (const call of functionCalls) {
-            usouTool = true;
-            const toolResponse = await executeToolCall(
-                call,
-                phone,
-                remoteJid,
-                messageId,
+                    }),
+                {
+                    url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+                },
             );
 
-            if (
-                call.name === 'prepararAgendamento' &&
-                messageId &&
-                toolResponseIndicaSucesso(toolResponse)
-            ) {
-                const response = toolResponse as { resumo?: unknown };
-                if (typeof response.resumo === 'string') {
-                    preparacoesBemSucedidas.push({
-                        mensagemCriacaoId: messageId,
-                        resumo: response.resumo,
-                    });
+            const functionCalls = result.functionCalls ?? [];
+
+            if (functionCalls.length === 0) {
+                finalText = result.text ?? '';
+                break;
+            }
+
+            const modelContent = result.candidates?.[0]?.content;
+
+            if (modelContent?.parts?.length) {
+                contents.push({
+                    role: 'model',
+                    parts: modelContent.parts,
+                });
+            }
+
+            for (const call of functionCalls) {
+                usouTool = true;
+                if (call.name) {
+                    toolsChamadas.push(call.name);
+                }
+                const toolResponse = await executeToolCall(
+                    call,
+                    phone,
+                    remoteJid,
+                    messageId,
+                );
+
+                if (
+                    call.name === 'prepararAgendamento' &&
+                    messageId &&
+                    toolResponseIndicaSucesso(toolResponse)
+                ) {
+                    const response = toolResponse as { resumo?: unknown };
+                    if (typeof response.resumo === 'string') {
+                        preparacoesBemSucedidas.push({
+                            mensagemCriacaoId: messageId,
+                            resumo: response.resumo,
+                        });
+                    }
+                }
+
+                contents.push({
+                    role: 'user',
+                    parts: [
+                        {
+                            functionResponse: {
+                                name: call.name,
+                                id: call.id,
+                                response: {
+                                    result: toolResponse,
+                                },
+                            },
+                        },
+                    ],
+                });
+
+                if (
+                    call.name === 'solicitarAgendamentoRecorrente' &&
+                    toolResponseIndicaSucesso(toolResponse)
+                ) {
+                    escalonado = true;
+                    break;
                 }
             }
 
-            contents.push({
-                role: 'user',
-                parts: [
-                    {
-                        functionResponse: {
-                            name: call.name,
-                            id: call.id,
-                            response: {
-                                result: toolResponse,
-                            },
-                        },
-                    },
-                ],
-            });
-
-            if (
-                call.name === 'solicitarAgendamentoRecorrente' &&
-                toolResponseIndicaSucesso(toolResponse)
-            ) {
-                escalonado = true;
+            if (escalonado) {
                 break;
             }
         }
 
         if (escalonado) {
-            break;
+            return {
+                text: '',
+                usouTool,
+                escalonado: true,
+            };
         }
-    }
 
-    if (escalonado) {
-        return {
-            text: '',
-            usouTool,
-            escalonado: true,
-        };
-    }
+        if (!finalText) {
+            const fallback =
+                'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?';
+            atualizarMarcadorResumoEnviado(
+                phone,
+                fallback,
+                preparacoesBemSucedidas,
+            );
+            return {
+                text: fallback,
+                usouTool,
+                escalonado: false,
+            };
+        }
 
-    if (!finalText) {
-        const fallback =
-            'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?';
         atualizarMarcadorResumoEnviado(
             phone,
-            fallback,
+            finalText,
             preparacoesBemSucedidas,
         );
-        return {
-            text: fallback,
-            usouTool,
-            escalonado: false,
-        };
+        return { text: finalText, usouTool, escalonado: false };
+    } finally {
+        console.info('[GEMINI TURNO]', {
+            toolsChamadas,
+            iteracoes,
+            rascunhoPendenteNoInicio,
+        });
     }
-
-    atualizarMarcadorResumoEnviado(phone, finalText, preparacoesBemSucedidas);
-    return { text: finalText, usouTool, escalonado: false };
 }
 
 export async function processarMensagemWhatsapp(
@@ -2746,67 +2862,81 @@ export async function processarMensagemWhatsapp(
         }
 
         if (!estado || estado.estado === EstadoEscalonamento.BOT) {
+            let rascunhoNoInicio: PendingAgendamento | null = null;
+            try {
+                rascunhoNoInicio =
+                    await getPendingAgendamentoRepository().obterValido(
+                        phone,
+                        new Date(),
+                    );
+            } catch (error) {
+                console.warn(
+                    '[GEMINI SERVICE] Falha ao ler rascunho para contexto',
+                    {
+                        erro: describeSafeError(error),
+                    },
+                );
+            }
+
+            const confirmarDisponivel = Boolean(
+                rascunhoNoInicio &&
+                rascunhoNoInicio.mensagemCriacaoId !== messageId,
+            );
+            let contextoRascunho: string | undefined;
+            if (confirmarDisponivel && rascunhoNoInicio) {
+                try {
+                    contextoRascunho = await construirContextoRascunho(
+                        phone,
+                        rascunhoNoInicio,
+                    );
+                } catch (error) {
+                    console.warn(
+                        '[GEMINI SERVICE] Falha ao montar contexto de rascunho',
+                        { erro: describeSafeError(error) },
+                    );
+                }
+            }
+
             const atalhoUsado = await tentarAtalhoConfirmacao(
                 phone,
                 remoteJid,
                 texto,
                 messageId,
+                rascunhoNoInicio,
             );
             if (atalhoUsado) {
                 return;
             }
-        }
 
-        const {
-            text: reply,
-            usouTool,
-            escalonado,
-        } = await runGeminiFunctionCalling(phone, remoteJid, texto, messageId);
-
-        addToHistory(remoteJid, 'user', texto);
-
-        if (usouTool) {
-            confusionStreak.delete(phone);
-            noProgressStreak.delete(phone);
-        } else {
-            const pareceuConfuso = CONFUSION_PATTERN.test(reply);
-
-            if (pareceuConfuso) {
-                const streak = (confusionStreak.get(phone) ?? 0) + 1;
-                confusionStreak.set(phone, streak);
-                noProgressStreak.delete(phone);
-
-                if (streak >= CONFUSION_STREAK_LIMIT) {
-                    await escalarParaHumano(remoteJid, 'confusao_explicita');
-                    return;
-                }
-            } else {
-                confusionStreak.delete(phone);
-
-                const streakGeral = (noProgressStreak.get(phone) ?? 0) + 1;
-                noProgressStreak.set(phone, streakGeral);
-
-                if (streakGeral >= NO_PROGRESS_SAFETY_LIMIT) {
-                    await escalarParaHumano(remoteJid, 'sem_progresso');
-                    return;
-                }
-            }
-        }
-
-        if (escalonado) {
+            const resultado = await runGeminiFunctionCalling(
+                phone,
+                remoteJid,
+                texto,
+                messageId,
+                contextoRascunho,
+                confirmarDisponivel,
+                rascunhoNoInicio !== null,
+            );
+            await responderMensagemGemini(remoteJid, phone, texto, resultado);
             return;
         }
 
-        addToHistory(remoteJid, 'model', reply);
-
-        await sendWhatsAppText(remoteJid, reply);
+        const resultado = await runGeminiFunctionCalling(
+            phone,
+            remoteJid,
+            texto,
+            messageId,
+        );
+        await responderMensagemGemini(remoteJid, phone, texto, resultado);
     } catch (error) {
         if (error instanceof GeminiRateLimitError) {
             addToHistory(remoteJid, 'user', texto);
             await escalarParaHumano(remoteJid, 'limite_de_cota');
             console.error(
                 '[GEMINI SERVICE] Limite de cota da API Gemini atingido',
-                { erro: describeSafeError(error) },
+                {
+                    erro: describeSafeError(error),
+                },
             );
             return;
         }
@@ -2823,6 +2953,53 @@ export async function processarMensagemWhatsapp(
             erro: describeSafeError(error),
         });
     }
+}
+
+async function responderMensagemGemini(
+    remoteJid: string,
+    phone: string,
+    texto: string,
+    resultado: { text: string; usouTool: boolean; escalonado: boolean },
+): Promise<void> {
+    const { text: reply, usouTool, escalonado } = resultado;
+
+    addToHistory(remoteJid, 'user', texto);
+
+    if (usouTool) {
+        confusionStreak.delete(phone);
+        noProgressStreak.delete(phone);
+    } else {
+        const pareceuConfuso = CONFUSION_PATTERN.test(reply);
+
+        if (pareceuConfuso) {
+            const streak = (confusionStreak.get(phone) ?? 0) + 1;
+            confusionStreak.set(phone, streak);
+            noProgressStreak.delete(phone);
+
+            if (streak >= CONFUSION_STREAK_LIMIT) {
+                await escalarParaHumano(remoteJid, 'confusao_explicita');
+                return;
+            }
+        } else {
+            confusionStreak.delete(phone);
+
+            const streakGeral = (noProgressStreak.get(phone) ?? 0) + 1;
+            noProgressStreak.set(phone, streakGeral);
+
+            if (streakGeral >= NO_PROGRESS_SAFETY_LIMIT) {
+                await escalarParaHumano(remoteJid, 'sem_progresso');
+                return;
+            }
+        }
+    }
+
+    if (escalonado) {
+        return;
+    }
+
+    addToHistory(remoteJid, 'model', reply);
+
+    await sendWhatsAppText(remoteJid, reply);
 }
 
 export const __testables = {

@@ -83,13 +83,16 @@ describe('resolver servicoId do Gemini', () => {
         );
     });
 
-    it('aceita ID ou nome completo ignorando caixa, mas rejeita nomes parciais', async () => {
+    it('aceita ID ou nome completo normalizado, mas rejeita nomes parciais', async () => {
         const cases = [
             ['servico-valido', true],
             ['Corte social, Degradê ou Tesoura', true],
             ['corte social, degradê ou tesoura', true],
+            ['corte social, degrade ou tesoura', true],
+            ['  Corte   social, Degradê  ou Tesoura ', true],
             ['Corte social', false],
             ['corte social', false],
+            ['corte', false],
         ] as const;
 
         const results = [];
@@ -106,12 +109,55 @@ describe('resolver servicoId do Gemini', () => {
             results.push(result.sucesso);
             expect(result.sucesso).toBe(esperado);
             if (!esperado) {
-                expect(result.mensagem).toBe(
-                    'Não encontrei esse serviço. Pode confirmar o nome exato?',
+                expect(result.mensagem).toBe('Não encontrei esse serviço.');
+                expect(result.instrucao).toBe(
+                    'Chame buscarServicos e use o campo id retornado como servicoId.',
                 );
             }
         }
 
-        expect(results).toEqual([true, true, true, false, false]);
+        expect(results).toEqual([
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+        ]);
+    });
+
+    it('rejeita nome duplicado após normalização', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        mocks.listarServicos.mockResolvedValue([
+            service,
+            {
+                ...service,
+                id: 'servico-duplicado',
+                nome: 'corte social, degrade ou tesoura',
+            },
+        ]);
+
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-duplicate-name',
+            {
+                nomeCliente: 'Cliente Teste',
+                servicoId: 'Corte social, degradê ou tesoura',
+                dataHoraInicio: '2026-10-17T15:00:00-03:00',
+            },
+        );
+
+        expect(result).toMatchObject({
+            sucesso: false,
+            mensagem: 'Não encontrei esse serviço.',
+            instrucao:
+                'Chame buscarServicos e use o campo id retornado como servicoId.',
+        });
+        expect(warn.mock.calls[0]?.[1]).toMatchObject({
+            servicoArgTipo: 'nome',
+        });
+        warn.mockRestore();
     });
 });

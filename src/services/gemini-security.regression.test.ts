@@ -247,7 +247,7 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
 
     afterEach(() => vi.useRealTimers());
 
-    it('declara prepararAgendamento e confirmarAgendamento, mas não criarAgendamento', async () => {
+    it('declara prepararAgendamento sem confirmarAgendamento quando não há rascunho', async () => {
         geminiMocks.generateContent.mockResolvedValue({
             functionCalls: [],
             text: 'ok',
@@ -256,6 +256,36 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             REMOTE_JID_SESSAO_REAL,
             'quero agendar um corte',
         );
+        const [request] = geminiMocks.generateContent.mock.calls.at(-1)!;
+        const nomes = (request.config as any).tools[0].functionDeclarations.map(
+            (tool: { name: string }) => tool.name,
+        );
+        expect(nomes).toContain('prepararAgendamento');
+        expect(nomes).not.toContain('confirmarAgendamento');
+        expect(nomes).not.toContain('criarAgendamento');
+    });
+
+    it('declara confirmarAgendamento somente quando há rascunho anterior', async () => {
+        await __testables.prepararAgendamentoTool(
+            TELEFONE_SESSAO_REAL,
+            'prepare-previous',
+            {
+                nomeCliente: 'Cliente',
+                servicoId: SERVICO_ALVO.id,
+                dataHoraInicio: '2026-07-28T11:00:00',
+            },
+        );
+        geminiMocks.generateContent.mockResolvedValue({
+            functionCalls: [],
+            text: 'Pode alterar o horário.',
+        });
+
+        await processarMensagemWhatsapp(
+            REMOTE_JID_SESSAO_REAL,
+            'sim, mas muda pra 11h',
+            'message-next',
+        );
+
         const [request] = geminiMocks.generateContent.mock.calls.at(-1)!;
         const nomes = (request.config as any).tools[0].functionDeclarations.map(
             (tool: { name: string }) => tool.name,
@@ -283,7 +313,9 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             (tool) => tool.name === 'confirmarAgendamento',
         )!;
 
-        expect(prepare.parametersJsonSchema.properties?.diaDaSemana?.enum).toEqual([
+        expect(
+            prepare.parametersJsonSchema.properties?.diaDaSemana?.enum,
+        ).toEqual([
             'domingo',
             'segunda',
             'terca',
@@ -298,9 +330,9 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
         expect(
             availability.parametersJsonSchema.properties?.diaDaSemana?.enum,
         ).toEqual(prepare.parametersJsonSchema.properties?.diaDaSemana?.enum);
-        expect(
-            availability.parametersJsonSchema.required,
-        ).not.toContain('diaDaSemana');
+        expect(availability.parametersJsonSchema.required).not.toContain(
+            'diaDaSemana',
+        );
         expect(confirmation.parametersJsonSchema.properties).toEqual({});
     });
 
