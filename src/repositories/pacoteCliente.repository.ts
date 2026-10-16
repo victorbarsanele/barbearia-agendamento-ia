@@ -68,8 +68,13 @@ export async function buscarAtivoPorClienteId(
 
 export async function transacionar<T>(
     operation: (tx: Prisma.TransactionClient) => Promise<T>,
+    options?: {
+        maxWait?: number;
+        timeout?: number;
+        isolationLevel?: Prisma.TransactionIsolationLevel;
+    },
 ): Promise<T> {
-    return prisma.$transaction(operation);
+    return prisma.$transaction(operation, options);
 }
 
 export async function buscarPorId(

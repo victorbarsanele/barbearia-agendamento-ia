@@ -32,6 +32,8 @@ vi.mock('../repositories/loteAgendamento.repository', () => ({
 
 vi.mock('../repositories/bloqueio.repository', () => ({
     buscarConflito: vi.fn(),
+    buscarConflitoEmLista: vi.fn().mockReturnValue(null),
+    listarTodos: vi.fn(),
 }));
 
 vi.mock('../repositories/cliente.repository', () => ({
@@ -104,6 +106,8 @@ const agendamentoAtual = {
 
 const transacaoMock = {
     pacote: { findUnique: vi.fn() },
+    agendamento: { count: vi.fn(), findFirst: vi.fn() },
+    servico: { findUnique: vi.fn() },
 };
 
 function mockarDependenciasPadrao(
@@ -161,6 +165,10 @@ beforeEach(() => {
     vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
         (operation) => operation(transacaoMock as never),
     );
+    transacaoMock.agendamento.count.mockResolvedValue(0);
+    transacaoMock.agendamento.findFirst.mockResolvedValue(null);
+    transacaoMock.servico.findUnique.mockResolvedValue(servicoBase);
+    vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
     mockarDependenciasPadrao();
 });
 
@@ -1786,6 +1794,49 @@ describe('agendamento.service.criarLote', () => {
         );
         expect(agendamentoRepository.criar).not.toHaveBeenCalled();
     });
+
+    it('preserva criação parcial com pacoteClienteId existente', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            pacote: { servicos: [{ servicoId: servicoBase.id }] },
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeTotal: 3,
+                    usosAnteriores: 0,
+                    quantidadeRestante: 3,
+                },
+            ],
+        } as never);
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue({
+            ...loteBase,
+            pacoteClienteId: 'pacote-cliente-1',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        } as never);
+
+        const resultado = await agendamentoService.criarLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteClienteId: 'pacote-cliente-1',
+            slots: [
+                { data: '2026-07-21', horario: '10:00' },
+                { data: '2026-07-21', horario: '11:00' },
+            ],
+        });
+
+        expect(resultado.criados).toHaveLength(2);
+        expect(resultado.falhados).toEqual([]);
+        expect(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).toHaveBeenCalledTimes(2);
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
 });
 
 describe('agendamento.service.simularLote', () => {
@@ -1848,6 +1899,214 @@ describe('agendamento.service.simularLote', () => {
         expect(resultado.conflitos[0].data).toBe('2026-07-21');
         expect(agendamentoRepository.criar).not.toHaveBeenCalled();
         expect(loteAgendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service lote com pacoteId', () => {
+    const pacoteCatalogo = (
+        quantidadeTotal = 3,
+        pacoteServicoId = servicoBase.id,
+    ) => ({
+        id: 'pacote-1',
+        servicos: [{ servicoId: pacoteServicoId, quantidadeTotal }],
+    });
+
+    const pacoteClienteAtivo = (pacoteId = 'pacote-1') => ({
+        id: 'pacote-cliente-1',
+        pacoteId,
+        status: 'ATIVO',
+        pacote: {
+            servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
+        },
+        servicos: [
+            {
+                servicoId: servicoBase.id,
+                quantidadeTotal: 3,
+                usosAnteriores: 0,
+                quantidadeRestante: 3,
+            },
+        ],
+    });
+
+    const payloadComCatalogo = {
+        clienteId: clienteBase.id,
+        servicoId: servicoBase.id,
+        pacoteId: 'pacote-1',
+        origem: 'PAINEL' as const,
+        slots: [{ data: '2026-07-21', horario: '10:00' }],
+    };
+
+    it('rejeita pacoteId e pacoteClienteId no serviço', async () => {
+        const payload = {
+            ...payloadComCatalogo,
+            pacoteClienteId: 'pacote-cliente-1',
+        };
+
+        await expect(
+            agendamentoService.simularLote(payload),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: 'Informe pacoteId ou pacoteClienteId, não ambos.',
+        });
+        await expect(
+            agendamentoService.criarLote(payload),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+        });
+    });
+
+    it('rejeita mais de 20 slots na simulação e criação', async () => {
+        const slots = Array.from({ length: 21 }, (_, index) => ({
+            data: '2026-07-21',
+            horario: `${String(9 + index).padStart(2, '0')}:00`,
+        }));
+
+        await expect(
+            agendamentoService.simularLote({ ...payloadComCatalogo, slots }),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: expect.stringContaining('20'),
+        });
+        await expect(
+            agendamentoService.criarLote({ ...payloadComCatalogo, slots }),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: expect.stringContaining('20'),
+        });
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('transforma excesso da capacidade de catálogo em conflito na simulação', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo(1));
+
+        const resultado = await agendamentoService.simularLote({
+            ...payloadComCatalogo,
+            slots: [
+                { data: '2026-07-21', horario: '10:00' },
+                { data: '2026-07-21', horario: '11:00' },
+            ],
+        });
+
+        expect(resultado.disponiveis).toHaveLength(1);
+        expect(resultado.conflitos).toMatchObject([
+            {
+                data: '2026-07-21',
+                horario: '11:00',
+                motivo: expect.stringContaining('Todos os 1 usos restantes'),
+            },
+        ]);
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
+    it('rejeita criação quando slots excedem capacidade restante', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo(1));
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
+            id: 'pacote-cliente-novo',
+        } as never);
+
+        await expect(
+            agendamentoService.criarLote({
+                ...payloadComCatalogo,
+                slots: [
+                    { data: '2026-07-21', horario: '10:00' },
+                    { data: '2026-07-21', horario: '11:00' },
+                ],
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: expect.stringContaining('capacidade restante'),
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).toHaveBeenCalledOnce();
+        expect(loteAgendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita serviço fora do pacote', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue(
+            pacoteCatalogo(3, 'outro-servico'),
+        );
+
+        await expect(
+            agendamentoService.criarLote(payloadComCatalogo),
+        ).rejects.toMatchObject({
+            statusCode: 400,
+            message: 'Este serviço não está incluso no pacote selecionado.',
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
+    it('rejeita pacote ativo divergente', async () => {
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(pacoteClienteAtivo('pacote-outro') as never);
+
+        await expect(
+            agendamentoService.criarLote(payloadComCatalogo),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            message:
+                'Cliente já possui pacote ativo diferente do pacote selecionado.',
+        });
+        expect(transacaoMock.pacote.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('reutiliza pacote ativo igual e retorna pacoteClienteId', async () => {
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(pacoteClienteAtivo() as never);
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue({
+            id: 'lote-1',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).mockResolvedValue(agendamentoAtual as never);
+
+        const resultado =
+            await agendamentoService.criarLote(payloadComCatalogo);
+
+        expect(resultado).toMatchObject({
+            loteId: 'lote-1',
+            pacoteClienteId: 'pacote-cliente-1',
+            falhados: [],
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(loteAgendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
+            transacaoMock,
+        );
+    });
+
+    it('rejeita origem diferente de PAINEL', async () => {
+        await expect(
+            agendamentoService.criarLote({
+                ...payloadComCatalogo,
+                origem: 'GEMINI',
+            }),
+        ).rejects.toMatchObject({ statusCode: 403 });
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('retorna 409 com slot e motivo após conflito transacional', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo(2));
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
+            id: 'pacote-cliente-novo',
+        } as never);
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue({
+            id: 'lote-1',
+        } as never);
+        transacaoMock.agendamento.findFirst.mockResolvedValue({
+            clienteId: clienteBase.id,
+        } as never);
+
+        await expect(
+            agendamentoService.criarLote(payloadComCatalogo),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            message: 'Você já tem agendamento nesse horário.',
+            details: {
+                slot: { data: '2026-07-21', horario: '10:00' },
+                motivo: 'conflito_horario',
+            },
+        });
     });
 });
 

@@ -191,9 +191,11 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
         type: 'object',
         required: ['clienteId', 'servicoId', 'slots'],
         additionalProperties: false,
+        not: { required: ['pacoteId', 'pacoteClienteId'] },
         properties: {
             clienteId: { type: 'string', minLength: 1 },
             servicoId: { type: 'string', minLength: 1 },
+            pacoteId: { type: 'string', minLength: 1 },
             pacoteClienteId: { type: 'string', minLength: 1 },
             slots: { type: 'array', items: slotLoteSchema, minItems: 1 },
         },

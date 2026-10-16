@@ -1,4 +1,4 @@
-import { BloqueioHorario, EscopoBloqueio } from '@prisma/client';
+import { BloqueioHorario, EscopoBloqueio, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { toZonedTime } from 'date-fns-tz';
 
@@ -19,11 +19,12 @@ export async function criar(data: {
     return prisma.bloqueioHorario.create({ data });
 }
 
-export async function listarTodos(filtro?: {
-    dataHoraInicio?: Date;
-    dataHoraFim?: Date;
-}): Promise<BloqueioHorario[]> {
-    const bloqueios = await prisma.bloqueioHorario.findMany({
+export async function listarTodos(
+    filtro?: { dataHoraInicio?: Date; dataHoraFim?: Date },
+    tx?: Prisma.TransactionClient,
+): Promise<BloqueioHorario[]> {
+    const client = tx ?? prisma;
+    const bloqueios = await client.bloqueioHorario.findMany({
         orderBy: { dataHoraInicio: 'asc' },
     });
 
@@ -61,6 +62,20 @@ export async function buscarConflito(
     origem: OrigemAgendamento = 'PAINEL',
 ): Promise<BloqueioHorario | null> {
     const bloqueios = await listarTodos({ dataHoraInicio, dataHoraFim });
+    return buscarConflitoEmLista(
+        bloqueios,
+        dataHoraInicio,
+        dataHoraFim,
+        origem,
+    );
+}
+
+export function buscarConflitoEmLista(
+    bloqueios: BloqueioHorario[],
+    dataHoraInicio: Date,
+    dataHoraFim: Date,
+    origem: OrigemAgendamento = 'PAINEL',
+): BloqueioHorario | null {
     const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
     const fimEmBrasilia = toZonedTime(dataHoraFim, TIME_ZONE);
     const inicioMinutos =

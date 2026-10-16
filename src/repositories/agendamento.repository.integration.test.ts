@@ -10,6 +10,9 @@ import * as pacoteService from '../services/pacote.service';
 vi.mock('../services/horario-funcionamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     carregarConfiguracao: vi.fn().mockResolvedValue([]),
+    carregarConfiguracaoNaTransacao: vi.fn((tx) =>
+        tx.horarioFuncionamento.findMany(),
+    ),
     obterHorarioFuncionamentoComConfiguracao: vi.fn().mockReturnValue({
         diaSemana: 1,
         horaAberturaMinutos: 0,
@@ -83,11 +86,9 @@ afterEach(async () => {
         await prisma.pacote.delete({ where: { id: entidades.pacoteId } });
     }
 
-    if (entidades.loteId) {
-        await prisma.loteAgendamento.delete({
-            where: { id: entidades.loteId },
-        });
-    }
+    await prisma.loteAgendamento.deleteMany({
+        where: { clienteId: entidades.clienteId },
+    });
 
     await prisma.cliente.deleteMany({
         where: { id: entidades.clienteId },
@@ -129,6 +130,36 @@ function horarioUnico(indice = 0): Date {
             (Date.now() % 1_000_000_000) +
             indice * 60 * 60 * 1000,
     );
+}
+
+function slotsDeLote(quantidade: number, inicioData = 1) {
+    return Array.from({ length: quantidade }, (_, indice) => {
+        const dia = inicioData + Math.floor(indice / 10);
+        const hora = 9 + (indice % 10);
+        return {
+            data: `2035-01-${String(dia).padStart(2, '0')}`,
+            horario: `${String(hora).padStart(2, '0')}:00`,
+        };
+    });
+}
+
+async function criarLotePeloCatalogo(
+    pacoteId: string,
+    slots: { data: string; horario: string }[],
+) {
+    const resultado = await agendamentoService.criarLote({
+        clienteId: entidades.clienteId,
+        servicoId: entidades.servicoId,
+        pacoteId,
+        slots,
+        origem: 'PAINEL',
+    });
+    entidades.loteId = resultado.loteId;
+    if (!('pacoteClienteId' in resultado) || !resultado.pacoteClienteId) {
+        throw new Error('Lote com pacote do catálogo não retornou vínculo.');
+    }
+    entidades.pacoteClienteId = resultado.pacoteClienteId;
+    return resultado;
 }
 
 async function criarAgendamentoComPacoteTransacional(
@@ -208,6 +239,169 @@ async function criarAgendamentoPeloServico(
 }
 
 describe('agendamento.repository integração concorrência', () => {
+    it('reverte pacote, saldo, lote e primeiro slot quando segundo slot conflita', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const conflitoInicio = new Date('2035-01-02T11:00:00-03:00');
+        await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                dataHoraInicio: conflitoInicio,
+                dataHoraFim: new Date(conflitoInicio.getTime() + 30 * 60_000),
+            },
+        });
+
+        await expect(
+            criarLotePeloCatalogo(pacoteId, [
+                { data: '2035-01-02', horario: '10:00' },
+                { data: '2035-01-02', horario: '11:00' },
+            ]),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: {
+                slot: { data: '2035-01-02', horario: '11:00' },
+                motivo: 'conflito_horario',
+            },
+        });
+
+        await expect(
+            prisma.pacoteCliente.count({
+                where: { clienteId: entidades.clienteId },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.pacoteClienteServico.count({
+                where: { pacoteCliente: { clienteId: entidades.clienteId } },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.loteAgendamento.count({
+                where: { clienteId: entidades.clienteId },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: { not: null },
+                },
+            }),
+        ).resolves.toBe(0);
+    });
+
+    it('reverte pacote e lote quando quantidade solicitada excede capacidade', async () => {
+        const pacoteId = await criarPacoteCatalogo(1);
+
+        await expect(
+            criarLotePeloCatalogo(pacoteId, slotsDeLote(2)),
+        ).rejects.toMatchObject({ statusCode: 400 });
+
+        await expect(
+            prisma.pacoteCliente.count({
+                where: { clienteId: entidades.clienteId },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.pacoteClienteServico.count({
+                where: { pacoteCliente: { clienteId: entidades.clienteId } },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.loteAgendamento.count({
+                where: { clienteId: entidades.clienteId },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: { not: null },
+                },
+            }),
+        ).resolves.toBe(0);
+    });
+
+    it('cria 20 slots atômicos com numeração contínua dentro do timeout', async () => {
+        const pacoteId = await criarPacoteCatalogo(20);
+        const inicio = performance.now();
+        const resultado = await criarLotePeloCatalogo(
+            pacoteId,
+            slotsDeLote(20),
+        );
+        const duracaoMs = Math.round(performance.now() - inicio);
+        console.info(`BATCH_ATOMIC_20_MS=${duracaoMs}`);
+
+        expect(resultado.criados).toHaveLength(20);
+        expect(resultado.falhados).toEqual([]);
+        expect(duracaoMs).toBeLessThan(10_000);
+        const agendamentos = await prisma.agendamento.findMany({
+            where: { loteId: resultado.loteId },
+            orderBy: { numeroNoPacote: 'asc' },
+            select: { numeroNoPacote: true },
+        });
+        expect(agendamentos.map((item) => item.numeroNoPacote)).toEqual(
+            Array.from({ length: 20 }, (_, indice) => indice + 1),
+        );
+    });
+
+    it('serializa lotes concorrentes e reutiliza pacote sem repetir números', async () => {
+        const pacoteId = await criarPacoteCatalogo(4);
+        const slotsA = slotsDeLote(2, 1);
+        const slotsB = slotsDeLote(2, 3);
+
+        const resultados = await Promise.all([
+            criarLotePeloCatalogo(pacoteId, slotsA),
+            criarLotePeloCatalogo(pacoteId, slotsB),
+        ]);
+
+        expect(resultados.map((item) => item.criados.length)).toEqual([2, 2]);
+        expect(
+            new Set(resultados.map((item) => item.pacoteClienteId)).size,
+        ).toBe(1);
+        const numeros = await prisma.agendamento.findMany({
+            where: {
+                clienteId: entidades.clienteId,
+                pacoteClienteId: { not: null },
+            },
+            orderBy: { numeroNoPacote: 'asc' },
+            select: { numeroNoPacote: true },
+        });
+        expect(numeros.map((item) => item.numeroNoPacote)).toEqual([
+            1, 2, 3, 4,
+        ]);
+        await expect(
+            prisma.pacoteCliente.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    status: 'ATIVO',
+                },
+            }),
+        ).resolves.toBe(1);
+    });
+
+    it('serializa lote atômico contra POST /pacotes/vincular sem duplicar ativo', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const resultados = await Promise.allSettled([
+            criarLotePeloCatalogo(pacoteId, slotsDeLote(1)),
+            pacoteService.vincularCliente({
+                clienteId: entidades.clienteId,
+                pacoteId,
+            }),
+        ]);
+
+        expect(
+            resultados.some((resultado) => resultado.status === 'fulfilled'),
+        ).toBe(true);
+        await expect(
+            prisma.pacoteCliente.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    status: 'ATIVO',
+                },
+            }),
+        ).resolves.toBe(1);
+    });
+
     it('reverte pacote e saldo quando insert do agendamento falha', async () => {
         const pacoteId = await criarPacoteCatalogo();
         const inicio = horarioUnico();
