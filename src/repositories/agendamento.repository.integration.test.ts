@@ -1,8 +1,30 @@
 import { StatusAgendamento } from '@prisma/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
+import * as clienteRepository from './cliente.repository';
 import * as agendamentoRepository from './agendamento.repository';
+import * as pacoteClienteRepository from './pacoteCliente.repository';
+import * as pacoteService from '../services/pacote.service';
+
+vi.mock('../services/horario-funcionamento.service', () => ({
+    TIME_ZONE: 'America/Sao_Paulo',
+    carregarConfiguracao: vi.fn().mockResolvedValue([]),
+    obterHorarioFuncionamentoComConfiguracao: vi.fn().mockReturnValue({
+        diaSemana: 1,
+        horaAberturaMinutos: 0,
+        horaFechamentoMinutos: 1440,
+        almocoInicioMinutos: null,
+        almocoFimMinutos: null,
+        limiteExtensaoMinutos: null,
+        ultimoInicioExtensaoMinutos: null,
+    }),
+    estaDentroDoHorarioDoAgendamentoComConfiguracao: vi
+        .fn()
+        .mockReturnValue(true),
+}));
+
+import * as agendamentoService from '../services/agendamento.service';
 
 type EntidadesTeste = {
     clienteId: string;
@@ -50,14 +72,9 @@ afterEach(async () => {
         },
     });
 
-    if (entidades.pacoteClienteId) {
-        await prisma.pacoteClienteServico.deleteMany({
-            where: { pacoteClienteId: entidades.pacoteClienteId },
-        });
-        await prisma.pacoteCliente.delete({
-            where: { id: entidades.pacoteClienteId },
-        });
-    }
+    await prisma.pacoteCliente.deleteMany({
+        where: { clienteId: entidades.clienteId },
+    });
 
     if (entidades.pacoteId) {
         await prisma.pacoteServico.deleteMany({
@@ -87,7 +104,198 @@ afterEach(async () => {
     });
 });
 
+async function criarPacoteCatalogo(quantidadeTotal = 3): Promise<string> {
+    const pacote = await prisma.pacote.create({
+        data: {
+            nome: `Pacote transacional ${Date.now()}`,
+            duracaoDias: 30,
+            servicos: {
+                create: [
+                    {
+                        servicoId: entidades.servicoId,
+                        quantidadeTotal,
+                    },
+                ],
+            },
+        },
+    });
+    entidades.pacoteId = pacote.id;
+    return pacote.id;
+}
+
+function horarioUnico(indice = 0): Date {
+    return new Date(
+        Date.UTC(2035, 0, 1) +
+            (Date.now() % 1_000_000_000) +
+            indice * 60 * 60 * 1000,
+    );
+}
+
+async function criarAgendamentoComPacoteTransacional(
+    pacoteId: string,
+    dataHoraInicio: Date,
+) {
+    return pacoteClienteRepository.transacionar(async (tx) => {
+        const clienteExiste =
+            await clienteRepository.bloquearParaCriacaoDePacote(
+                tx,
+                entidades.clienteId,
+            );
+        if (!clienteExiste) {
+            throw new AppError('Cliente não encontrado.', 404);
+        }
+
+        let pacoteCliente =
+            await pacoteClienteRepository.buscarAtivoPorClienteId(
+                entidades.clienteId,
+                tx,
+            );
+        if (pacoteCliente && pacoteCliente.pacoteId !== pacoteId) {
+            throw new AppError(
+                'Cliente já possui pacote ativo diferente do pacote selecionado.',
+                409,
+            );
+        }
+
+        if (!pacoteCliente) {
+            const pacote = await tx.pacote.findUnique({
+                where: { id: pacoteId },
+                include: { servicos: true },
+            });
+            if (!pacote) {
+                throw new AppError('Pacote não encontrado.', 404);
+            }
+
+            pacoteCliente = await pacoteClienteRepository.criarNaTransacao(tx, {
+                clienteId: entidades.clienteId,
+                pacoteId,
+                dataInicio: new Date(),
+                servicos: pacote.servicos.map((item) => ({
+                    servicoId: item.servicoId,
+                    quantidadeTotal: item.quantidadeTotal,
+                    usosAnteriores: 0,
+                })),
+            });
+        }
+
+        return agendamentoRepository.criarComNumeroNoPacoteNaTransacao(
+            tx,
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: pacoteCliente.id,
+                dataHoraInicio,
+                dataHoraFim: new Date(dataHoraInicio.getTime() + 30 * 60_000),
+                status: StatusAgendamento.AGENDADO,
+            },
+            pacoteCliente.id,
+            entidades.servicoId,
+        );
+    });
+}
+
+async function criarAgendamentoPeloServico(
+    pacoteId: string,
+    dataHoraInicio: Date,
+) {
+    return agendamentoService.criar({
+        clienteId: entidades.clienteId,
+        servicoId: entidades.servicoId,
+        pacoteId,
+        dataHoraInicio: dataHoraInicio.toISOString(),
+        origem: 'PAINEL',
+    });
+}
+
 describe('agendamento.repository integração concorrência', () => {
+    it('reverte pacote e saldo quando insert do agendamento falha', async () => {
+        const pacoteId = await criarPacoteCatalogo();
+        const inicio = horarioUnico();
+        await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                dataHoraInicio: inicio,
+                dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            },
+        });
+
+        await expect(
+            criarAgendamentoComPacoteTransacional(pacoteId, inicio),
+        ).rejects.toMatchObject({ statusCode: 409 });
+
+        await expect(
+            prisma.pacoteCliente.count({
+                where: { clienteId: entidades.clienteId, pacoteId },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.pacoteClienteServico.count({
+                where: { pacoteCliente: { clienteId: entidades.clienteId } },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: { not: null },
+                },
+            }),
+        ).resolves.toBe(0);
+    });
+
+    it('serializa dois submits e atribui números distintos no pacote recém-criado', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const inicio = horarioUnico();
+
+        const resultados = await Promise.all([
+            criarAgendamentoPeloServico(pacoteId, inicio),
+            criarAgendamentoPeloServico(
+                pacoteId,
+                new Date(inicio.getTime() + 60 * 60_000),
+            ),
+        ]);
+
+        expect(resultados.map((item) => item.numeroNoPacote).sort()).toEqual([
+            1, 2,
+        ]);
+        await expect(
+            prisma.pacoteCliente.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteId,
+                    status: 'ATIVO',
+                },
+            }),
+        ).resolves.toBe(1);
+    });
+
+    it('serializa POST /pacotes/vincular contra criação de agendamento com pacote', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const inicio = horarioUnico();
+
+        const resultados = await Promise.allSettled([
+            pacoteService.vincularCliente({
+                clienteId: entidades.clienteId,
+                pacoteId,
+            }),
+            criarAgendamentoPeloServico(pacoteId, inicio),
+        ]);
+
+        expect(
+            resultados.some((resultado) => resultado.status === 'fulfilled'),
+        ).toBe(true);
+        await expect(
+            prisma.pacoteCliente.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteId,
+                    status: 'ATIVO',
+                },
+            }),
+        ).resolves.toBe(1);
+    });
+
     it('não lista como editável irmão AGENDADO já concluído', async () => {
         const lote = await prisma.loteAgendamento.create({
             data: {

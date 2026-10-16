@@ -8,6 +8,7 @@ const notificationMock = vi.hoisted(() => ({
 vi.mock('../repositories/agendamento.repository', () => ({
     criar: vi.fn(),
     criarComNumeroNoPacote: vi.fn(),
+    criarComNumeroNoPacoteNaTransacao: vi.fn(),
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
     buscarConflito: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('../repositories/bloqueio.repository', () => ({
 
 vi.mock('../repositories/cliente.repository', () => ({
     buscarPorId: vi.fn(),
+    bloquearParaCriacaoDePacote: vi.fn(),
 }));
 
 vi.mock('../repositories/servico.repository', () => ({
@@ -43,6 +45,9 @@ vi.mock('../repositories/servico.repository', () => ({
 
 vi.mock('../repositories/pacoteCliente.repository', () => ({
     buscarPorId: vi.fn(),
+    buscarAtivoPorClienteId: vi.fn(),
+    criarNaTransacao: vi.fn(),
+    transacionar: vi.fn(),
 }));
 
 vi.mock('../repositories/horarioFuncionamento.repository', () => ({
@@ -97,6 +102,10 @@ const agendamentoAtual = {
     servico: servicoBase,
 };
 
+const transacaoMock = {
+    pacote: { findUnique: vi.fn() },
+};
+
 function mockarDependenciasPadrao(
     almocoPorDia: Partial<Record<number, [number, number] | null>> = {},
 ) {
@@ -145,6 +154,12 @@ beforeEach(() => {
     vi.clearAllMocks();
     notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
         'Mensagem de notificação',
+    );
+    vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
+        true,
+    );
+    vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
+        (operation) => operation(transacaoMock as never),
     );
     mockarDependenciasPadrao();
 });
@@ -729,7 +744,9 @@ describe('agendamento.service.atualizar', () => {
                 status: StatusAgendamento.AGENDADO,
             }),
         );
-        expect(notificationMock.enviarNotificacaoWhatsApp).toHaveBeenCalledTimes(1);
+        expect(
+            notificationMock.enviarNotificacaoWhatsApp,
+        ).toHaveBeenCalledTimes(1);
         expect(notificationMock.enviarNotificacaoWhatsApp).toHaveBeenCalledWith(
             'reagendamento',
             clienteBase.telefone,
@@ -761,7 +778,9 @@ describe('agendamento.service.atualizar', () => {
             notificarCliente: false,
         });
 
-        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        expect(
+            notificationMock.enviarNotificacaoWhatsApp,
+        ).not.toHaveBeenCalled();
     });
 
     it('não chama notificação quando reagendamento não muda horário nem serviço', async () => {
@@ -781,7 +800,9 @@ describe('agendamento.service.atualizar', () => {
             notificarCliente: true,
         });
 
-        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        expect(
+            notificationMock.enviarNotificacaoWhatsApp,
+        ).not.toHaveBeenCalled();
     });
 
     it('mantém atualização quando envio de reagendamento falha', async () => {
@@ -846,7 +867,9 @@ describe('agendamento.service.atualizar', () => {
 
         await agendamentoService.cancelar('agendamento-1', false);
 
-        expect(notificationMock.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        expect(
+            notificationMock.enviarNotificacaoWhatsApp,
+        ).not.toHaveBeenCalled();
     });
 
     it('mantém cancelamento quando envio de cancelamento falha', async () => {
@@ -1025,6 +1048,240 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         });
 
         expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.service.criar com pacoteId', () => {
+    const dataHoraInicio = '2026-07-24T10:00:00-03:00';
+
+    beforeEach(() => {
+        transacaoMock.pacote.findUnique.mockReset();
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(null);
+    });
+
+    it('mantém criação sem pacote no caminho atual', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio,
+            origem: 'PAINEL',
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledOnce();
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('cria pacote, saldo e agendamento dentro da transação', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            id: 'pacote-1',
+            servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
+        });
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
+            id: 'pacote-cliente-1',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 1,
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteId: 'pacote-1',
+            dataHoraInicio,
+            origem: 'PAINEL',
+        });
+
+        expect(
+            vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(
+            vi.mocked(pacoteClienteRepository.buscarAtivoPorClienteId).mock
+                .invocationCallOrder[0],
+        );
+        expect(pacoteClienteRepository.criarNaTransacao).toHaveBeenCalledWith(
+            transacaoMock,
+            expect.objectContaining({
+                clienteId: clienteBase.id,
+                pacoteId: 'pacote-1',
+                servicos: [
+                    {
+                        servicoId: servicoBase.id,
+                        quantidadeTotal: 3,
+                        usosAnteriores: 0,
+                    },
+                ],
+            }),
+        );
+        expect(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).toHaveBeenCalledWith(
+            transacaoMock,
+            expect.objectContaining({
+                pacoteClienteId: 'pacote-cliente-1',
+            }),
+            'pacote-cliente-1',
+            servicoBase.id,
+        );
+    });
+
+    it('reutiliza pacote ativo correspondente', async () => {
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            pacoteId: 'pacote-1',
+            status: 'ATIVO',
+            pacote: {
+                servicos: [
+                    {
+                        servicoId: servicoBase.id,
+                        quantidadeTotal: 3,
+                    },
+                ],
+            },
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeRestante: 2,
+                },
+            ],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteId: 'pacote-1',
+            dataHoraInicio,
+            origem: 'PAINEL',
+        });
+
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(transacaoMock.pacote.findUnique).not.toHaveBeenCalled();
+        expect(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).toHaveBeenCalledWith(
+            transacaoMock,
+            expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
+            'pacote-cliente-1',
+            servicoBase.id,
+        );
+    });
+
+    it('rejeita pacote solicitado diferente do ativo', async () => {
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue({ id: 'pc-1', pacoteId: 'pacote-2' } as never);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({ statusCode: 409 });
+
+        expect(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('rejeita serviço ausente do pacote', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            id: 'pacote-1',
+            servicos: [],
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({ statusCode: 400 });
+    });
+
+    it('rejeita quantidade zero no serviço do catálogo', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            id: 'pacote-1',
+            servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 0 }],
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({ statusCode: 400 });
+
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
+    it('rejeita pacoteId junto com pacoteClienteId', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                pacoteClienteId: 'pc-1',
+                dataHoraInicio,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({ statusCode: 400 });
+
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita pacote do catálogo fora da origem PAINEL', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio,
+                origem: 'GEMINI',
+            }),
+        ).rejects.toMatchObject({ statusCode: 403 });
+
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita pacoteClienteId para origem GEMINI', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pc-1',
+                dataHoraInicio,
+                origem: 'GEMINI',
+            }),
+        ).rejects.toMatchObject({ statusCode: 403 });
+
+        expect(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).not.toHaveBeenCalled();
     });
 });
 

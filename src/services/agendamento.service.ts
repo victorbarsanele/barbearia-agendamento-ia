@@ -29,6 +29,7 @@ function formatarAntecedenciaMinima(ms: number): string {
 interface CriarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
@@ -114,7 +115,10 @@ function formatarHorarioBrasilia(data: Date): string {
     }).format(data);
 }
 
-function formatarHorarioCompletoTemplate(data: Date, incluirDiaSemana: boolean): string {
+function formatarHorarioCompletoTemplate(
+    data: Date,
+    incluirDiaSemana: boolean,
+): string {
     const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
         ...(incluirDiaSemana ? { weekday: 'long' as const } : {}),
         day: '2-digit',
@@ -145,9 +149,8 @@ async function enviarMensagemRemarcacao(
         process.env.BARBER_PHONE?.trim() || 'o barbeiro diretamente';
 
     const { addToHistory } = await import('./gemini.service');
-    const { enviarNotificacaoWhatsApp } = await import(
-        './whatsapp-notification.service'
-    );
+    const { enviarNotificacaoWhatsApp } =
+        await import('./whatsapp-notification.service');
     const mensagem = await enviarNotificacaoWhatsApp(
         'reagendamento',
         telefone,
@@ -182,24 +185,19 @@ async function enviarMensagemCancelamento(
         process.env.BARBER_PHONE?.trim() || 'o barbeiro diretamente';
 
     const { addToHistory } = await import('./gemini.service');
-    const { enviarNotificacaoWhatsApp } = await import(
-        './whatsapp-notification.service'
-    );
-    const mensagem = await enviarNotificacaoWhatsApp(
-        'cancelamento',
-        telefone,
-        {
-            nomeCliente,
-            data: formatarDataBrasilia(dataHoraInicio),
-            horario: formatarHorarioBrasilia(dataHoraInicio),
-            dataHoraCompleta: formatarHorarioCompletoTemplate(
-                dataHoraInicio,
-                false,
-            ),
-            servico: nomeServico,
-            contatoBarbeiro: barberPhone,
-        },
-    );
+    const { enviarNotificacaoWhatsApp } =
+        await import('./whatsapp-notification.service');
+    const mensagem = await enviarNotificacaoWhatsApp('cancelamento', telefone, {
+        nomeCliente,
+        data: formatarDataBrasilia(dataHoraInicio),
+        horario: formatarHorarioBrasilia(dataHoraInicio),
+        dataHoraCompleta: formatarHorarioCompletoTemplate(
+            dataHoraInicio,
+            false,
+        ),
+        servico: nomeServico,
+        contatoBarbeiro: barberPhone,
+    });
     if (mensagem) {
         addToHistory(telefone, 'model', mensagem);
     }
@@ -304,10 +302,7 @@ async function validarConflito(
 
     if (conflito) {
         if (clienteId && conflito.clienteId === clienteId) {
-            throw new AppError(
-                'Você já tem agendamento nesse horário.',
-                409,
-            );
+            throw new AppError('Você já tem agendamento nesse horário.', 409);
         }
         throw new AppError('Já existe um agendamento nesse horário.', 409);
     }
@@ -347,11 +342,20 @@ async function validarPacoteCliente(
         throw new AppError('Pacote do cliente não encontrado.', 404);
     }
 
+    validarPacoteClienteEncontrado(pacoteCliente, servicoId);
+
+    return pacoteCliente;
+}
+
+function validarPacoteClienteEncontrado(
+    pacoteCliente: pacoteClienteRepository.PacoteClienteComPacote,
+    servicoId: string,
+): void {
     if (pacoteCliente.status !== 'ATIVO') {
         throw new AppError('Pacote do cliente não está ativo.', 400);
     }
 
-    const servicoIncluso = pacoteCliente.pacote?.servicos?.some(
+    const servicoIncluso = pacoteCliente.pacote?.servicos?.find(
         (item) => item.servicoId === servicoId,
     );
     if (!servicoIncluso) {
@@ -367,8 +371,98 @@ async function validarPacoteCliente(
     if (!saldoServico || saldoServico.quantidadeRestante <= 0) {
         throw new AppError('Pacote do cliente está esgotado.', 400);
     }
+}
 
-    return pacoteCliente;
+async function criarComPacoteDoCatalogo(
+    dados: Parameters<
+        typeof agendamentoRepository.criarComNumeroNoPacoteNaTransacao
+    >[1],
+    pacoteId: string,
+): Promise<agendamentoRepository.AgendamentoComRelacoes> {
+    return pacoteClienteRepository.transacionar(async (tx) => {
+        const clienteExiste =
+            await clienteRepository.bloquearParaCriacaoDePacote(
+                tx,
+                dados.clienteId,
+            );
+        if (!clienteExiste) {
+            throw new AppError('Cliente não encontrado.', 404);
+        }
+
+        const pacoteClienteAtivo =
+            await pacoteClienteRepository.buscarAtivoPorClienteId(
+                dados.clienteId,
+                tx,
+            );
+
+        let pacoteClienteId: string;
+        if (pacoteClienteAtivo) {
+            if (pacoteClienteAtivo.pacoteId !== pacoteId) {
+                throw new AppError(
+                    'Cliente já possui pacote ativo diferente do pacote selecionado.',
+                    409,
+                );
+            }
+            const servicoDoPacote = pacoteClienteAtivo.pacote?.servicos?.find(
+                (item) => item.servicoId === dados.servicoId,
+            );
+            if (
+                servicoDoPacote &&
+                (!Number.isInteger(servicoDoPacote.quantidadeTotal) ||
+                    servicoDoPacote.quantidadeTotal < 1)
+            ) {
+                throw new AppError(
+                    'Quantidade do serviço no pacote deve ser maior que zero.',
+                    400,
+                );
+            }
+            validarPacoteClienteEncontrado(pacoteClienteAtivo, dados.servicoId);
+            pacoteClienteId = pacoteClienteAtivo.id;
+        } else {
+            const pacote = await tx.pacote.findUnique({
+                where: { id: pacoteId },
+                include: { servicos: true },
+            });
+            if (!pacote) {
+                throw new AppError('Pacote não encontrado.', 404);
+            }
+
+            const servicoDoPacote = pacote.servicos.find(
+                (item) => item.servicoId === dados.servicoId,
+            );
+            if (!servicoDoPacote) {
+                throw new AppError(
+                    'Este serviço não está incluso no pacote selecionado.',
+                    400,
+                );
+            }
+            if (servicoDoPacote.quantidadeTotal < 1) {
+                throw new AppError(
+                    'Quantidade do serviço no pacote deve ser maior que zero.',
+                    400,
+                );
+            }
+
+            const criado = await pacoteClienteRepository.criarNaTransacao(tx, {
+                clienteId: dados.clienteId,
+                pacoteId,
+                dataInicio: new Date(),
+                servicos: pacote.servicos.map((item) => ({
+                    servicoId: item.servicoId,
+                    quantidadeTotal: item.quantidadeTotal,
+                    usosAnteriores: 0,
+                })),
+            });
+            pacoteClienteId = criado.id;
+        }
+
+        return agendamentoRepository.criarComNumeroNoPacoteNaTransacao(
+            tx,
+            { ...dados, pacoteClienteId },
+            pacoteClienteId,
+            dados.servicoId,
+        );
+    });
 }
 
 function validarStatusPermiteVinculo(agendamento: {
@@ -414,6 +508,25 @@ export async function validarDisponibilidade(
 
 export async function criar(data: CriarAgendamentoData) {
     try {
+        if (data.pacoteId && data.pacoteClienteId) {
+            throw new AppError(
+                'Informe pacoteId ou pacoteClienteId, não ambos.',
+                400,
+            );
+        }
+        if (data.pacoteId && data.origem !== 'PAINEL') {
+            throw new AppError(
+                'Somente o painel pode criar agendamento com pacote do catálogo.',
+                403,
+            );
+        }
+        if (data.origem === 'GEMINI' && data.pacoteClienteId) {
+            throw new AppError(
+                'Gemini não pode vincular pacote a agendamento.',
+                403,
+            );
+        }
+
         const { servico } = await carregarDependencias(
             data.clienteId,
             data.servicoId,
@@ -435,6 +548,10 @@ export async function criar(data: CriarAgendamentoData) {
             dataHoraFim,
             status: StatusAgendamento.AGENDADO,
         };
+
+        if (data.pacoteId) {
+            return await criarComPacoteDoCatalogo(dados, data.pacoteId);
+        }
 
         return data.pacoteClienteId
             ? await agendamentoRepository.criarComNumeroNoPacote(

@@ -373,6 +373,9 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
                     nomeCliente: 'Atacante',
                     telefone: TELEFONE_OUTRO_CLIENTE,
                     servicoId: 'outro',
+                    pacoteId: 'pacote-injetado',
+                    usosAnteriores: 2,
+                    pacoteClienteId: 'pacote-cliente-injetado',
                 },
                 id: 'confirm-1',
             } as any,
@@ -384,6 +387,11 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.objectContaining({ clienteId: CLIENTE_SESSAO.id }),
         );
+        const dadosCriacao = vi.mocked(agendamentoService.criar).mock
+            .calls[0]?.[0];
+        expect(dadosCriacao).not.toHaveProperty('pacoteId');
+        expect(dadosCriacao).not.toHaveProperty('usosAnteriores');
+        expect(dadosCriacao).not.toHaveProperty('pacoteClienteId');
     });
 });
 

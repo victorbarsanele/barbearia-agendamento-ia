@@ -6,6 +6,7 @@ import * as agendamentoService from '../services/agendamento.service';
 interface CriarAgendamentoBody {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
@@ -71,9 +72,11 @@ export async function criar(
         const agendamento = await agendamentoService.criar({
             clienteId: request.body.clienteId,
             servicoId: request.body.servicoId,
+            pacoteId: request.body.pacoteId,
             pacoteClienteId: request.body.pacoteClienteId,
             dataHoraInicio: request.body.dataHoraInicio,
             registroRetroativo: request.body.registroRetroativo === true,
+            origem: 'PAINEL',
         });
         void reply.status(201).send(agendamento);
     } catch (error) {

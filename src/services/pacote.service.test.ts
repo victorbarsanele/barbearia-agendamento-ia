@@ -12,9 +12,11 @@ vi.mock('../repositories/pacote.repository', () => ({
 
 vi.mock('../repositories/pacoteCliente.repository', () => ({
     criar: vi.fn(),
+    criarNaTransacao: vi.fn(),
     buscarAtivoPorClienteId: vi.fn(),
     buscarPorId: vi.fn(),
     atualizarStatus: vi.fn(),
+    transacionar: vi.fn(),
 }));
 
 vi.mock('../repositories/agendamento.repository', () => ({
@@ -24,6 +26,7 @@ vi.mock('../repositories/agendamento.repository', () => ({
 
 vi.mock('../repositories/cliente.repository', () => ({
     buscarPorId: vi.fn(),
+    bloquearParaCriacaoDePacote: vi.fn(),
 }));
 
 vi.mock('../repositories/servico.repository', () => ({
@@ -69,6 +72,12 @@ const servicoBase = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
+        true,
+    );
+    vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
+        (operation) => operation({} as never),
+    );
 });
 
 describe('pacote.service.vincularCliente', () => {
@@ -92,7 +101,7 @@ describe('pacote.service.vincularCliente', () => {
             statusCode: 409,
         });
 
-        expect(pacoteClienteRepository.criar).not.toHaveBeenCalled();
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
     });
 
     it('cria saldos por serviço copiados do pacote', async () => {
@@ -103,7 +112,7 @@ describe('pacote.service.vincularCliente', () => {
         vi.mocked(
             pacoteClienteRepository.buscarAtivoPorClienteId,
         ).mockResolvedValue(null);
-        vi.mocked(pacoteClienteRepository.criar).mockResolvedValue({
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
             id: 'pacote-cliente-1',
         } as never);
 
@@ -112,7 +121,8 @@ describe('pacote.service.vincularCliente', () => {
             pacoteId: pacoteBase.id,
         });
 
-        expect(pacoteClienteRepository.criar).toHaveBeenCalledWith(
+        expect(pacoteClienteRepository.criarNaTransacao).toHaveBeenCalledWith(
+            expect.anything(),
             expect.objectContaining({
                 clienteId: clienteBase.id,
                 pacoteId: pacoteBase.id,
@@ -135,7 +145,7 @@ describe('pacote.service.vincularCliente', () => {
         vi.mocked(
             pacoteClienteRepository.buscarAtivoPorClienteId,
         ).mockResolvedValue(null);
-        vi.mocked(pacoteClienteRepository.criar).mockResolvedValue({
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
             id: 'pacote-cliente-1',
         } as never);
 
@@ -144,7 +154,8 @@ describe('pacote.service.vincularCliente', () => {
             pacoteId: pacoteBase.id,
         });
 
-        expect(pacoteClienteRepository.criar).toHaveBeenCalledWith(
+        expect(pacoteClienteRepository.criarNaTransacao).toHaveBeenCalledWith(
+            expect.anything(),
             expect.objectContaining({
                 servicos: [
                     expect.objectContaining({

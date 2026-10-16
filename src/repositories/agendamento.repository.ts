@@ -195,18 +195,27 @@ export async function criarComNumeroNoPacote(
     pacoteClienteId: string,
     servicoId: string,
 ): Promise<AgendamentoComRelacoes> {
-    try {
-        return await prisma.$transaction(async (tx) => {
-            const numeroNoPacote = await reservarNumeroNoPacote(
-                tx,
-                pacoteClienteId,
-                servicoId,
-            );
+    return prisma.$transaction((tx) =>
+        criarComNumeroNoPacoteNaTransacao(tx, data, pacoteClienteId, servicoId),
+    );
+}
 
-            return tx.agendamento.create({
-                data: { ...data, numeroNoPacote },
-                include: includeRelacoes,
-            });
+export async function criarComNumeroNoPacoteNaTransacao(
+    tx: Transacao,
+    data: SalvarAgendamentoData,
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        const numeroNoPacote = await reservarNumeroNoPacote(
+            tx,
+            pacoteClienteId,
+            servicoId,
+        );
+
+        return await tx.agendamento.create({
+            data: { ...data, numeroNoPacote },
+            include: includeRelacoes,
         });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
