@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
+    ApiError,
     criarAgendamento,
+    type CriarAgendamentoBasePayload,
     type CriarAgendamentoPayload,
 } from '../services/agendamentos.service';
 import {
@@ -13,6 +15,7 @@ import {
     buscarPacoteAtivoDoCliente,
     type PacoteClienteAtivo,
 } from '../services/pacoteCliente.service';
+import { listarPacotes, type Pacote } from '../services/pacotes.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -25,8 +28,47 @@ import {
     buscarSaldoPorServico,
     filtrarServicosPorPacoteAtivo,
 } from '../utils/pacoteCliente';
+import {
+    filtrarServicosPorPacoteCatalogo,
+    formatarLinhaPrecoPacote,
+    formatarPreco,
+    montarPayloadAgendamento,
+    resolverServicoAposTrocaCliente,
+    resolverServicoAposTrocaPacote,
+} from '../utils/pacoteCatalogo';
 
 const DEBOUNCE_MS = 300;
+const MENSAGEM_PACOTE_ATIVO_DIVERGENTE =
+    'Cliente já possui pacote ativo diferente do pacote selecionado.';
+
+type ResultadoConsultaPacoteAtivo =
+    | {
+          clienteId: string;
+          tentativa: number;
+          status: 'sucesso';
+          pacote: PacoteClienteAtivo | null;
+      }
+    | {
+          clienteId: string;
+          tentativa: number;
+          status: 'erro';
+          mensagem: string;
+      };
+
+type ResultadoCatalogo =
+    | {
+          clienteId: string;
+          tentativa: number;
+          status: 'sucesso';
+          pacotes: Pacote[];
+      }
+    | {
+          clienteId: string;
+          tentativa: number;
+          status: 'erro';
+          mensagem: string;
+      };
+
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
     return `${data}T${hora}:00-03:00`;
 }
@@ -59,22 +101,6 @@ function calcularDataHoraNoPassado(data: string, hora: string): boolean {
     return timestamp < Date.now();
 }
 
-function formatarPreco(valor: string | null): string {
-    if (valor === null) {
-        return 'Consultar';
-    }
-
-    const numero = Number(valor);
-    if (!Number.isFinite(numero)) {
-        return 'Consultar';
-    }
-
-    return new Intl.NumberFormat('pt-BR', {
-        style: 'currency',
-        currency: 'BRL',
-    }).format(numero);
-}
-
 function formatarDataHoraResumo(data: string, hora: string): string {
     const [ano = '', mes = '', dia = ''] = data.split('-');
     return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano} às ${hora}`;
@@ -92,11 +118,15 @@ export function NovoAgendamentoPage() {
     const [servicos, setServicos] = useState<Servico[]>([]);
     const [servicoId, setServicoId] = useState('');
 
-    const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
-        null,
-    );
-    const [carregandoPacoteAtivo, setCarregandoPacoteAtivo] = useState(false);
+    const [resultadoConsultaPacoteAtivo, setResultadoConsultaPacoteAtivo] =
+        useState<ResultadoConsultaPacoteAtivo | null>(null);
+    const [tentativaConsultaPacoteAtivo, setTentativaConsultaPacoteAtivo] =
+        useState(0);
     const [usarPacoteAtivo, setUsarPacoteAtivo] = useState(false);
+    const [pacoteCatalogoId, setPacoteCatalogoId] = useState('');
+    const [resultadoCatalogo, setResultadoCatalogo] =
+        useState<ResultadoCatalogo | null>(null);
+    const [tentativaCatalogo, setTentativaCatalogo] = useState(0);
 
     const [data, setData] = useState('');
     const [horaSelecionada, setHoraSelecionada] = useState('');
@@ -108,6 +138,44 @@ export function NovoAgendamentoPage() {
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
+
+    const clienteIdSelecionado = clienteSelecionado?.id ?? null;
+    const resultadoConsultaPacoteAtivoAtual =
+        resultadoConsultaPacoteAtivo?.clienteId === clienteIdSelecionado &&
+        resultadoConsultaPacoteAtivo.tentativa === tentativaConsultaPacoteAtivo
+            ? resultadoConsultaPacoteAtivo
+            : null;
+    const carregandoPacoteAtivo =
+        !!clienteIdSelecionado && !resultadoConsultaPacoteAtivoAtual;
+    const consultaPacoteAtivoConcluida =
+        !!clienteIdSelecionado && !!resultadoConsultaPacoteAtivoAtual;
+    const erroConsultaPacoteAtivo =
+        resultadoConsultaPacoteAtivoAtual?.status === 'erro'
+            ? resultadoConsultaPacoteAtivoAtual.mensagem
+            : null;
+    const pacoteAtivoDoCliente =
+        resultadoConsultaPacoteAtivoAtual?.status === 'sucesso'
+            ? resultadoConsultaPacoteAtivoAtual.pacote
+            : null;
+    const resultadoCatalogoAtual =
+        resultadoCatalogo?.clienteId === clienteIdSelecionado &&
+        resultadoCatalogo.tentativa === tentativaCatalogo
+            ? resultadoCatalogo
+            : null;
+    const carregandoPacotesCatalogo =
+        consultaPacoteAtivoConcluida &&
+        !erroConsultaPacoteAtivo &&
+        !pacoteAtivoDoCliente &&
+        !resultadoCatalogoAtual;
+    const erroPacotesCatalogo =
+        carregandoPacotesCatalogo === false &&
+        resultadoCatalogoAtual?.status === 'erro'
+            ? resultadoCatalogoAtual.mensagem
+            : null;
+    const pacotesCatalogo =
+        resultadoCatalogoAtual?.status === 'sucesso'
+            ? resultadoCatalogoAtual.pacotes
+            : [];
 
     const fieldClassName =
         'h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]';
@@ -236,32 +304,35 @@ export function NovoAgendamentoPage() {
     }, []);
 
     useEffect(() => {
-        setPacoteAtivo(null);
-        setUsarPacoteAtivo(false);
-
-        if (!clienteSelecionado?.id) {
+        const clienteId = clienteSelecionado?.id;
+        if (!clienteId) {
             return;
         }
 
         let ativo = true;
 
         const carregarPacoteAtivo = async () => {
-            setCarregandoPacoteAtivo(true);
-
             try {
-                const ativoAtual = await buscarPacoteAtivoDoCliente(
-                    clienteSelecionado.id,
-                );
+                const pacote = await buscarPacoteAtivoDoCliente(clienteId);
                 if (ativo) {
-                    setPacoteAtivo(ativoAtual);
+                    setResultadoConsultaPacoteAtivo({
+                        clienteId,
+                        tentativa: tentativaConsultaPacoteAtivo,
+                        status: 'sucesso',
+                        pacote,
+                    });
                 }
-            } catch {
+            } catch (error) {
                 if (ativo) {
-                    setPacoteAtivo(null);
-                }
-            } finally {
-                if (ativo) {
-                    setCarregandoPacoteAtivo(false);
+                    setResultadoConsultaPacoteAtivo({
+                        clienteId,
+                        tentativa: tentativaConsultaPacoteAtivo,
+                        status: 'erro',
+                        mensagem:
+                            error instanceof Error
+                                ? error.message
+                                : 'Não foi possível consultar o pacote ativo.',
+                    });
                 }
             }
         };
@@ -271,38 +342,98 @@ export function NovoAgendamentoPage() {
         return () => {
             ativo = false;
         };
-    }, [clienteSelecionado?.id]);
+    }, [clienteSelecionado?.id, tentativaConsultaPacoteAtivo]);
+
+    useEffect(() => {
+        const clienteId = clienteIdSelecionado;
+        if (
+            !clienteId ||
+            !consultaPacoteAtivoConcluida ||
+            erroConsultaPacoteAtivo ||
+            pacoteAtivoDoCliente
+        ) {
+            return;
+        }
+
+        if (
+            resultadoCatalogoAtual?.clienteId === clienteId &&
+            resultadoCatalogoAtual.tentativa === tentativaCatalogo
+        ) {
+            return;
+        }
+
+        let ativo = true;
+
+        const carregarPacotes = async () => {
+            try {
+                const lista = await listarPacotes();
+                if (ativo) {
+                    setResultadoCatalogo({
+                        clienteId,
+                        tentativa: tentativaCatalogo,
+                        status: 'sucesso',
+                        pacotes: lista,
+                    });
+                }
+            } catch (error) {
+                if (ativo) {
+                    setResultadoCatalogo({
+                        clienteId,
+                        tentativa: tentativaCatalogo,
+                        status: 'erro',
+                        mensagem:
+                            error instanceof Error
+                                ? error.message
+                                : 'Não foi possível carregar os pacotes.',
+                    });
+                }
+            }
+        };
+
+        void carregarPacotes();
+
+        return () => {
+            ativo = false;
+        };
+    }, [
+        clienteIdSelecionado,
+        consultaPacoteAtivoConcluida,
+        erroConsultaPacoteAtivo,
+        pacoteAtivoDoCliente,
+        resultadoCatalogoAtual,
+        tentativaCatalogo,
+    ]);
+    const pacoteCatalogoSelecionado = pacotesCatalogo.find(
+        (pacote) => pacote.id === pacoteCatalogoId,
+    );
 
     const servicosDisponiveis = useMemo(() => {
-        return filtrarServicosPorPacoteAtivo(
+        if (usarPacoteAtivo) {
+            return filtrarServicosPorPacoteAtivo(
+                servicos,
+                pacoteAtivoDoCliente,
+                true,
+            );
+        }
+
+        return filtrarServicosPorPacoteCatalogo(
             servicos,
-            pacoteAtivo,
-            usarPacoteAtivo,
+            pacoteCatalogoSelecionado ?? null,
         );
-    }, [pacoteAtivo, servicos, usarPacoteAtivo]);
+    }, [
+        pacoteAtivoDoCliente,
+        pacoteCatalogoSelecionado,
+        servicos,
+        usarPacoteAtivo,
+    ]);
 
     const saldoServicoSelecionado = useMemo(
-        () => buscarSaldoPorServico(pacoteAtivo, servicoId),
-        [pacoteAtivo, servicoId],
+        () => buscarSaldoPorServico(pacoteAtivoDoCliente, servicoId),
+        [pacoteAtivoDoCliente, servicoId],
     );
     const servicoSelecionado = servicosDisponiveis.find(
         (servico) => servico.id === servicoId,
     );
-
-    useEffect(() => {
-        if (servicosDisponiveis.length === 0) {
-            setServicoId('');
-            return;
-        }
-
-        const servicoAindaValido = servicosDisponiveis.some(
-            (servico) => servico.id === servicoId,
-        );
-
-        if (!servicoAindaValido) {
-            setServicoId(servicosDisponiveis[0].id);
-        }
-    }, [servicoId, servicosDisponiveis]);
 
     const podeEnviar = useMemo(() => {
         return (
@@ -331,6 +462,11 @@ export function NovoAgendamentoPage() {
     ]);
 
     const handleSelecionarCliente = (cliente: Cliente) => {
+        if (clienteSelecionado?.id !== cliente.id) {
+            setPacoteCatalogoId('');
+            setUsarPacoteAtivo(false);
+            setServicoId(resolverServicoAposTrocaCliente());
+        }
         setClienteSelecionado(cliente);
         setQueryCliente(cliente.nome);
         setClientesSugeridos([]);
@@ -348,18 +484,60 @@ export function NovoAgendamentoPage() {
             setBuscandoClientes(false);
         }
 
-        if (clienteSelecionado?.nome !== value) {
+        if (clienteSelecionado && clienteSelecionado.nome !== value) {
             setClienteSelecionado(null);
+            setPacoteCatalogoId('');
+            setUsarPacoteAtivo(false);
+            setServicoId(resolverServicoAposTrocaCliente());
         }
     };
 
     const limparClienteSelecionado = () => {
         setClienteSelecionado(null);
+        setPacoteCatalogoId('');
+        setUsarPacoteAtivo(false);
+        setServicoId(resolverServicoAposTrocaCliente());
         setQueryCliente('');
         setClientesSugeridos([]);
         setBuscandoClientes(false);
         setErro(null);
         setSucesso(null);
+    };
+
+    const handlePacoteCatalogoChange = (pacoteId: string) => {
+        const pacote = pacotesCatalogo.find((item) => item.id === pacoteId);
+        const servicosDoPacote = filtrarServicosPorPacoteCatalogo(
+            servicos,
+            pacote ?? null,
+        );
+
+        setPacoteCatalogoId(pacoteId);
+        setServicoId(
+            resolverServicoAposTrocaPacote(servicoId, servicosDoPacote),
+        );
+        setErro(null);
+        setSucesso(null);
+    };
+
+    const handleUsarPacoteAtivoChange = (checked: boolean) => {
+        setUsarPacoteAtivo(checked);
+        if (checked) {
+            setPacoteCatalogoId('');
+        }
+
+        const servicosDisponiveisAposTroca = checked
+            ? filtrarServicosPorPacoteAtivo(
+                  servicos,
+                  pacoteAtivoDoCliente,
+                  true,
+              )
+            : servicos;
+        setServicoId(
+            resolverServicoAposTrocaPacote(
+                servicoId,
+                servicosDisponiveisAposTroca,
+            ),
+        );
     };
 
     const handleChangeDataHora = (nextDate: Date) => {
@@ -436,15 +614,23 @@ export function NovoAgendamentoPage() {
         setErro(null);
         setSucesso(null);
 
-        const payload: CriarAgendamentoPayload = {
+        const payloadBase: CriarAgendamentoBasePayload = {
             clienteId: clienteSelecionado.id,
             servicoId,
             dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
-            ...(usarPacoteAtivo && pacoteAtivo
-                ? { pacoteClienteId: pacoteAtivo.id }
-                : {}),
             ...(registroRetroativo ? { registroRetroativo: true } : {}),
         };
+        const payload: CriarAgendamentoPayload = montarPayloadAgendamento(
+            payloadBase,
+            usarPacoteAtivo && pacoteAtivoDoCliente
+                ? { tipo: 'ativo', pacoteClienteId: pacoteAtivoDoCliente.id }
+                : pacoteCatalogoSelecionado
+                  ? {
+                        tipo: 'catalogo',
+                        pacoteId: pacoteCatalogoSelecionado.id,
+                    }
+                  : { tipo: 'nenhum' },
+        );
 
         try {
             await criarAgendamento(payload);
@@ -453,6 +639,25 @@ export function NovoAgendamentoPage() {
                 navigate(getAgendaUrlForAgendamento(payload.dataHoraInicio));
             }, 1200);
         } catch (error) {
+            if (
+                error instanceof ApiError &&
+                error.status === 409 &&
+                error.message === MENSAGEM_PACOTE_ATIVO_DIVERGENTE &&
+                pacoteCatalogoSelecionado
+            ) {
+                setPacoteCatalogoId('');
+                setUsarPacoteAtivo(false);
+                setServicoId((atual) =>
+                    resolverServicoAposTrocaPacote(atual, servicos),
+                );
+                setErro(
+                    'Este cliente agora possui outro pacote ativo. Consultamos novamente; escolha como deseja vincular o agendamento.',
+                );
+                setSucesso(null);
+                setTentativaConsultaPacoteAtivo((atual) => atual + 1);
+                return;
+            }
+
             const message =
                 error instanceof Error
                     ? error.message
@@ -524,19 +729,129 @@ export function NovoAgendamentoPage() {
                             </div>
                         )}
 
+                        {clienteSelecionado &&
+                            !consultaPacoteAtivoConcluida && (
+                                <p
+                                    className="mt-3 text-sm text-[var(--color-text-secondary)]"
+                                    role="status"
+                                >
+                                    Verificando pacote ativo...
+                                </p>
+                            )}
+
+                        {clienteSelecionado &&
+                            consultaPacoteAtivoConcluida &&
+                            erroConsultaPacoteAtivo && (
+                                <div
+                                    className="mt-3 space-y-2 rounded-[8px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                                    role="alert"
+                                >
+                                    <p>
+                                        Não foi possível verificar o pacote
+                                        ativo: {erroConsultaPacoteAtivo}
+                                    </p>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() =>
+                                            setTentativaConsultaPacoteAtivo(
+                                                (atual) => atual + 1,
+                                            )
+                                        }
+                                    >
+                                        Tentar novamente
+                                    </Button>
+                                </div>
+                            )}
+
+                        {clienteSelecionado &&
+                            consultaPacoteAtivoConcluida &&
+                            !erroConsultaPacoteAtivo &&
+                            !pacoteAtivoDoCliente && (
+                                <div className="mt-3 space-y-2">
+                                    <label
+                                        htmlFor="pacote-catalogo"
+                                        className="block text-sm font-medium text-[var(--color-text-secondary)]"
+                                    >
+                                        Pacote do catálogo (opcional)
+                                    </label>
+                                    {carregandoPacotesCatalogo ? (
+                                        <p
+                                            className="text-sm text-[var(--color-text-secondary)]"
+                                            role="status"
+                                        >
+                                            Carregando pacotes...
+                                        </p>
+                                    ) : erroPacotesCatalogo ? (
+                                        <div
+                                            className="space-y-2 rounded-[8px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                                            role="alert"
+                                        >
+                                            <p>{erroPacotesCatalogo}</p>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                onClick={() =>
+                                                    setTentativaCatalogo(
+                                                        (atual) => atual + 1,
+                                                    )
+                                                }
+                                            >
+                                                Tentar novamente
+                                            </Button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <select
+                                                id="pacote-catalogo"
+                                                value={pacoteCatalogoId}
+                                                onChange={(event) =>
+                                                    handlePacoteCatalogoChange(
+                                                        event.target.value,
+                                                    )
+                                                }
+                                                disabled={loadingServicos}
+                                                className={fieldClassName}
+                                            >
+                                                <option value="">
+                                                    Sem pacote
+                                                </option>
+                                                {pacotesCatalogo.map(
+                                                    (pacote) => (
+                                                        <option
+                                                            key={pacote.id}
+                                                            value={pacote.id}
+                                                        >
+                                                            {pacote.nome}
+                                                        </option>
+                                                    ),
+                                                )}
+                                            </select>
+                                            {pacoteCatalogoSelecionado && (
+                                                <p className="text-sm font-semibold text-[var(--color-gold)]">
+                                                    {formatarLinhaPrecoPacote(
+                                                        pacoteCatalogoSelecionado.preco,
+                                                    )}
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
+
                         {!carregandoPacoteAtivo &&
-                            pacoteAtivo &&
-                            pacoteAtivo.servicos.some(
+                            pacoteAtivoDoCliente &&
+                            pacoteAtivoDoCliente.servicos.some(
                                 (saldo) => saldo.quantidadeRestante > 0,
                             ) && (
                                 <Checkbox
                                     checked={usarPacoteAtivo}
-                                    onChange={setUsarPacoteAtivo}
+                                    onChange={handleUsarPacoteAtivoChange}
                                     className="mt-3 items-start gap-3 rounded-[8px] border border-[var(--color-gold)]/35 bg-[var(--color-gold-muted)] p-3 text-[var(--color-text-primary)]"
                                 >
                                     <span>
                                         Usar pacote ativo ({' '}
-                                        {pacoteAtivo.servicos
+                                        {pacoteAtivoDoCliente.servicos
                                             .filter(
                                                 (saldo) =>
                                                     saldo.quantidadeRestante >
@@ -549,10 +864,22 @@ export function NovoAgendamentoPage() {
                                             .join(', ')}{' '}
                                         ) —{' '}
                                         <span className="font-semibold text-[var(--color-gold)]">
-                                            {pacoteAtivo.pacote.nome}
+                                            {pacoteAtivoDoCliente.pacote.nome}
                                         </span>
                                     </span>
                                 </Checkbox>
+                            )}
+
+                        {!carregandoPacoteAtivo &&
+                            pacoteAtivoDoCliente &&
+                            !pacoteAtivoDoCliente.servicos.some(
+                                (saldo) => saldo.quantidadeRestante > 0,
+                            ) && (
+                                <p className="mt-3 rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-sm text-[var(--color-text-secondary)]">
+                                    Este cliente tem pacote ativo sem saldo
+                                    utilizável. Encerre-o em Clientes para
+                                    vender outro pacote.
+                                </p>
                             )}
 
                         {!buscandoClientes &&
@@ -643,13 +970,14 @@ export function NovoAgendamentoPage() {
                                                 </p>
                                             </div>
                                             <div className="flex shrink-0 items-center gap-2">
-                                                {!usarPacoteAtivo && (
-                                                    <span
-                                                        className={`font-bold ${preco === 'Consultar' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-gold)]'}`}
-                                                    >
-                                                        {preco}
-                                                    </span>
-                                                )}
+                                                {!usarPacoteAtivo &&
+                                                    !pacoteCatalogoSelecionado && (
+                                                        <span
+                                                            className={`font-bold ${preco === 'Consultar' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-gold)]'}`}
+                                                        >
+                                                            {preco}
+                                                        </span>
+                                                    )}
                                                 {selecionado ? (
                                                     <CheckCircle2
                                                         size={20}
@@ -668,7 +996,7 @@ export function NovoAgendamentoPage() {
                                 })}
                             </div>
                         )}
-                        {usarPacoteAtivo && pacoteAtivo && (
+                        {usarPacoteAtivo && pacoteAtivoDoCliente && (
                             <p
                                 className={`mt-2 text-sm ${
                                     saldoServicoSelecionado?.quantidadeRestante
@@ -754,15 +1082,32 @@ export function NovoAgendamentoPage() {
                                             Valor
                                         </dt>
                                         <dd
-                                            className={`break-words text-right text-sm ${usarPacoteAtivo || formatarPreco(servicoSelecionado.preco) !== 'Consultar' ? 'font-bold text-[var(--color-gold)]' : 'font-medium text-[var(--color-text-secondary)]'}`}
+                                            className={`break-words text-right text-sm ${usarPacoteAtivo || pacoteCatalogoSelecionado || formatarPreco(servicoSelecionado.preco) !== 'Consultar' ? 'font-bold text-[var(--color-gold)]' : 'font-medium text-[var(--color-text-secondary)]'}`}
                                         >
-                                            {usarPacoteAtivo
-                                                ? 'Pacote ativo'
-                                                : formatarPreco(
-                                                      servicoSelecionado.preco,
-                                                  )}
+                                            {pacoteCatalogoSelecionado
+                                                ? formatarLinhaPrecoPacote(
+                                                      pacoteCatalogoSelecionado.preco,
+                                                  )
+                                                : usarPacoteAtivo
+                                                  ? 'Pacote ativo'
+                                                  : formatarPreco(
+                                                        servicoSelecionado.preco,
+                                                    )}
                                         </dd>
                                     </div>
+                                    {pacoteCatalogoSelecionado && (
+                                        <div className="flex items-start justify-between gap-3">
+                                            <dt className="text-sm text-[var(--color-text-secondary)]">
+                                                Vínculo
+                                            </dt>
+                                            <dd className="break-words text-right text-sm font-medium text-[var(--color-text-primary)]">
+                                                Pacote “
+                                                {pacoteCatalogoSelecionado.nome}
+                                                ” será criado e vinculado ao
+                                                cliente ao salvar.
+                                            </dd>
+                                        </div>
+                                    )}
                                 </dl>
                             </div>
                         )}

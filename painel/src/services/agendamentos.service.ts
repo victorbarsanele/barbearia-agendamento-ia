@@ -1,4 +1,4 @@
-import { apiFetch } from './api';
+import { apiFetch } from './api.js';
 
 export type StatusAgendamento =
     | 'AGENDADO'
@@ -29,12 +29,28 @@ export interface Agendamento {
     };
 }
 
-export interface CriarAgendamentoPayload {
+export interface CriarAgendamentoBasePayload {
     clienteId: string;
     servicoId: string;
-    pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+}
+
+export type CriarAgendamentoPayload = CriarAgendamentoBasePayload &
+    (
+        | { pacoteId: string; pacoteClienteId?: never }
+        | { pacoteClienteId: string; pacoteId?: never }
+        | { pacoteId?: never; pacoteClienteId?: never }
+    );
+
+export class ApiError extends Error {
+    readonly status: number;
+
+    constructor(message: string, status: number) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+    }
 }
 
 export interface AtualizarAgendamentoPayload {
@@ -78,7 +94,10 @@ async function handleResponse<T>(response: Response): Promise<T> {
         const body = (await response.json().catch(() => null)) as {
             message?: string;
         } | null;
-        throw new Error(body?.message ?? 'Erro ao processar requisição.');
+        throw new ApiError(
+            body?.message ?? 'Erro ao processar requisição.',
+            response.status,
+        );
     }
 
     return (await response.json()) as T;
