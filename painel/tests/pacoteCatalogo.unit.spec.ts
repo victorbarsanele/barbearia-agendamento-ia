@@ -8,10 +8,13 @@ import type { Pacote } from '../src/services/pacotes.service.js';
 import type { Servico } from '../src/services/servicos.service.js';
 import {
     filtrarServicosPorPacoteCatalogo,
+    calcularLimiteSlotsPacoteCatalogo,
     formatarLinhaPrecoPacote,
     montarPayloadAgendamento,
+    montarPayloadLote,
     resolverServicoAposTrocaCliente,
     resolverServicoAposTrocaPacote,
+    traduzirMotivoConflitoLote,
 } from '../src/utils/pacoteCatalogo.js';
 
 const servicos: Servico[] = [
@@ -94,19 +97,67 @@ test('formata preço do pacote como valor cobrado à parte', () => {
     );
 });
 
+test('monta payload de lote sem misturar vínculos de pacote', () => {
+    const loteBase = {
+        clienteId: 'cliente-1',
+        servicoId: 'corte',
+        slots: [{ data: '2026-10-20', horario: '10:00' }],
+    };
+    const catalogo = montarPayloadLote(loteBase, {
+        tipo: 'catalogo',
+        pacoteId: 'pacote-1',
+    });
+    const ativo = montarPayloadLote(loteBase, {
+        tipo: 'ativo',
+        pacoteClienteId: 'pacote-cliente-1',
+    });
+    const nenhum = montarPayloadLote(loteBase, { tipo: 'nenhum' });
+
+    expect(catalogo).toHaveProperty('pacoteId', 'pacote-1');
+    expect(catalogo).not.toHaveProperty('pacoteClienteId');
+    expect(ativo).toHaveProperty('pacoteClienteId', 'pacote-cliente-1');
+    expect(ativo).not.toHaveProperty('pacoteId');
+    expect(nenhum).not.toHaveProperty('pacoteId');
+    expect(nenhum).not.toHaveProperty('pacoteClienteId');
+});
+
+test('limita slots a 20 ou quantidade do serviço', () => {
+    expect(calcularLimiteSlotsPacoteCatalogo(4)).toBe(4);
+    expect(calcularLimiteSlotsPacoteCatalogo(30)).toBe(20);
+    expect(calcularLimiteSlotsPacoteCatalogo(undefined)).toBe(0);
+});
+
+test('traduz motivos do lote atômico', () => {
+    expect(traduzirMotivoConflitoLote('capacidade_pacote')).toContain(
+        'capacidade restante',
+    );
+    expect(traduzirMotivoConflitoLote('bloqueio')).toContain('bloqueado');
+});
+
 test('criarAgendamento lança ApiError com status e mensagem HTTP intacta', async () => {
     const fetchOriginal = globalThis.fetch;
     globalThis.fetch = async () =>
-        new Response(JSON.stringify({ message: 'Conflito de pacote ativo.' }), {
-            status: 409,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        new Response(
+            JSON.stringify({
+                message: 'Conflito de pacote ativo.',
+                slot: { data: '2026-10-20', horario: '10:00' },
+                motivo: 'capacidade_pacote',
+            }),
+            {
+                status: 409,
+                headers: { 'Content-Type': 'application/json' },
+            },
+        );
 
     try {
         await expect(criarAgendamento(base)).rejects.toMatchObject({
             name: 'ApiError',
             message: 'Conflito de pacote ativo.',
             status: 409,
+            body: {
+                slot: { data: '2026-10-20', horario: '10:00' },
+                motivo: 'capacidade_pacote',
+            },
         });
         expect(new ApiError('Mensagem existente', 404).message).toBe(
             'Mensagem existente',

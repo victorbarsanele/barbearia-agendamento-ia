@@ -11,6 +11,7 @@ import {
 } from './expandirRecorrencia';
 
 interface GeradorRepeticaoProps {
+    maxSlots?: number;
     onGerar: (slots: SlotLote[]) => void;
     onAlterar: () => void;
     onErro: (mensagem: string | null) => void;
@@ -36,6 +37,7 @@ function getHojeEmBrasiliaParaInput(): string {
 }
 
 export function GeradorRepeticao({
+    maxSlots,
     onGerar,
     onAlterar,
     onErro,
@@ -58,9 +60,8 @@ export function GeradorRepeticao({
         '1',
     );
     const [intervaloPersonalizado, setIntervaloPersonalizado] = useState(3);
-    const [resultado, setResultado] = useState<
-        ResultadoExpansaoRecorrencia | null
-    >(null);
+    const [resultado, setResultado] =
+        useState<ResultadoExpansaoRecorrencia | null>(null);
 
     const intervaloSemanas =
         repeticao === 'personalizado'
@@ -93,11 +94,7 @@ export function GeradorRepeticao({
         }
 
         return numeroOcorrencias > 0;
-    }, [
-        criterioParada,
-        dataFinal,
-        numeroOcorrencias,
-    ]);
+    }, [criterioParada, dataFinal, numeroOcorrencias]);
 
     const gerarSlots = () => {
         const erroRecorrencia = validarRecorrencia({
@@ -137,6 +134,15 @@ export function GeradorRepeticao({
             onErro('Nenhuma data foi gerada para os critérios informados.');
             setResultado(null);
             onGerar([]);
+            return;
+        }
+
+        if (maxSlots !== undefined && novoResultado.slots.length > maxSlots) {
+            setResultado(novoResultado);
+            onGerar(novoResultado.slots);
+            onErro(
+                `A recorrência gerou ${novoResultado.slots.length} horários; o limite deste pacote é ${maxSlots}.`,
+            );
             return;
         }
 

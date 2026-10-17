@@ -288,6 +288,39 @@ test('pacote ativo com saldo oculta catálogo e alterna o vínculo', async ({
     expect(api.catalogRequests).toBe(0);
 });
 
+test('botão Trocar limpa vínculo ativo antes de selecionar outro cliente', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        activeLookup: (clienteId) => ({
+            status: 200,
+            body: makeActivePackage(clienteId, 2),
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+
+    const usarPacote = page.getByRole('checkbox', {
+        name: /Usar pacote ativo/,
+    });
+    await expect(usarPacote).toBeVisible();
+    await usarPacote.locator('..').click();
+    await expect(usarPacote).toBeChecked();
+
+    await page.getByRole('button', { name: 'Trocar', exact: true }).click();
+    await selecionarCliente(page, 'Bruno Lima');
+    await expect(usarPacote).toBeVisible();
+    await expect(usarPacote).not.toBeChecked();
+
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+    await expect.poll(() => api.posts.length).toBe(1);
+
+    expect(api.posts[0]).toHaveProperty('clienteId', 'cliente-bruno');
+    expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
+});
+
 test('pacote ativo sem saldo avisa e não carrega catálogo', async ({
     page,
 }) => {
