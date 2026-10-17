@@ -7,11 +7,17 @@ import {
     buscarPacoteAtivoDoCliente,
     type PacoteClienteAtivo,
 } from '../../services/pacoteCliente.service';
+import { listarPacotes, type Pacote } from '../../services/pacotes.service';
 import { listarServicos, type Servico } from '../../services/servicos.service';
 import {
     buscarSaldoPorServico,
     filtrarServicosPorPacoteAtivo,
 } from '../../utils/pacoteCliente';
+import {
+    filtrarServicosPorPacoteCatalogo,
+    formatarLinhaPrecoPacote,
+    resolverServicoAposTrocaPacote,
+} from '../../utils/pacoteCatalogo';
 import { Checkbox } from '../ui/Checkbox';
 
 const DEBOUNCE_MS = 300;
@@ -23,7 +29,24 @@ interface SeletorClienteServicoProps {
     onClienteChange: (cliente: Cliente | null) => void;
     onServicoChange: (servicoId: string) => void;
     onPacoteClienteChange: (pacoteClienteId: string | undefined) => void;
+    modoCatalogoLote?: boolean;
+    pacoteCatalogoId?: string;
+    aoMudarPacoteCatalogo?: (pacoteId: string) => void;
+    aoSelecionarPacoteCatalogo?: (pacote: Pacote | null) => void;
+    recarregarPacoteAtivo?: number;
 }
+
+type ResultadoPacoteAtivo =
+    | {
+          clienteId: string;
+          tentativa: number;
+          pacote: PacoteClienteAtivo | null;
+      }
+    | { clienteId: string; tentativa: number; erro: string };
+
+type ResultadoCatalogo =
+    | { clienteId: string; tentativa: number; pacotes: Pacote[] }
+    | { clienteId: string; tentativa: number; erro: string };
 
 const fieldClassName =
     'h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]';
@@ -35,15 +58,23 @@ export function SeletorClienteServico({
     onClienteChange,
     onServicoChange,
     onPacoteClienteChange,
+    modoCatalogoLote = false,
+    pacoteCatalogoId = '',
+    aoMudarPacoteCatalogo,
+    aoSelecionarPacoteCatalogo,
+    recarregarPacoteAtivo,
 }: SeletorClienteServicoProps) {
     const [queryCliente, setQueryCliente] = useState(
         clienteSelecionado?.nome ?? '',
     );
     const [clientesSugeridos, setClientesSugeridos] = useState<Cliente[]>([]);
     const [servicos, setServicos] = useState<Servico[]>([]);
-    const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
-        null,
-    );
+    const [resultadoPacoteAtivo, setResultadoPacoteAtivo] =
+        useState<ResultadoPacoteAtivo | null>(null);
+    const [tentativaPacoteAtivo, setTentativaPacoteAtivo] = useState(0);
+    const [resultadoCatalogo, setResultadoCatalogo] =
+        useState<ResultadoCatalogo | null>(null);
+    const [tentativaCatalogo, setTentativaCatalogo] = useState(0);
 
     useEffect(() => {
         listarServicos()
@@ -79,41 +110,135 @@ export function SeletorClienteServico({
         };
     }, [queryCliente, clienteSelecionado]);
 
+    const tentativaAtivoAtual =
+        tentativaPacoteAtivo + (recarregarPacoteAtivo ?? 0);
+    const resultadoAtivoAtual =
+        resultadoPacoteAtivo &&
+        resultadoPacoteAtivo?.clienteId === clienteSelecionado?.id &&
+        resultadoPacoteAtivo.tentativa === tentativaAtivoAtual
+            ? resultadoPacoteAtivo
+            : null;
+    const pacoteAtivo =
+        resultadoAtivoAtual && 'pacote' in resultadoAtivoAtual
+            ? resultadoAtivoAtual.pacote
+            : null;
+
     useEffect(() => {
-        if (!clienteSelecionado?.id) {
-            setPacoteAtivo(null);
-            onPacoteClienteChange(undefined);
+        const clienteId = clienteSelecionado?.id;
+        if (!clienteId) {
+            setResultadoPacoteAtivo(null);
+            setResultadoCatalogo(null);
             return;
         }
 
         let ativo = true;
-        buscarPacoteAtivoDoCliente(clienteSelecionado.id)
-            .then((ativoAtual) => {
+        buscarPacoteAtivoDoCliente(clienteId)
+            .then((pacote) => {
                 if (ativo) {
-                    setPacoteAtivo(ativoAtual);
+                    setResultadoPacoteAtivo({
+                        clienteId,
+                        tentativa: tentativaAtivoAtual,
+                        pacote,
+                    });
                 }
             })
-            .catch(() => {
+            .catch((error: unknown) => {
                 if (ativo) {
-                    setPacoteAtivo(null);
+                    setResultadoPacoteAtivo({
+                        clienteId,
+                        tentativa: tentativaAtivoAtual,
+                        erro:
+                            error instanceof Error
+                                ? error.message
+                                : 'Não foi possível consultar o pacote ativo.',
+                    });
                 }
             });
 
         return () => {
             ativo = false;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [clienteSelecionado?.id]);
+    }, [clienteSelecionado?.id, tentativaAtivoAtual]);
 
-    const servicosDisponiveis = useMemo(
-        () =>
-            filtrarServicosPorPacoteAtivo(
-                servicos,
-                pacoteAtivo,
-                Boolean(pacoteClienteId),
-            ),
-        [pacoteAtivo, pacoteClienteId, servicos],
+    useEffect(() => {
+        const clienteId = clienteSelecionado?.id;
+        if (
+            !modoCatalogoLote ||
+            !clienteId ||
+            !resultadoAtivoAtual ||
+            !('pacote' in resultadoAtivoAtual) ||
+            resultadoAtivoAtual.pacote
+        ) {
+            return;
+        }
+
+        let ativo = true;
+        listarPacotes()
+            .then((pacotes) => {
+                if (ativo) {
+                    setResultadoCatalogo({
+                        clienteId,
+                        tentativa: tentativaCatalogo,
+                        pacotes,
+                    });
+                }
+            })
+            .catch((error: unknown) => {
+                if (ativo) {
+                    setResultadoCatalogo({
+                        clienteId,
+                        tentativa: tentativaCatalogo,
+                        erro:
+                            error instanceof Error
+                                ? error.message
+                                : 'Não foi possível carregar os pacotes.',
+                    });
+                }
+            });
+
+        return () => {
+            ativo = false;
+        };
+    }, [
+        clienteSelecionado?.id,
+        modoCatalogoLote,
+        resultadoAtivoAtual,
+        tentativaCatalogo,
+    ]);
+
+    const resultadoCatalogoAtual =
+        resultadoCatalogo &&
+        resultadoCatalogo?.clienteId === clienteSelecionado?.id &&
+        resultadoCatalogo.tentativa === tentativaCatalogo
+            ? resultadoCatalogo
+            : null;
+    const pacotesCatalogo =
+        resultadoCatalogoAtual && 'pacotes' in resultadoCatalogoAtual
+            ? resultadoCatalogoAtual.pacotes
+            : [];
+    const pacoteCatalogoSelecionado = pacotesCatalogo.find(
+        (pacote) => pacote.id === pacoteCatalogoId,
     );
+
+    const servicosDisponiveis = useMemo(() => {
+        if (modoCatalogoLote && pacoteCatalogoSelecionado) {
+            return filtrarServicosPorPacoteCatalogo(
+                servicos,
+                pacoteCatalogoSelecionado,
+            );
+        }
+        return filtrarServicosPorPacoteAtivo(
+            servicos,
+            pacoteAtivo,
+            Boolean(pacoteClienteId),
+        );
+    }, [
+        modoCatalogoLote,
+        pacoteAtivo,
+        pacoteCatalogoSelecionado,
+        pacoteClienteId,
+        servicos,
+    ]);
 
     const saldoServicoSelecionado = buscarSaldoPorServico(
         pacoteAtivo,
@@ -121,6 +246,16 @@ export function SeletorClienteServico({
     );
 
     useEffect(() => {
+        if (
+            modoCatalogoLote &&
+            pacoteCatalogoId &&
+            !servicosDisponiveis.some((servico) => servico.id === servicoId)
+        ) {
+            if (servicoId) {
+                onServicoChange('');
+            }
+            return;
+        }
         if (servicosDisponiveis.length === 0) {
             if (servicoId) {
                 onServicoChange('');
@@ -131,15 +266,25 @@ export function SeletorClienteServico({
         if (!servicosDisponiveis.some((servico) => servico.id === servicoId)) {
             onServicoChange(servicosDisponiveis[0].id);
         }
-    }, [onServicoChange, servicoId, servicosDisponiveis]);
+    }, [
+        modoCatalogoLote,
+        onServicoChange,
+        pacoteCatalogoId,
+        servicoId,
+        servicosDisponiveis,
+    ]);
 
     return (
         <div className="space-y-4">
             <div className="relative">
-                <label className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]">
+                <label
+                    htmlFor="lote-cliente"
+                    className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]"
+                >
                     Cliente
                 </label>
                 <input
+                    id="lote-cliente"
                     type="text"
                     className={fieldClassName}
                     placeholder="Buscar cliente por nome..."
@@ -172,11 +317,145 @@ export function SeletorClienteServico({
                 )}
             </div>
 
+            {modoCatalogoLote && clienteSelecionado && !resultadoAtivoAtual && (
+                <p
+                    className="text-sm text-[var(--color-text-secondary)]"
+                    role="status"
+                >
+                    Verificando pacote ativo...
+                </p>
+            )}
+
+            {modoCatalogoLote &&
+                resultadoAtivoAtual &&
+                'erro' in resultadoAtivoAtual && (
+                    <div
+                        className="space-y-2 rounded-[8px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                        role="alert"
+                    >
+                        <p>
+                            Não foi possível consultar o pacote ativo:{' '}
+                            {resultadoAtivoAtual.erro}
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                setTentativaPacoteAtivo((atual) => atual + 1)
+                            }
+                            className="font-semibold underline"
+                        >
+                            Tentar novamente
+                        </button>
+                    </div>
+                )}
+
+            {modoCatalogoLote &&
+                resultadoAtivoAtual &&
+                'pacote' in resultadoAtivoAtual &&
+                !resultadoAtivoAtual.pacote && (
+                    <div className="space-y-2">
+                        <label
+                            htmlFor="lote-pacote-catalogo"
+                            className="block text-sm font-semibold text-[var(--color-text-primary)]"
+                        >
+                            Pacote do catálogo (opcional)
+                        </label>
+                        {!resultadoCatalogoAtual ? (
+                            <p
+                                className="text-sm text-[var(--color-text-secondary)]"
+                                role="status"
+                            >
+                                Carregando pacotes...
+                            </p>
+                        ) : 'erro' in resultadoCatalogoAtual ? (
+                            <div
+                                className="space-y-2 rounded-[8px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                                role="alert"
+                            >
+                                <p>{resultadoCatalogoAtual.erro}</p>
+                                <button
+                                    type="button"
+                                    onClick={() =>
+                                        setTentativaCatalogo(
+                                            (atual) => atual + 1,
+                                        )
+                                    }
+                                    className="font-semibold underline"
+                                >
+                                    Tentar novamente
+                                </button>
+                            </div>
+                        ) : (
+                            <select
+                                id="lote-pacote-catalogo"
+                                aria-label="Pacote do catálogo (opcional)"
+                                value={pacoteCatalogoId}
+                                onChange={(event) => {
+                                    const pacoteId = event.target.value;
+                                    const pacote = pacotesCatalogo.find(
+                                        (item) => item.id === pacoteId,
+                                    );
+                                    aoMudarPacoteCatalogo?.(pacoteId);
+                                    aoSelecionarPacoteCatalogo?.(
+                                        pacote ?? null,
+                                    );
+                                    onPacoteClienteChange(undefined);
+                                    const disponiveis =
+                                        filtrarServicosPorPacoteCatalogo(
+                                            servicos,
+                                            pacote ?? null,
+                                        );
+                                    onServicoChange(
+                                        resolverServicoAposTrocaPacote(
+                                            servicoId,
+                                            disponiveis,
+                                        ),
+                                    );
+                                }}
+                                disabled={servicos.length === 0}
+                                className={fieldClassName}
+                            >
+                                <option value="">Sem pacote</option>
+                                {pacotesCatalogo.map((pacote) => (
+                                    <option key={pacote.id} value={pacote.id}>
+                                        {pacote.nome}
+                                    </option>
+                                ))}
+                            </select>
+                        )}
+                        {pacoteCatalogoSelecionado && (
+                            <p className="text-sm font-semibold text-[var(--color-text-primary)]">
+                                {formatarLinhaPrecoPacote(
+                                    pacoteCatalogoSelecionado.preco,
+                                )}
+                            </p>
+                        )}
+                    </div>
+                )}
+
+            {modoCatalogoLote &&
+                pacoteAtivo &&
+                pacoteAtivo.servicos.every(
+                    (saldo) => saldo.quantidadeRestante <= 0,
+                ) && (
+                    <p
+                        className="rounded-[8px] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 p-3 text-sm text-[var(--color-text-primary)]"
+                        role="status"
+                    >
+                        Pacote ativo sem saldo utilizável. Encerre-o em Clientes
+                        para escolher um pacote do catálogo.
+                    </p>
+                )}
+
             <div>
-                <label className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]">
+                <label
+                    htmlFor="lote-servico"
+                    className="mb-1 block text-sm font-semibold text-[var(--color-text-primary)]"
+                >
                     Serviço
                 </label>
                 <select
+                    id="lote-servico"
                     className={fieldClassName}
                     value={servicoId}
                     onChange={(event) => onServicoChange(event.target.value)}

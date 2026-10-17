@@ -1,8 +1,11 @@
-import { HorarioFuncionamento } from '@prisma/client';
+import { HorarioFuncionamento, Prisma } from '@prisma/client';
 import prisma from '../lib/prisma';
 
-export async function listarTodos(): Promise<HorarioFuncionamento[]> {
-    return prisma.horarioFuncionamento.findMany({
+export async function listarTodos(
+    tx?: Prisma.TransactionClient,
+): Promise<HorarioFuncionamento[]> {
+    const client = tx ?? prisma;
+    return client.horarioFuncionamento.findMany({
         orderBy: { diaSemana: 'asc' },
     });
 }

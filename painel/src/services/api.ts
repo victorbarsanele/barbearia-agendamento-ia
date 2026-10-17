@@ -1,7 +1,7 @@
 type ApiFetchOptions = RequestInit;
 
 export async function apiFetch(
-    input: RequestInfo | URL,
+    input: string | URL | Request,
     options: ApiFetchOptions = {},
 ): Promise<Response> {
     const { headers, ...restOptions } = options;

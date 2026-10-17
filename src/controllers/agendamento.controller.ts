@@ -6,6 +6,7 @@ import * as agendamentoService from '../services/agendamento.service';
 interface CriarAgendamentoBody {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
@@ -40,6 +41,7 @@ interface SlotLoteBody {
 interface SimularLoteBody {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     pacoteClienteId?: string;
     slots: SlotLoteBody[];
 }
@@ -47,6 +49,7 @@ interface SimularLoteBody {
 interface CriarLoteBody {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     pacoteClienteId?: string;
     slots: SlotLoteBody[];
 }
@@ -57,7 +60,10 @@ interface ConcluirAgendamentoBody {
 
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
-        void reply.status(error.statusCode).send({ message: error.message });
+        void reply.status(error.statusCode).send({
+            message: error.message,
+            ...(error.details ?? {}),
+        });
     } else {
         void reply.status(500).send({ message: 'Erro interno do servidor.' });
     }
@@ -71,9 +77,11 @@ export async function criar(
         const agendamento = await agendamentoService.criar({
             clienteId: request.body.clienteId,
             servicoId: request.body.servicoId,
+            pacoteId: request.body.pacoteId,
             pacoteClienteId: request.body.pacoteClienteId,
             dataHoraInicio: request.body.dataHoraInicio,
             registroRetroativo: request.body.registroRetroativo === true,
+            origem: 'PAINEL',
         });
         void reply.status(201).send(agendamento);
     } catch (error) {
@@ -167,7 +175,10 @@ export async function simularLote(
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        const resultado = await agendamentoService.simularLote(request.body);
+        const resultado = await agendamentoService.simularLote({
+            ...request.body,
+            origem: 'PAINEL',
+        });
         void reply.send(resultado);
     } catch (error) {
         handleError(error, reply);
@@ -179,7 +190,10 @@ export async function criarLote(
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        const resultado = await agendamentoService.criarLote(request.body);
+        const resultado = await agendamentoService.criarLote({
+            ...request.body,
+            origem: 'PAINEL',
+        });
         void reply.status(201).send(resultado);
     } catch (error) {
         handleError(error, reply);

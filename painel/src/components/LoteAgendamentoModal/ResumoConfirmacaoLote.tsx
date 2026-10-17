@@ -1,5 +1,6 @@
 import { Button } from '../ui/Button';
 import { formatBrazilDateKey } from '../../utils/dateTime';
+import type { Pacote } from '../../services/pacotes.service';
 
 interface SlotLote {
     data: string;
@@ -11,6 +12,8 @@ interface ResumoConfirmacaoLoteProps {
     servicoNome: string;
     slots: SlotLote[];
     pacoteClienteId?: string;
+    pacoteCatalogo?: Pacote | null;
+    atomic?: boolean;
     enviando: boolean;
     erro: string | null;
     onConfirmar: () => void;
@@ -22,6 +25,8 @@ export function ResumoConfirmacaoLote({
     servicoNome,
     slots,
     pacoteClienteId,
+    pacoteCatalogo,
+    atomic = false,
     enviando,
     erro,
     onConfirmar,
@@ -41,6 +46,17 @@ export function ResumoConfirmacaoLote({
                 {pacoteClienteId && (
                     <p className="text-[var(--color-text-secondary)]">
                         Vinculado ao pacote ativo do cliente.
+                    </p>
+                )}
+                {pacoteCatalogo && (
+                    <p className="text-[var(--color-text-secondary)]">
+                        O pacote “{pacoteCatalogo.nome}” será criado e vinculado
+                        ao cliente ao salvar.
+                    </p>
+                )}
+                {atomic && (
+                    <p className="font-semibold text-[var(--color-danger)]">
+                        Tudo ou nada: se algum horário falhar, nada será criado.
                     </p>
                 )}
                 <p>

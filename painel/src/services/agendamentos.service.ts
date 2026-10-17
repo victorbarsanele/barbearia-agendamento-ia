@@ -1,4 +1,4 @@
-import { apiFetch } from './api';
+import { apiFetch } from './api.js';
 
 export type StatusAgendamento =
     | 'AGENDADO'
@@ -29,12 +29,34 @@ export interface Agendamento {
     };
 }
 
-export interface CriarAgendamentoPayload {
+export interface CriarAgendamentoBasePayload {
     clienteId: string;
     servicoId: string;
-    pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+}
+
+export type CriarAgendamentoPayload = CriarAgendamentoBasePayload &
+    (
+        | { pacoteId: string; pacoteClienteId?: never }
+        | { pacoteClienteId: string; pacoteId?: never }
+        | { pacoteId?: never; pacoteClienteId?: never }
+    );
+
+export class ApiError extends Error {
+    readonly status: number;
+    readonly body: ApiErrorBody | null;
+
+    constructor(
+        message: string,
+        status: number,
+        body: ApiErrorBody | null = null,
+    ) {
+        super(message);
+        this.name = 'ApiError';
+        this.status = status;
+        this.body = body;
+    }
 }
 
 export interface AtualizarAgendamentoPayload {
@@ -55,12 +77,18 @@ export interface SlotLote {
     horario: string;
 }
 
-export interface SimularLotePayload {
+export interface SimularLoteBasePayload {
     clienteId: string;
     servicoId: string;
-    pacoteClienteId?: string;
     slots: SlotLote[];
 }
+
+export type SimularLotePayload = SimularLoteBasePayload &
+    (
+        | { pacoteId: string; pacoteClienteId?: never }
+        | { pacoteClienteId: string; pacoteId?: never }
+        | { pacoteId?: never; pacoteClienteId?: never }
+    );
 
 export interface SimularLoteResultado {
     disponiveis: SlotLote[];
@@ -71,14 +99,26 @@ export interface CriarLoteResultado {
     loteId: string;
     criados: { agendamentoId: string; data: string; horario: string }[];
     falhados: (SlotLote & { motivo: string })[];
+    pacoteClienteId?: string;
+}
+
+export interface ApiErrorBody {
+    message?: string;
+    slot?: SlotLote;
+    motivo?: string;
+    [key: string]: unknown;
 }
 
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-            message?: string;
-        } | null;
-        throw new Error(body?.message ?? 'Erro ao processar requisição.');
+        const body = (await response
+            .json()
+            .catch(() => null)) as ApiErrorBody | null;
+        throw new ApiError(
+            body?.message ?? 'Erro ao processar requisição.',
+            response.status,
+            body,
+        );
     }
 
     return (await response.json()) as T;

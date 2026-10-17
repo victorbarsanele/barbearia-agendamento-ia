@@ -18,8 +18,10 @@ const includeRelacoes = {
 
 export async function criar(
     data: CriarLoteData,
+    tx?: Prisma.TransactionClient,
 ): Promise<LoteAgendamentoComRelacoes> {
-    return prisma.loteAgendamento.create({
+    const client = tx ?? prisma;
+    return client.loteAgendamento.create({
         data,
         include: includeRelacoes,
     });

@@ -198,57 +198,71 @@ export async function vincularCliente(data: {
         throw new AppError('Pacote não encontrado.', 404);
     }
 
-    const ativoExistente =
-        await pacoteClienteRepository.buscarAtivoPorClienteId(data.clienteId);
-    if (ativoExistente) {
-        throw new AppError('Cliente já possui um pacote ativo.', 409);
-    }
-
-    const usosAnteriores = new Map(
-        (data.usosAnteriores ?? []).map((item) => [
-            item.servicoId,
-            item.usosAnteriores,
-        ]),
-    );
-    if (usosAnteriores.size !== (data.usosAnteriores ?? []).length) {
-        throw new AppError('Serviço repetido em usosAnteriores.', 400);
-    }
-
-    const servicosDoPacote = new Map(
-        pacote.servicos.map((servico) => [
-            servico.servicoId,
-            servico.quantidadeTotal,
-        ]),
-    );
-    for (const [servicoId, quantidade] of usosAnteriores) {
-        const quantidadeTotal = servicosDoPacote.get(servicoId);
-        if (quantidadeTotal === undefined) {
-            throw new AppError(
-                'Serviço de usosAnteriores não está incluído no pacote.',
-                400,
+    return pacoteClienteRepository.transacionar(async (tx) => {
+        const clienteBloqueado =
+            await clienteRepository.bloquearParaCriacaoDePacote(
+                tx,
+                data.clienteId,
             );
+        if (!clienteBloqueado) {
+            throw new AppError('Cliente não encontrado.', 404);
         }
-        if (
-            !Number.isInteger(quantidade) ||
-            quantidade < 0 ||
-            quantidade >= quantidadeTotal
-        ) {
-            throw new AppError(
-                'usosAnteriores deve ser inteiro, maior ou igual a zero e menor que a quantidade total do serviço.',
-                400,
-            );
-        }
-    }
 
-    return pacoteClienteRepository.criar({
-        clienteId: data.clienteId,
-        pacoteId: data.pacoteId,
-        servicos: pacote.servicos.map((servico) => ({
-            servicoId: servico.servicoId,
-            quantidadeTotal: servico.quantidadeTotal,
-            usosAnteriores: usosAnteriores.get(servico.servicoId) ?? 0,
-        })),
-        dataInicio: new Date(),
+        const ativoExistente =
+            await pacoteClienteRepository.buscarAtivoPorClienteId(
+                data.clienteId,
+                tx,
+            );
+        if (ativoExistente) {
+            throw new AppError('Cliente já possui um pacote ativo.', 409);
+        }
+
+        const usosAnteriores = new Map(
+            (data.usosAnteriores ?? []).map((item) => [
+                item.servicoId,
+                item.usosAnteriores,
+            ]),
+        );
+        if (usosAnteriores.size !== (data.usosAnteriores ?? []).length) {
+            throw new AppError('Serviço repetido em usosAnteriores.', 400);
+        }
+
+        const servicosDoPacote = new Map(
+            pacote.servicos.map((servico) => [
+                servico.servicoId,
+                servico.quantidadeTotal,
+            ]),
+        );
+        for (const [servicoId, quantidade] of usosAnteriores) {
+            const quantidadeTotal = servicosDoPacote.get(servicoId);
+            if (quantidadeTotal === undefined) {
+                throw new AppError(
+                    'Serviço de usosAnteriores não está incluído no pacote.',
+                    400,
+                );
+            }
+            if (
+                !Number.isInteger(quantidade) ||
+                quantidade < 0 ||
+                quantidade >= quantidadeTotal
+            ) {
+                throw new AppError(
+                    'usosAnteriores deve ser inteiro, maior ou igual a zero e menor que a quantidade total do serviço.',
+                    400,
+                );
+            }
+        }
+
+        return pacoteClienteRepository.criarNaTransacao(tx, {
+            clienteId: data.clienteId,
+            pacoteId: data.pacoteId,
+            servicos: pacote.servicos.map((servico) => ({
+                servicoId: servico.servicoId,
+                quantidadeTotal: servico.quantidadeTotal,
+                usosAnteriores: usosAnteriores.get(servico.servicoId) ?? 0,
+            })),
+            dataInicio: new Date(),
+        });
     });
 }
 

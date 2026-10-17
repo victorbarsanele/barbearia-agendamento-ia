@@ -206,6 +206,17 @@ export async function excluirComHistorico(
     });
 }
 
+export async function bloquearParaCriacaoDePacote(
+    tx: Prisma.TransactionClient,
+    id: string,
+): Promise<boolean> {
+    const clientes = await tx.$queryRaw<{ id: string }[]>(
+        Prisma.sql`SELECT "id" FROM "clientes" WHERE "id" = ${id} FOR UPDATE`,
+    );
+
+    return clientes.length > 0;
+}
+
 export async function listarTodos(): Promise<Cliente[]> {
     return prisma.cliente.findMany({ orderBy: { createdAt: 'desc' } });
 }

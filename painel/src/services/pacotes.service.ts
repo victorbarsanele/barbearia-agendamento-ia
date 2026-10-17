@@ -1,5 +1,5 @@
-import { apiFetch } from './api';
-import type { Servico } from './servicos.service';
+import { apiFetch } from './api.js';
+import type { Servico } from './servicos.service.js';
 
 export interface PacoteServicoIncluso {
     pacoteId: string;

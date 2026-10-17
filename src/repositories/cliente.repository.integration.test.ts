@@ -12,8 +12,10 @@ type Cenario = {
 };
 
 let cenario: Cenario;
+let cenarioInicializado = false;
 
 beforeEach(async () => {
+    cenarioInicializado = false;
     const sufixo = Date.now().toString();
     const cliente = await prisma.cliente.create({
         data: {
@@ -21,6 +23,9 @@ beforeEach(async () => {
             telefone: `55119${sufixo.slice(-8)}`,
         },
     });
+    cenario = { clienteId: cliente.id, servicoId: '' };
+    cenarioInicializado = true;
+
     const servico = await prisma.servico.create({
         data: {
             nome: `Servico exclusao ${sufixo}`,
@@ -29,10 +34,14 @@ beforeEach(async () => {
             permiteExtensaoFechamento: false,
         },
     });
-    cenario = { clienteId: cliente.id, servicoId: servico.id };
+    cenario.servicoId = servico.id;
 });
 
 afterEach(async () => {
+    if (!cenarioInicializado) {
+        return;
+    }
+
     await prisma.agendamento.deleteMany({
         where: { clienteId: cenario.clienteId },
     });
@@ -54,7 +63,9 @@ afterEach(async () => {
         await prisma.pacote.deleteMany({ where: { id: cenario.pacoteId } });
     }
     await prisma.cliente.deleteMany({ where: { id: cenario.clienteId } });
-    await prisma.servico.deleteMany({ where: { id: cenario.servicoId } });
+    if (cenario.servicoId) {
+        await prisma.servico.deleteMany({ where: { id: cenario.servicoId } });
+    }
 });
 
 async function criarPacoteCliente(status: StatusPacoteCliente) {

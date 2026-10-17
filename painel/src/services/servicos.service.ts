@@ -1,4 +1,4 @@
-import { apiFetch } from './api';
+import { apiFetch } from './api.js';
 
 export interface Servico {
     id: string;

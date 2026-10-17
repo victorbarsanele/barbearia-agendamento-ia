@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
 import { AppError } from '../lib/app-error';
 import {
@@ -16,6 +17,12 @@ export async function carregarConfiguracao(): Promise<
     HorarioFuncionamentoConfig[]
 > {
     return horarioFuncionamentoRepository.listarTodos();
+}
+
+export async function carregarConfiguracaoNaTransacao(
+    tx: Prisma.TransactionClient,
+): Promise<HorarioFuncionamentoConfig[]> {
+    return horarioFuncionamentoRepository.listarTodos(tx);
 }
 
 export async function obterHorarioFuncionamento(

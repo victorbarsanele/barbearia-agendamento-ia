@@ -13,7 +13,7 @@ const includePacote = {
     servicos: { include: { servico: true } },
 } satisfies Prisma.PacoteClienteInclude;
 
-export async function criar(data: {
+export interface CriarPacoteClienteData {
     clienteId: string;
     pacoteId: string;
     servicos: {
@@ -22,8 +22,13 @@ export async function criar(data: {
         usosAnteriores: number;
     }[];
     dataInicio: Date;
-}): Promise<PacoteClienteComPacote> {
-    return prisma.pacoteCliente.create({
+}
+
+export async function criarNaTransacao(
+    tx: Prisma.TransactionClient,
+    data: CriarPacoteClienteData,
+): Promise<PacoteClienteComPacote> {
+    return tx.pacoteCliente.create({
         data: {
             clienteId: data.clienteId,
             pacoteId: data.pacoteId,
@@ -43,13 +48,33 @@ export async function criar(data: {
     });
 }
 
+export async function criar(
+    data: CriarPacoteClienteData,
+): Promise<PacoteClienteComPacote> {
+    return prisma.$transaction((tx) => criarNaTransacao(tx, data));
+}
+
 export async function buscarAtivoPorClienteId(
     clienteId: string,
+    tx?: Prisma.TransactionClient,
 ): Promise<PacoteClienteComPacote | null> {
-    return prisma.pacoteCliente.findFirst({
+    const client = tx ?? prisma;
+    return client.pacoteCliente.findFirst({
         where: { clienteId, status: StatusPacoteCliente.ATIVO },
         include: includePacote,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     });
+}
+
+export async function transacionar<T>(
+    operation: (tx: Prisma.TransactionClient) => Promise<T>,
+    options?: {
+        maxWait?: number;
+        timeout?: number;
+        isolationLevel?: Prisma.TransactionIsolationLevel;
+    },
+): Promise<T> {
+    return prisma.$transaction(operation, options);
 }
 
 export async function buscarPorId(
