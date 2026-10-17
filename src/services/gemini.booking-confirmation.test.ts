@@ -56,10 +56,7 @@ vi.mock('./agendamento.service', () => ({
 import { InMemoryPendingAgendamentoRepository } from '../repositories/pending-agendamento.repository';
 import { EstadoEscalonamento } from '@prisma/client';
 import { AppError } from '../lib/app-error';
-import {
-    __testables,
-    escalarParaHumano,
-} from './gemini.service';
+import { __testables, escalarParaHumano } from './gemini.service';
 
 const phone = '5511999999999';
 const draft = {
@@ -84,7 +81,12 @@ beforeEach(() => {
         telefone: phone,
     });
     mocks.listarServicos.mockResolvedValue([
-        { id: 'servico-1', nome: 'Corte', duracaoMinutos: 30, permiteExtensaoFechamento: false },
+        {
+            id: 'servico-1',
+            nome: 'Corte',
+            duracaoMinutos: 30,
+            permiteExtensaoFechamento: false,
+        },
     ]);
     mocks.listarHorarios.mockResolvedValue([]);
     mocks.validarDisponibilidade.mockResolvedValue({
@@ -101,12 +103,9 @@ beforeEach(() => {
 });
 
 async function prepare(messageId: string, values = draft) {
-    return __testables.prepararAgendamentoTool(
-        phone,
-        messageId,
-        values,
-        ['João Silva'],
-    );
+    return __testables.prepararAgendamentoTool(phone, messageId, values, [
+        'João Silva',
+    ]);
 }
 
 describe('confirmação de agendamento', () => {
@@ -118,25 +117,39 @@ describe('confirmação de agendamento', () => {
 
     it('correção sobrescreve e confirma somente último rascunho', async () => {
         await prepare('m1');
-        await prepare('m2', { ...draft, nomeCliente: 'Novo nome', telefone: '5511988888888' });
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm3')).resolves.toMatchObject({ sucesso: true });
+        await prepare('m2', {
+            ...draft,
+            nomeCliente: 'Novo nome',
+            telefone: '5511988888888',
+        });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm3'),
+        ).resolves.toMatchObject({ sucesso: true });
         expect(mocks.criar).toHaveBeenCalledOnce();
-        expect(mocks.criar.mock.calls[0][0]).toMatchObject({ clienteId: 'cliente-1' });
+        expect(mocks.criar.mock.calls[0][0]).toMatchObject({
+            clienteId: 'cliente-1',
+        });
     });
 
     it('consome conflito e segunda confirmação não cria', async () => {
         mocks.criar.mockRejectedValueOnce(new Error('EXCLUSION_CONFLICT'));
         await prepare('m1');
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm2')).resolves.toMatchObject({
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm2'),
+        ).resolves.toMatchObject({
             mensagem: expect.stringContaining('reservado por outro cliente'),
         });
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm3')).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm3'),
+        ).resolves.toMatchObject({ sucesso: false });
         expect(mocks.criar).toHaveBeenCalledOnce();
     });
 
     it('não cria quando preparação detecta conflito do mesmo telefone', async () => {
         mocks.validarDisponibilidade.mockRejectedValueOnce(
-            Object.assign(new Error('same conflict'), { isSameClientConflict: true }),
+            Object.assign(new Error('same conflict'), {
+                isSameClientConflict: true,
+            }),
         );
         await expect(prepare('m1')).resolves.toMatchObject({ sucesso: false });
         expect(mocks.criar).not.toHaveBeenCalled();
@@ -177,15 +190,23 @@ describe('confirmação de agendamento', () => {
             mensagemCriacaoId: 'm1',
             expiraEm: new Date(Date.now() + 600000),
         });
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm2')).resolves.toMatchObject({ sucesso: false });
-        await expect(repository.consumir(phone, 'm4', new Date())).resolves.toMatchObject({ nomeCliente: 'Novo' });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm2'),
+        ).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            repository.consumir(phone, 'm4', new Date()),
+        ).resolves.toMatchObject({ nomeCliente: 'Novo' });
     });
 
     it('erro de regra consome sem restaurar', async () => {
         mocks.criar.mockRejectedValueOnce(new AppError('rule', 400));
         await prepare('m1');
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm2')).resolves.toMatchObject({ sucesso: false });
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm3')).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm2'),
+        ).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm3'),
+        ).resolves.toMatchObject({ sucesso: false });
     });
 
     it('duas confirmações concorrentes criam no máximo uma vez', async () => {
@@ -201,6 +222,8 @@ describe('confirmação de agendamento', () => {
     it('escalarParaHumano apaga rascunho', async () => {
         await prepare('m1');
         await escalarParaHumano(phone, 'confusao_explicita');
-        await expect(__testables.confirmarAgendamentoTool(phone, 'm2')).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm2'),
+        ).resolves.toMatchObject({ sucesso: false });
     });
 });

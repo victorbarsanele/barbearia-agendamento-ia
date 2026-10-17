@@ -279,7 +279,9 @@ describe('calendário e validação de weekday do Gemini', () => {
             });
             expect(mocks.listarServicos).not.toHaveBeenCalled();
             expect(mocks.buscarCliente).not.toHaveBeenCalled();
-            expect(agendamentoService.validarDisponibilidade).not.toHaveBeenCalled();
+            expect(
+                agendamentoService.validarDisponibilidade,
+            ).not.toHaveBeenCalled();
             expect(agendamentoService.criar).not.toHaveBeenCalled();
             await expect(
                 pendingRepository.consumir(phone, 'confirm-1', new Date()),
@@ -300,35 +302,55 @@ describe('calendário e validação de weekday do Gemini', () => {
                 { dataISO: '2026-10-30', diaSemana: 'sexta-feira' },
             ],
         });
-        expect(horarioFuncionamentoRepository.listarTodos).not.toHaveBeenCalled();
+        expect(
+            horarioFuncionamentoRepository.listarTodos,
+        ).not.toHaveBeenCalled();
         expect(agendamentoRepository.listarTodos).not.toHaveBeenCalled();
         expect(bloqueioRepository.listarTodos).not.toHaveBeenCalled();
     });
 
     it('aceita dia consistente e campo omitido; rejeita enum inválido', async () => {
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm1', {
-                nomeCliente: 'João Silva',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-                diaDaSemana: 'sabado',
-            }, ['João Silva']),
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm1',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                    diaDaSemana: 'sabado',
+                },
+                ['João Silva'],
+            ),
         ).resolves.toMatchObject({ sucesso: true });
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm2', {
-                nomeCliente: 'João Silva',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-            }, ['João Silva']),
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm2',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                },
+                ['João Silva'],
+            ),
         ).resolves.toMatchObject({ sucesso: true });
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm3', {
-                nomeCliente: 'João Silva',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-                diaDaSemana: 'sabadoX',
-            }, ['João Silva']),
-        ).resolves.toMatchObject({ sucesso: false, mensagem: expect.stringContaining('diaDaSemana inválido') });
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm3',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                    diaDaSemana: 'sabadoX',
+                },
+                ['João Silva'],
+            ),
+        ).resolves.toMatchObject({
+            sucesso: false,
+            mensagem: expect.stringContaining('diaDaSemana inválido'),
+        });
     });
 
     it('inclui weekday em resumo, confirmação e consulta', async () => {
@@ -375,49 +397,73 @@ describe('calendário e validação de weekday do Gemini', () => {
             dataHoraInicio: serviceDate,
         };
 
-        await __testables.prepararAgendamentoTool(
-            phone,
-            'success',
-            validArgs,
-            ['Nome Privado'],
-        );
+        await __testables.prepararAgendamentoTool(phone, 'success', validArgs, [
+            'Nome Privado',
+        ]);
         expect(info).toHaveBeenCalledOnce();
         expect(info.mock.calls[0][1]).toEqual({
             tool: 'prepararAgendamento',
             motivo: 'rascunho_salvo',
         });
 
+        await __testables.prepararAgendamentoTool(phone, null, validArgs, [
+            'Nome Privado',
+        ]);
         await __testables.prepararAgendamentoTool(
             phone,
-            null,
-            validArgs,
+            'bad-name',
+            {
+                ...validArgs,
+                nomeCliente: ' ',
+            },
             ['Nome Privado'],
         );
-        await __testables.prepararAgendamentoTool(phone, 'bad-name', {
-            ...validArgs,
-            nomeCliente: ' ',
-        }, ['Nome Privado']);
-        await __testables.prepararAgendamentoTool(phone, 'long-name', {
-            ...validArgs,
-            nomeCliente: 'N'.repeat(121),
-        }, ['N'.repeat(121)]);
-        await __testables.prepararAgendamentoTool(phone, 'bad-phone', {
-            ...validArgs,
-            telefone: '123',
-        }, ['Nome Privado']);
-        await __testables.prepararAgendamentoTool(phone, 'bad-day', {
-            ...validArgs,
-            diaDaSemana: 'invalid',
-        }, ['Nome Privado']);
-        await __testables.prepararAgendamentoTool(phone, 'divergent-day', {
-            ...validArgs,
-            dataHoraInicio: '2026-10-16T15:00:00-03:00',
-            diaDaSemana: 'sabado',
-        }, ['Nome Privado']);
-        await __testables.prepararAgendamentoTool(phone, 'missing-service', {
-            ...validArgs,
-            servicoId: 'servico-inexistente',
-        }, ['Nome Privado']);
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'long-name',
+            {
+                ...validArgs,
+                nomeCliente: 'N'.repeat(121),
+            },
+            ['N'.repeat(121)],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'bad-phone',
+            {
+                ...validArgs,
+                telefone: '123',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'bad-day',
+            {
+                ...validArgs,
+                diaDaSemana: 'invalid',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'divergent-day',
+            {
+                ...validArgs,
+                dataHoraInicio: '2026-10-16T15:00:00-03:00',
+                diaDaSemana: 'sabado',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'missing-service',
+            {
+                ...validArgs,
+                servicoId: 'servico-inexistente',
+            },
+            ['Nome Privado'],
+        );
         mocks.validarDisponibilidade.mockRejectedValueOnce(
             Object.assign(new Error('Horário 2026-10-17T15:00 indisponível'), {
                 status: 422,
@@ -439,7 +485,9 @@ describe('calendário e validação de weekday do Gemini', () => {
         expect(info).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledTimes(8);
         expect(
-            warn.mock.calls.map(([, fields]) => (fields as { motivo: string }).motivo),
+            warn.mock.calls.map(
+                ([, fields]) => (fields as { motivo: string }).motivo,
+            ),
         ).toEqual([
             'sem_message_id',
             'nome_invalido',
@@ -452,7 +500,8 @@ describe('calendário e validação de weekday do Gemini', () => {
         ]);
         expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
             status: 422,
-            mensagem: 'Horário [mascarado]-[mascarado]-[mascarado]T[mascarado]:[mascarado] indisponível',
+            mensagem:
+                'Horário [mascarado]-[mascarado]-[mascarado]T[mascarado]:[mascarado] indisponível',
         });
     });
 });

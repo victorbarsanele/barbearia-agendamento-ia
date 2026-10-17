@@ -283,21 +283,17 @@ beforeEach(() => {
     });
     mocks.createBooking.mockResolvedValue(booking);
     mocks.sendWhatsAppText.mockResolvedValue(undefined);
-    escalationRepository.obter = vi
-        .fn()
-        .mockResolvedValue({
-            estado: EstadoEscalonamento.BOT,
-            escaladoEm: null,
-        });
+    escalationRepository.obter = vi.fn().mockResolvedValue({
+        estado: EstadoEscalonamento.BOT,
+        escaladoEm: null,
+    });
     escalationRepository.escalar = vi
         .fn()
         .mockResolvedValue({ novaEscalada: true, estado: {} });
-    escalationRepository.reivindicarAviso = vi
-        .fn()
-        .mockResolvedValue({
-            reivindicado: false,
-            reivindicadoEm: currentTime,
-        });
+    escalationRepository.reivindicarAviso = vi.fn().mockResolvedValue({
+        reivindicado: false,
+        reivindicadoEm: currentTime,
+    });
     escalationRepository.registrarRespostaHumana = vi
         .fn()
         .mockResolvedValue({});

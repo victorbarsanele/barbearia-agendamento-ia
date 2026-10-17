@@ -234,12 +234,9 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
 
     it('falha fechado sem messageId', async () => {
         await expect(
-            __testables.prepararAgendamentoTool(
-                phone,
-                null,
-                messageBase,
-                ['João Silva'],
-            ),
+            __testables.prepararAgendamentoTool(phone, null, messageBase, [
+                'João Silva',
+            ]),
         ).resolves.toMatchObject({ sucesso: false });
         await expect(
             __testables.confirmarAgendamentoTool(phone, null),

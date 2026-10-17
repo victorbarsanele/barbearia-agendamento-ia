@@ -50,9 +50,9 @@ describe('nomeClienteInformadoPeloCliente', () => {
     });
 
     it('rejeita palavra nunca dita pelo cliente', () => {
-        expect(
-            nomeClienteInformadoPeloCliente('Léo Almeida', ['oi léo']),
-        ).toBe(false);
+        expect(nomeClienteInformadoPeloCliente('Léo Almeida', ['oi léo'])).toBe(
+            false,
+        );
     });
 
     it.each([[], null, undefined])(

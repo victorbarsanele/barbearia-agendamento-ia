@@ -104,15 +104,13 @@ describe('regressão de timezone na confirmação', () => {
         );
         expect(preparado.sucesso).toBe(true);
 
-        const criar = vi
-            .spyOn(agendamentoService, 'criar')
-            .mockResolvedValue({
-                id: 'agendamento-1',
-                cliente: { nome: 'Cliente' },
-                servico: { nome: 'Corte' },
-                dataHoraInicio: new Date('2026-10-24T18:00:00.000Z'),
-                status: 'AGENDADO',
-            } as never);
+        const criar = vi.spyOn(agendamentoService, 'criar').mockResolvedValue({
+            id: 'agendamento-1',
+            cliente: { nome: 'Cliente' },
+            servico: { nome: 'Corte' },
+            dataHoraInicio: new Date('2026-10-24T18:00:00.000Z'),
+            status: 'AGENDADO',
+        } as never);
 
         const confirmado = await __testables.confirmarAgendamentoTool(
             '5511999999999',

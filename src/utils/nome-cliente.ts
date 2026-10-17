@@ -36,12 +36,12 @@ function normalizarPalavra(value: string): string {
 }
 
 function extrairPalavras(value: string): string[] {
-    return (
-        normalizarPalavra(value).match(/[\p{L}]+(?:['-][\p{L}]+)*/gu) ?? []
-    );
+    return normalizarPalavra(value).match(/[\p{L}]+(?:['-][\p{L}]+)*/gu) ?? [];
 }
 
-export function validarNomeCliente(value: unknown): ResultadoValidacaoNomeCliente {
+export function validarNomeCliente(
+    value: unknown,
+): ResultadoValidacaoNomeCliente {
     if (typeof value !== 'string') {
         return { ok: false, motivo: 'nome_nao_informado' };
     }
