@@ -105,6 +105,7 @@ describe('resolver servicoId do Gemini', () => {
                     servicoId,
                     dataHoraInicio: '2026-10-17T15:00:00-03:00',
                 },
+                ['Cliente Teste'],
             );
             results.push(result.sucesso);
             expect(result.sucesso).toBe(esperado);
@@ -147,6 +148,7 @@ describe('resolver servicoId do Gemini', () => {
                 servicoId: 'Corte social, degradê ou tesoura',
                 dataHoraInicio: '2026-10-17T15:00:00-03:00',
             },
+            ['Cliente Teste'],
         );
 
         expect(result).toMatchObject({

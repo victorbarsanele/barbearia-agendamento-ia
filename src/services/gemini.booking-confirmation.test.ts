@@ -63,7 +63,7 @@ import {
 
 const phone = '5511999999999';
 const draft = {
-    nomeCliente: 'Cliente',
+    nomeCliente: 'João Silva',
     telefone: phone,
     servicoId: 'servico-1',
     dataHoraInicio: '2026-07-22T11:00:00',
@@ -101,7 +101,12 @@ beforeEach(() => {
 });
 
 async function prepare(messageId: string, values = draft) {
-    return __testables.prepararAgendamentoTool(phone, messageId, values);
+    return __testables.prepararAgendamentoTool(
+        phone,
+        messageId,
+        values,
+        ['João Silva'],
+    );
 }
 
 describe('confirmação de agendamento', () => {
@@ -165,7 +170,7 @@ describe('confirmação de agendamento', () => {
         __testables.setPendingAgendamentoRepository(repository);
         await repository.salvar({
             telefoneSessao: phone,
-            nomeCliente: 'Cliente',
+            nomeCliente: 'João Silva',
             telefoneCliente: phone,
             servicoId: 'servico-1',
             dataHoraInicio: new Date('2026-07-22T14:00:00Z'),

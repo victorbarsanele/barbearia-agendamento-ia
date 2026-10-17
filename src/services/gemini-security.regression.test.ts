@@ -270,10 +270,11 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             TELEFONE_SESSAO_REAL,
             'prepare-previous',
             {
-                nomeCliente: 'Cliente',
+                nomeCliente: 'João Silva',
                 servicoId: SERVICO_ALVO.id,
                 dataHoraInicio: '2026-07-28T11:00:00',
             },
+            ['João Silva'],
         );
         geminiMocks.generateContent.mockResolvedValue({
             functionCalls: [],
@@ -341,7 +342,7 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             {
                 name: 'prepararAgendamento',
                 args: {
-                    nomeCliente: 'Cliente',
+                    nomeCliente: 'João Silva',
                     telefone: '551198765432',
                     servicoId: SERVICO_ALVO.id,
                     dataHoraInicio: '2026-07-28T11:00:00',
@@ -351,6 +352,7 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             TELEFONE_SESSAO_REAL,
             REMOTE_JID_SESSAO_REAL,
             'prepare-1',
+            ['João Silva'],
         );
         expect(prepared).toMatchObject({ sucesso: false });
         expect(agendamentoService.criar).not.toHaveBeenCalled();
@@ -361,10 +363,11 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
             TELEFONE_SESSAO_REAL,
             'prepare-1',
             {
-                nomeCliente: 'Cliente',
+                nomeCliente: 'João Silva',
                 servicoId: SERVICO_ALVO.id,
                 dataHoraInicio: '2026-07-28T11:00:00',
             },
+            ['João Silva'],
         );
         const result = await __testables.executeToolCall(
             {

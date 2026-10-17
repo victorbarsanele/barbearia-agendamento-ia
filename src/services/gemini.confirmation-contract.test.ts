@@ -78,7 +78,7 @@ import { __testables, processarMensagemWhatsapp } from './gemini.service';
 const phone = '5511999999999';
 const messageId = 'message-current';
 const draftValues = {
-    nomeCliente: 'Cliente',
+    nomeCliente: 'João Silva',
     telefoneCliente: phone,
     servicoId: 'servico-1',
     dataHoraInicio: new Date('2026-10-20T16:00:00.000Z'),
@@ -91,7 +91,7 @@ const booking = {
     status: 'AGENDADO',
 };
 const preparationArgs = {
-    nomeCliente: 'Cliente',
+    nomeCliente: 'João Silva',
     servicoId: 'servico-1',
     dataHoraInicio: '2026-10-20T13:00:00-03:00',
 };
@@ -425,6 +425,7 @@ describe('contrato de confirmarAgendamento', () => {
                 phone,
                 'message-prepared',
                 preparationArgs,
+                ['João Silva'],
             ),
         ).resolves.toMatchObject({ sucesso: true });
         expect(confirmationStore.obterValido(phone)).toBeNull();
