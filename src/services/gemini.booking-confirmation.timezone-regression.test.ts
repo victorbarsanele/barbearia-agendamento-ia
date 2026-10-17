@@ -96,22 +96,21 @@ describe('regressão de timezone na confirmação', () => {
             '5511999999999',
             'prepare-1',
             {
-                nomeCliente: 'Cliente',
+                nomeCliente: 'João Silva',
                 servicoId: 'servico-1',
                 dataHoraInicio: '2026-10-24T15:00:00-03:00',
             },
+            ['João Silva'],
         );
         expect(preparado.sucesso).toBe(true);
 
-        const criar = vi
-            .spyOn(agendamentoService, 'criar')
-            .mockResolvedValue({
-                id: 'agendamento-1',
-                cliente: { nome: 'Cliente' },
-                servico: { nome: 'Corte' },
-                dataHoraInicio: new Date('2026-10-24T18:00:00.000Z'),
-                status: 'AGENDADO',
-            } as never);
+        const criar = vi.spyOn(agendamentoService, 'criar').mockResolvedValue({
+            id: 'agendamento-1',
+            cliente: { nome: 'Cliente' },
+            servico: { nome: 'Corte' },
+            dataHoraInicio: new Date('2026-10-24T18:00:00.000Z'),
+            status: 'AGENDADO',
+        } as never);
 
         const confirmado = await __testables.confirmarAgendamentoTool(
             '5511999999999',
@@ -159,10 +158,11 @@ describe('regressão de timezone na confirmação', () => {
             '5511999999999',
             'prepare-utc',
             {
-                nomeCliente: 'Cliente',
+                nomeCliente: 'João Silva',
                 servicoId: 'servico-1',
                 dataHoraInicio: '2026-10-24T15:00:00Z',
             },
+            ['João Silva'],
         );
 
         expect(result.resumo).toContain('24/10/2026, 15:00');
@@ -175,10 +175,11 @@ describe('regressão de timezone na confirmação', () => {
             '5511999999999',
             'prepare-rule',
             {
-                nomeCliente: 'Cliente',
+                nomeCliente: 'João Silva',
                 servicoId: 'servico-1',
                 dataHoraInicio: '2026-10-24T15:00:00-03:00',
             },
+            ['João Silva'],
         );
         vi.spyOn(agendamentoService, 'criar').mockRejectedValue(
             new AppError('Falha para cliente 5511999999999 em 20261024.', 422),

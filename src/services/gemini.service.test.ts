@@ -174,6 +174,7 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
             phone,
             'message-1',
             messageBase,
+            ['João Silva'],
         );
 
         expect(prepared.sucesso).toBe(true);
@@ -193,6 +194,7 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
             phone,
             'message-1',
             messageBase,
+            ['João Silva'],
         );
 
         const confirmed = await __testables.confirmarAgendamentoTool(
@@ -214,6 +216,7 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
             phone,
             'message-1',
             messageBase,
+            ['João Silva'],
         );
         expect(defaultPhone.resumo).toContain('(11) 99999-9999');
 
@@ -221,6 +224,7 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
             phone,
             'message-2',
             { ...messageBase, telefone: '551198765432' },
+            ['João Silva'],
         );
         expect(invalidPhone).toMatchObject({
             sucesso: false,
@@ -230,7 +234,9 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
 
     it('falha fechado sem messageId', async () => {
         await expect(
-            __testables.prepararAgendamentoTool(phone, null, messageBase),
+            __testables.prepararAgendamentoTool(phone, null, messageBase, [
+                'João Silva',
+            ]),
         ).resolves.toMatchObject({ sucesso: false });
         await expect(
             __testables.confirmarAgendamentoTool(phone, null),

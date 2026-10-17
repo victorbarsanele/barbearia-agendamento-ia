@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     createBooking: vi.fn(),
     validateAvailability: vi.fn(),
     findClient: vi.fn(),
+    listClients: vi.fn(),
     listServices: vi.fn(),
     generateContent: vi.fn(),
     sendWhatsAppText: vi.fn(),
@@ -29,7 +30,7 @@ vi.mock('../repositories/bloqueio.repository', () => ({
 }));
 vi.mock('../repositories/cliente.repository', () => ({
     buscarPorTelefone: mocks.findClient,
-    listarTodos: vi.fn().mockResolvedValue([]),
+    listarTodos: mocks.listClients,
     criar: vi.fn().mockResolvedValue({
         id: 'cliente-1',
         nome: 'Cliente',
@@ -92,9 +93,9 @@ import { processarMensagemRecebida } from './whatsapp-incoming-message.service';
 const phone = '5511999999999';
 const creationId = 'message-created';
 const summary =
-    'Resumo: Corte, terça-feira, 20/10/2026, nome Cliente. Está tudo certo?';
+    'Resumo: Corte, terça-feira, 20/10/2026, nome João Silva. Está tudo certo?';
 const draftValues = {
-    nomeCliente: 'Cliente',
+    nomeCliente: 'João Silva',
     telefoneCliente: phone,
     servicoId: 'servico-1',
     dataHoraInicio: new Date('2026-10-20T16:00:00.000Z'),
@@ -300,6 +301,37 @@ describe('gemini confirmation fast path', () => {
         expect(historyTextsFromGeminiRequest()).toContain(
             'Agendamento confirmado: Corte, terça-feira, 20/10/2026, 13:00.',
         );
+    });
+
+    it('usa mensagem atual como evidência de nome durante Function Calling', async () => {
+        mocks.findClient.mockResolvedValue(null);
+        mocks.listClients.mockResolvedValue([]);
+        mocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'prepararAgendamento',
+                        id: 'prepare-name',
+                        args: {
+                            nomeCliente: 'João Silva',
+                            servicoId: 'servico-1',
+                            dataHoraInicio: '2026-10-20T15:00:00-03:00',
+                        },
+                    },
+                ],
+                candidates: [{ content: { parts: [] } }],
+            })
+            .mockResolvedValueOnce({ text: summary });
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Meu nome é João Silva',
+            'message-current-name',
+        );
+
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({ nomeCliente: 'João Silva' });
     });
 
     it('responde já confirmado a segundo sim com outro messageId', async () => {

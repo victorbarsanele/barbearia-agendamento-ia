@@ -77,7 +77,7 @@ const service = {
     permiteExtensaoFechamento: false,
 };
 const draftValues = {
-    nomeCliente: 'Cliente Teste',
+    nomeCliente: 'João Silva',
     telefoneCliente: phone,
     servicoId: service.id,
     dataHoraInicio: new Date('2026-10-17T18:00:00.000Z'),
@@ -246,7 +246,7 @@ describe('gemini pending context', () => {
             'Rascunho pendente aguardando confirmação do cliente:',
         );
         expect(prompt).toContain('servicoId=service-cut');
-        expect(prompt).toContain('nome=Cliente Teste');
+        expect(prompt).toContain('nome=João Silva');
         expect(prompt).toContain(
             'o telefone do rascunho é o número deste WhatsApp',
         );
@@ -302,6 +302,7 @@ describe('gemini pending context', () => {
                 servicoId: service.id,
                 dataHoraInicio: '2026-10-17T15:00:00-03:00',
             },
+            ['João Silva'],
         );
         expect(prepared.sucesso).toBe(true);
         await sendAmbiguousTurn();
@@ -392,6 +393,7 @@ describe('gemini pending context', () => {
                 servicoId: invalidServiceArg,
                 dataHoraInicio: '2026-10-17T15:00:00-03:00',
             },
+            ['Cliente Teste'],
         );
 
         expect(result).toMatchObject({

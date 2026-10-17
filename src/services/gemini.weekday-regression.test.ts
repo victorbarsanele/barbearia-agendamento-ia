@@ -130,6 +130,90 @@ afterEach(() => {
 });
 
 describe('calendário e validação de weekday do Gemini', () => {
+    it('rejeita placeholder sem salvar rascunho, resumo ou PII em logs', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'placeholder-name',
+            {
+                nomeCliente: 'Cliente',
+                servicoId: service.id,
+                dataHoraInicio: serviceDate,
+            },
+            ['Meu nome é João Silva'],
+        );
+
+        expect(result).toMatchObject({
+            sucesso: false,
+            mensagem: expect.stringContaining(
+                'Pergunte o nome completo ao cliente e aguarde a resposta',
+            ),
+        });
+        expect(result.resumo).toBeUndefined();
+        await expect(
+            pendingRepository.obterValido(phone, new Date()),
+        ).resolves.toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+            '[GEMINI TOOL] prepararAgendamento nome_invalido',
+            { tool: 'prepararAgendamento', motivo: 'nome_invalido' },
+        );
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('Cliente');
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(phone);
+    });
+
+    it('salva nome completo quando origem aparece em mensagens do cliente', async () => {
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'verified-name',
+            {
+                nomeCliente: 'João Silva',
+                servicoId: service.id,
+                dataHoraInicio: serviceDate,
+            },
+            ['me chamo JOAO', 'SILVA'],
+        );
+
+        expect(result.sucesso).toBe(true);
+        expect(result.resumo).toContain('nome João Silva');
+        await expect(
+            pendingRepository.obterValido(phone, new Date()),
+        ).resolves.toMatchObject({ nomeCliente: 'João Silva' });
+    });
+
+    it('usa nome armazenado de Cliente existente sem validar nome do modelo', async () => {
+        mocks.buscarCliente.mockResolvedValue({
+            id: 'cliente-existente',
+            nome: 'Maria da Conceição',
+            telefone: phone,
+        });
+
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'existing-client-name',
+            {
+                nomeCliente: 'Cliente',
+                servicoId: service.id,
+                dataHoraInicio: serviceDate,
+            },
+            [],
+        );
+
+        expect(result.sucesso).toBe(true);
+        expect(result.resumo).toContain('nome Maria da Conceição');
+        await expect(
+            pendingRepository.obterValido(phone, new Date()),
+        ).resolves.toMatchObject({ nomeCliente: 'Maria da Conceição' });
+        expect(mocks.criarCliente).not.toHaveBeenCalled();
+        expect(mocks.validarDisponibilidade).toHaveBeenLastCalledWith(
+            serviceDate,
+            service.duracaoMinutos,
+            service.permiteExtensaoFechamento,
+            false,
+            'GEMINI',
+            'cliente-existente',
+        );
+    });
+
     it('gera calendário de 21 dias correto em Brasília', () => {
         const prompt = __testables.buildSystemPrompt();
         for (const line of [
@@ -174,6 +258,7 @@ describe('calendário e validação de weekday do Gemini', () => {
                     dataHoraInicio: `${date}T15:00:00-03:00`,
                     diaDaSemana: weekday,
                 },
+                [],
             );
 
             expect(result).toMatchObject({
@@ -194,7 +279,9 @@ describe('calendário e validação de weekday do Gemini', () => {
             });
             expect(mocks.listarServicos).not.toHaveBeenCalled();
             expect(mocks.buscarCliente).not.toHaveBeenCalled();
-            expect(agendamentoService.validarDisponibilidade).not.toHaveBeenCalled();
+            expect(
+                agendamentoService.validarDisponibilidade,
+            ).not.toHaveBeenCalled();
             expect(agendamentoService.criar).not.toHaveBeenCalled();
             await expect(
                 pendingRepository.consumir(phone, 'confirm-1', new Date()),
@@ -215,35 +302,55 @@ describe('calendário e validação de weekday do Gemini', () => {
                 { dataISO: '2026-10-30', diaSemana: 'sexta-feira' },
             ],
         });
-        expect(horarioFuncionamentoRepository.listarTodos).not.toHaveBeenCalled();
+        expect(
+            horarioFuncionamentoRepository.listarTodos,
+        ).not.toHaveBeenCalled();
         expect(agendamentoRepository.listarTodos).not.toHaveBeenCalled();
         expect(bloqueioRepository.listarTodos).not.toHaveBeenCalled();
     });
 
     it('aceita dia consistente e campo omitido; rejeita enum inválido', async () => {
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm1', {
-                nomeCliente: 'Nome',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-                diaDaSemana: 'sabado',
-            }),
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm1',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                    diaDaSemana: 'sabado',
+                },
+                ['João Silva'],
+            ),
         ).resolves.toMatchObject({ sucesso: true });
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm2', {
-                nomeCliente: 'Nome',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-            }),
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm2',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                },
+                ['João Silva'],
+            ),
         ).resolves.toMatchObject({ sucesso: true });
         await expect(
-            __testables.prepararAgendamentoTool(phone, 'm3', {
-                nomeCliente: 'Nome',
-                servicoId: service.id,
-                dataHoraInicio: serviceDate,
-                diaDaSemana: 'sabadoX',
-            }),
-        ).resolves.toMatchObject({ sucesso: false, mensagem: expect.stringContaining('diaDaSemana inválido') });
+            __testables.prepararAgendamentoTool(
+                phone,
+                'm3',
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: service.id,
+                    dataHoraInicio: serviceDate,
+                    diaDaSemana: 'sabadoX',
+                },
+                ['João Silva'],
+            ),
+        ).resolves.toMatchObject({
+            sucesso: false,
+            mensagem: expect.stringContaining('diaDaSemana inválido'),
+        });
     });
 
     it('inclui weekday em resumo, confirmação e consulta', async () => {
@@ -251,10 +358,11 @@ describe('calendário e validação de weekday do Gemini', () => {
             phone,
             'prepare',
             {
-                nomeCliente: 'Nome',
+                nomeCliente: 'João Silva',
                 servicoId: service.id,
                 dataHoraInicio: serviceDate,
             },
+            ['João Silva'],
         );
         expect(prepared.resumo).toContain('sábado, 17/10/2026, 15:00');
         const confirmed = await __testables.confirmarAgendamentoTool(
@@ -289,45 +397,84 @@ describe('calendário e validação de weekday do Gemini', () => {
             dataHoraInicio: serviceDate,
         };
 
-        await __testables.prepararAgendamentoTool(phone, 'success', validArgs);
+        await __testables.prepararAgendamentoTool(phone, 'success', validArgs, [
+            'Nome Privado',
+        ]);
         expect(info).toHaveBeenCalledOnce();
         expect(info.mock.calls[0][1]).toEqual({
             tool: 'prepararAgendamento',
             motivo: 'rascunho_salvo',
         });
 
-        await __testables.prepararAgendamentoTool(phone, null, validArgs);
-        await __testables.prepararAgendamentoTool(phone, 'bad-name', {
-            ...validArgs,
-            nomeCliente: ' ',
-        });
-        await __testables.prepararAgendamentoTool(phone, 'long-name', {
-            ...validArgs,
-            nomeCliente: 'N'.repeat(121),
-        });
-        await __testables.prepararAgendamentoTool(phone, 'bad-phone', {
-            ...validArgs,
-            telefone: '123',
-        });
-        await __testables.prepararAgendamentoTool(phone, 'bad-day', {
-            ...validArgs,
-            diaDaSemana: 'invalid',
-        });
-        await __testables.prepararAgendamentoTool(phone, 'divergent-day', {
-            ...validArgs,
-            dataHoraInicio: '2026-10-16T15:00:00-03:00',
-            diaDaSemana: 'sabado',
-        });
-        await __testables.prepararAgendamentoTool(phone, 'missing-service', {
-            ...validArgs,
-            servicoId: 'servico-inexistente',
-        });
+        await __testables.prepararAgendamentoTool(phone, null, validArgs, [
+            'Nome Privado',
+        ]);
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'bad-name',
+            {
+                ...validArgs,
+                nomeCliente: ' ',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'long-name',
+            {
+                ...validArgs,
+                nomeCliente: 'N'.repeat(121),
+            },
+            ['N'.repeat(121)],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'bad-phone',
+            {
+                ...validArgs,
+                telefone: '123',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'bad-day',
+            {
+                ...validArgs,
+                diaDaSemana: 'invalid',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'divergent-day',
+            {
+                ...validArgs,
+                dataHoraInicio: '2026-10-16T15:00:00-03:00',
+                diaDaSemana: 'sabado',
+            },
+            ['Nome Privado'],
+        );
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'missing-service',
+            {
+                ...validArgs,
+                servicoId: 'servico-inexistente',
+            },
+            ['Nome Privado'],
+        );
         mocks.validarDisponibilidade.mockRejectedValueOnce(
             Object.assign(new Error('Horário 2026-10-17T15:00 indisponível'), {
                 status: 422,
             }),
         );
-        await __testables.prepararAgendamentoTool(phone, 'rejected-time', validArgs);
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'rejected-time',
+            validArgs,
+            ['Nome Privado'],
+        );
 
         const logged = [...info.mock.calls, ...warn.mock.calls];
         for (const [, fields] of logged) {
@@ -338,7 +485,9 @@ describe('calendário e validação de weekday do Gemini', () => {
         expect(info).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledTimes(8);
         expect(
-            warn.mock.calls.map(([, fields]) => (fields as { motivo: string }).motivo),
+            warn.mock.calls.map(
+                ([, fields]) => (fields as { motivo: string }).motivo,
+            ),
         ).toEqual([
             'sem_message_id',
             'nome_invalido',
@@ -351,7 +500,8 @@ describe('calendário e validação de weekday do Gemini', () => {
         ]);
         expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
             status: 422,
-            mensagem: 'Horário [mascarado]-[mascarado]-[mascarado]T[mascarado]:[mascarado] indisponível',
+            mensagem:
+                'Horário [mascarado]-[mascarado]-[mascarado]T[mascarado]:[mascarado] indisponível',
         });
     });
 });
