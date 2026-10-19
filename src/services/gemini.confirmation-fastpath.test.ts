@@ -303,6 +303,25 @@ describe('gemini confirmation fast path', () => {
         );
     });
 
+    it('não mantém cuid da resposta do modelo no histórico', async () => {
+        const internalId = 'c123456789012345678901234';
+        mocks.generateContent
+            .mockResolvedValueOnce({
+                text: `Corte (${internalId}) disponível.`,
+            })
+            .mockResolvedValueOnce({ text: 'Resposta seguinte.' });
+
+        await processarMensagemWhatsapp(phone, 'Tenho horário?', 'message-id');
+        await processarMensagemWhatsapp(phone, 'Qual serviço?', 'message-next');
+
+        const secondRequest = mocks.generateContent.mock.calls[1]?.[0] as {
+            contents: Array<{ parts?: Array<{ text?: string }> }>;
+        };
+        const history = JSON.stringify(secondRequest.contents);
+        expect(history).toContain('Corte disponível.');
+        expect(history).not.toContain(internalId);
+    });
+
     it('usa mensagem atual como evidência de nome durante Function Calling', async () => {
         mocks.findClient.mockResolvedValue(null);
         mocks.listClients.mockResolvedValue([]);

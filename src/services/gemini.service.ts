@@ -14,6 +14,7 @@ import {
     somarDiasAChaveData,
     type DiaDaSemana,
 } from '../utils/dia-semana';
+import { removerIdsInternos } from '../utils/internal-id-filter';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import { isViolacaoDeSobreposicao } from '../repositories/agendamento.repository';
@@ -226,6 +227,7 @@ const BASE_SYSTEM_PROMPT = [
     'Use sempre o campo "id" retornado por buscarServicos como servicoId, copiado exatamente como veio, sem abreviar, sem usar o nome do serviço como se fosse o id.',
     'Se não tiver certeza absoluta do id do serviço no momento de chamar prepararAgendamento ou atualizarAgendamento, chame buscarServicos novamente antes de prosseguir, mesmo que já tenha chamado antes na conversa.',
     'Nunca revele ao cliente qualquer identificador interno do sistema (servicoId, clienteId, agendamentoId ou qualquer código técnico). Se um agendamento falhar, explique o motivo em linguagem natural e peça para o cliente confirmar novamente o nome do serviço desejado, sem mencionar nenhum código.',
+    'Ao falar de serviços com o cliente, identifique-os pelo nome; a duração e o preço retornados por buscarServicos podem ser informados quando úteis. IDs e códigos internos (cuid) só podem aparecer nos parâmetros de tools, nunca em texto ao cliente, nem entre parênteses.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
     'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data ao cliente, diga dia da semana e dd/MM copiados da tabela ou do campo diaSemana das tools. Fora da tabela, use o número do dia informado pelo cliente.',
     'Se cliente citar dia da semana e número incompatíveis, não peça desculpas: informe divergência e pergunte qual quis dizer. Sempre que cliente citar dia da semana, preencha diaDaSemana nas tools exatamente como ele falou; nunca deduza pela data.',
@@ -1120,7 +1122,8 @@ export function addToHistory(
         return;
     }
 
-    addToHistoryByPhone(phone, role, text);
+    const historyText = role === 'model' ? removerIdsInternos(text).text : text;
+    addToHistoryByPhone(phone, role, historyText);
 }
 
 export async function obterEstadoEscalonamento(

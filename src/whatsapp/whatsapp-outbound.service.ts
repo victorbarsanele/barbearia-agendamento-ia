@@ -1,14 +1,28 @@
 import { normalizarTelefone } from '../utils/telefone';
+import { removerIdsInternos } from '../utils/internal-id-filter';
 import { getWhatsAppProvider } from './config';
 import { sendWhatsAppText as sendEvolutionText } from './evolution-outbound.adapter';
 import { sendYCloudText } from './ycloud-outbound.adapter';
+
+const EMPTY_SANITIZED_MESSAGE =
+    'Desculpe, não consegui responder agora. Pode repetir, por favor?';
 
 export async function sendWhatsAppText(
     recipient: string,
     text: string,
 ): Promise<void> {
+    const sanitized = removerIdsInternos(text);
+    if (sanitized.count > 0) {
+        console.info('[WHATSAPP] IDs internos removidos', {
+            quantidade: sanitized.count,
+        });
+    }
+    const outgoingText = sanitized.text.trim()
+        ? sanitized.text
+        : EMPTY_SANITIZED_MESSAGE;
+
     if (getWhatsAppProvider() === 'evolution') {
-        await sendEvolutionText(recipient, text);
+        await sendEvolutionText(recipient, outgoingText);
         return;
     }
 
@@ -23,5 +37,5 @@ export async function sendWhatsAppText(
         return;
     }
 
-    await sendYCloudText(phone, text);
+    await sendYCloudText(phone, outgoingText);
 }
