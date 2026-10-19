@@ -460,7 +460,7 @@ describe('limpeza central de estado de confirmação', () => {
     );
 });
 
-describe('ciclo de vida do resumo enviado pelo LLM', () => {
+describe('ciclo de vida do resumo enviado pelo backend', () => {
     it('registra resumo preparado quando resposta final o contém literalmente', async () => {
         await processTurnWithPreparation((resumo) => `Confira: ${resumo}`);
 
@@ -469,10 +469,15 @@ describe('ciclo de vida do resumo enviado pelo LLM', () => {
         });
     });
 
-    it('limpa resumo preparado quando resposta final não o contém', async () => {
+    it('mantém resumo preparado quando resposta final do Gemini não o contém', async () => {
         await processTurnWithPreparation(() => 'Seu horário está separado.');
 
-        expect(resumoStore.obterValido(phone)).toBeNull();
+        const resumo = resumoStore.obterValido(phone);
+        expect(resumo).toMatchObject({ mensagemCriacaoId: messageId });
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            resumo?.resumo,
+        );
     });
 
     it('renova resumo anterior quando turno sem preparação o repete literalmente', async () => {

@@ -227,9 +227,9 @@ const BASE_SYSTEM_PROMPT = [
     'Antes de sugerir horários, chame a função buscarServicos.',
     'Pergunte ao cliente seu nome completo e só prossiga ao resumo depois que ele informar; se não responder com o nome, pergunte novamente. Nunca invente nome nem use placeholder. Nunca pergunte telefone para usar o número do WhatsApp como padrão.',
     NEUTRAL_BARBER_IDENTITY_RULE,
-    'Chame prepararAgendamento, envie o resumo retornado literalmente e só chame confirmarAgendamento quando uma NOVA mensagem confirmar claramente o último resumo.',
+    'Ao chamar prepararAgendamento com sucesso, o backend enviará o resumo fixo ao cliente; não redija nem reformule esse resumo. Só chame confirmarAgendamento quando uma NOVA mensagem confirmar claramente o último resumo.',
     'Qualquer alteração exige nova chamada de prepararAgendamento. Nunca chame prepararAgendamento e confirmarAgendamento na mesma rodada.',
-    'Se o cliente fizer outra pergunta, responda e reapresente o último resumo. Se informar outro telefone, passe-o em telefone; nunca invente telefone.',
+    'Se o cliente fizer outra pergunta, responda diretamente sem alterar os dados do rascunho. Se informar outro telefone, passe-o em telefone; nunca invente telefone.',
     'Se a confirmação falhar por horário ocupado, repasse a mensagem da tool e aguarde o cliente escolher outro horário.',
     'Quando necessário, faça perguntas curtas para coletar dados faltantes.',
     'Ao pedir data ao cliente, nunca mencione formato técnico (ex.: YYYY-MM-DD); peça data de forma natural e converta internamente para usar as tools.',
@@ -370,7 +370,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'prepararAgendamento',
         description:
-            'Valida dados e grava um rascunho, mas nunca cria agendamento. Chame antes de enviar o resumo ao cliente.',
+            'Valida dados e grava um rascunho, mas nunca cria agendamento. Após sucesso, o backend envia o resumo fixo ao cliente; não redija nem reformule o resumo.',
         parametersJsonSchema: {
             type: 'object',
             properties: {
@@ -872,7 +872,7 @@ function formatInBrasilia(date: Date): string {
     }).format(date);
 }
 
-function formatarDataComDiaDaSemana(date: Date): string {
+function formatarDataComDiaDaSemana(date: Date, incluirHora = true): string {
     const parts = new Intl.DateTimeFormat('pt-BR', {
         timeZone: TIME_ZONE,
         day: '2-digit',
@@ -884,7 +884,8 @@ function formatarDataComDiaDaSemana(date: Date): string {
     }).formatToParts(date);
     const value = (type: Intl.DateTimeFormatPartTypes) =>
         parts.find((part) => part.type === type)?.value ?? '';
-    return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(date))}, ${value('day')}/${value('month')}/${value('year')}, ${value('hour')}:${value('minute')}`;
+    const data = `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(date))}, ${value('day')}/${value('month')}/${value('year')}`;
+    return incluirHora ? `${data}, ${value('hour')}:${value('minute')}` : data;
 }
 
 function toBrasiliaDate(date: Date): Date {
@@ -1820,20 +1821,18 @@ function construirResumoAgendamento(args: {
     telefoneCliente: string;
     telefoneSessao: string;
 }): string {
-    const usaTelefoneDoWhatsApp =
-        normalizePhone(args.telefoneCliente) ===
-        normalizePhone(args.telefoneSessao);
-    return `Resumo: ${args.servicoNome}, ${formatarDataComDiaDaSemana(args.dataHoraInicio)}, nome ${args.nomeCliente}, telefone ${formatarTelefoneResumo(args.telefoneCliente)}.${
-        usaTelefoneDoWhatsApp
-            ? ` Vou usar o número deste WhatsApp, ${formatarTelefoneResumo(args.telefoneCliente)}. Se preferir outro, é só me enviar.`
-            : ''
-    } Está tudo certo?`;
+    return `Resumo do seu agendamento:\n- Serviço: ${args.servicoNome}\n- Data: ${formatarDataComDiaDaSemana(args.dataHoraInicio, false)}, às ${formatInTimeZone(args.dataHoraInicio, TIME_ZONE, 'HH:mm')}\n- Nome: ${args.nomeCliente}\n- Telefone: ${formatarTelefoneResumo(args.telefoneCliente)}\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.`;
 }
+
+type ContextoRascunho = {
+    resumo: string;
+    contexto: string;
+};
 
 async function construirContextoRascunho(
     telefoneSessao: string,
     rascunho: PendingAgendamento,
-): Promise<string | undefined> {
+): Promise<ContextoRascunho | undefined> {
     const { servico } = await resolverServico(rascunho.servicoId);
     if (!servico) return undefined;
 
@@ -1850,7 +1849,10 @@ async function construirContextoRascunho(
             ? 'é o número deste WhatsApp'
             : 'é outro número informado pelo cliente';
 
-    return `Rascunho pendente aguardando confirmação do cliente: ${resumo} Dados do rascunho: servicoId=${servico.id}; nome=${rascunho.nomeCliente}; o telefone do rascunho ${telefoneDescricao}. Regras: se a mensagem do cliente confirmar claramente (ex.: sim, pode, isso), chame confirmarAgendamento (sem argumentos) e NÃO chame prepararAgendamento; se o cliente alterar algum dado, chame prepararAgendamento com os dados novos reaproveitando servicoId, nome e telefone do rascunho (não informe telefone quando o rascunho usa o número deste WhatsApp); se perguntar outra coisa, responda e reapresente o resumo EXATAMENTE como está acima.`;
+    return {
+        resumo,
+        contexto: `Rascunho pendente aguardando confirmação do cliente: ${resumo} Dados do rascunho: servicoId=${servico.id}; nome=${rascunho.nomeCliente}; o telefone do rascunho ${telefoneDescricao}. Regras: se a mensagem do cliente confirmar claramente (ex.: sim, pode, isso), chame confirmarAgendamento (sem argumentos) e NÃO chame prepararAgendamento; se o cliente alterar algum dado, chame prepararAgendamento com os dados novos reaproveitando servicoId, nome e telefone do rascunho (não informe telefone quando o rascunho usa o número deste WhatsApp); se perguntar outra coisa, responda diretamente sem reformular o resumo nem alterar os dados do rascunho.`,
+    };
 }
 
 function mensagemSemMessageId(): {
@@ -2891,6 +2893,12 @@ async function runGeminiFunctionCalling(
             };
         }
 
+        const preparacaoMaisRecente =
+            preparacoesBemSucedidas[preparacoesBemSucedidas.length - 1];
+        if (preparacaoMaisRecente?.resumo) {
+            finalText = preparacaoMaisRecente.resumo;
+        }
+
         if (!finalText) {
             const fallback =
                 'Desculpe, tive uma instabilidade agora. Pode repetir sua mensagem?';
@@ -2966,12 +2974,15 @@ export async function processarMensagemWhatsapp(
                 rascunhoNoInicio.mensagemCriacaoId !== messageId,
             );
             let contextoRascunho: string | undefined;
+            let resumoRascunho: string | undefined;
             if (confirmarDisponivel && rascunhoNoInicio) {
                 try {
-                    contextoRascunho = await construirContextoRascunho(
+                    const contexto = await construirContextoRascunho(
                         phone,
                         rascunhoNoInicio,
                     );
+                    contextoRascunho = contexto?.contexto;
+                    resumoRascunho = contexto?.resumo;
                 } catch (error) {
                     console.warn(
                         '[GEMINI SERVICE] Falha ao montar contexto de rascunho',
@@ -2988,6 +2999,22 @@ export async function processarMensagemWhatsapp(
                 rascunhoNoInicio,
             );
             if (atalhoUsado) {
+                return;
+            }
+
+            if (
+                rascunhoNoInicio &&
+                resumoRascunho &&
+                texto.trim().length > 0 &&
+                !/[\p{L}\p{N}]/u.test(texto)
+            ) {
+                atualizarMarcadorResumoEnviado(phone, resumoRascunho, [
+                    {
+                        mensagemCriacaoId: rascunhoNoInicio.mensagemCriacaoId,
+                        resumo: resumoRascunho,
+                    },
+                ]);
+                await responderAtalho(remoteJid, phone, texto, resumoRascunho);
                 return;
             }
 

@@ -174,7 +174,7 @@ describe('calendário e validação de weekday do Gemini', () => {
         );
 
         expect(result.sucesso).toBe(true);
-        expect(result.resumo).toContain('nome João Silva');
+        expect(result.resumo).toContain('Nome: João Silva');
         await expect(
             pendingRepository.obterValido(phone, new Date()),
         ).resolves.toMatchObject({ nomeCliente: 'João Silva' });
@@ -199,7 +199,7 @@ describe('calendário e validação de weekday do Gemini', () => {
         );
 
         expect(result.sucesso).toBe(true);
-        expect(result.resumo).toContain('nome Maria da Conceição');
+        expect(result.resumo).toContain('Nome: Maria da Conceição');
         await expect(
             pendingRepository.obterValido(phone, new Date()),
         ).resolves.toMatchObject({ nomeCliente: 'Maria da Conceição' });
@@ -444,7 +444,7 @@ describe('calendário e validação de weekday do Gemini', () => {
             },
             ['João Silva'],
         );
-        expect(prepared.resumo).toContain('sábado, 17/10/2026, 15:00');
+        expect(prepared.resumo).toContain('sábado, 17/10/2026, às 15:00');
         const confirmed = await __testables.confirmarAgendamentoTool(
             phone,
             'confirm',

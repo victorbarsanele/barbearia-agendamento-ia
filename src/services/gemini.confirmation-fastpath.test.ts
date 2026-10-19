@@ -93,7 +93,7 @@ import { processarMensagemRecebida } from './whatsapp-incoming-message.service';
 const phone = '5511999999999';
 const creationId = 'message-created';
 const summary =
-    'Resumo: Corte, terça-feira, 20/10/2026, nome João Silva. Está tudo certo?';
+    'Resumo do seu agendamento:\n- Serviço: Corte\n- Data: terça-feira, 20/10/2026, às 13:00\n- Nome: João Silva\n- Telefone: (11) 99999-9999\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.';
 const draftValues = {
     nomeCliente: 'João Silva',
     telefoneCliente: phone,
@@ -207,8 +207,8 @@ function makeIncomingMessage(
     };
 }
 
-function historyTextsFromGeminiRequest(): string[] {
-    const request = mocks.generateContent.mock.calls[0]?.[0] as
+function historyTextsFromGeminiRequest(requestIndex = 0): string[] {
+    const request = mocks.generateContent.mock.calls[requestIndex]?.[0] as
         | { contents?: Array<{ parts?: Array<{ text?: string }> }> }
         | undefined;
     return (request?.contents ?? [])
@@ -280,6 +280,99 @@ afterEach(() => {
 });
 
 describe('gemini confirmation fast path', () => {
+    it('envia resumo do backend após prepararAgendamento, não texto do Gemini', async () => {
+        mocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'prepararAgendamento',
+                        id: 'prepare-booking',
+                        args: {
+                            nomeCliente: 'João Silva',
+                            servicoId: 'servico-1',
+                            dataHoraInicio: '2026-10-20T13:00:00-03:00',
+                        },
+                    },
+                ],
+                candidates: [{ content: { parts: [] } }],
+            })
+            .mockResolvedValueOnce({ text: 'Resumo reescrito pelo Gemini.' });
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Quero agendar',
+            'message-prepare',
+        );
+
+        const expectedSummary = summary.replace('João Silva', 'Cliente');
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            expectedSummary,
+        );
+        expect(summaryStore.obterValido(phone)).toMatchObject({
+            mensagemCriacaoId: 'message-prepare',
+            resumo: expectedSummary,
+        });
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Tenho uma dúvida',
+            'message-next',
+        );
+        const history = historyTextsFromGeminiRequest(2);
+        expect(history).toContain(expectedSummary);
+        expect(history).not.toContain('Resumo reescrito pelo Gemini.');
+    });
+
+    it('reenvia resumo literal em mensagem sem letras ou dígitos, sem Gemini ou consumo do rascunho', async () => {
+        await seedDraft();
+        const originalDraft = await pendingRepository.obterValido(
+            phone,
+            currentTime,
+        );
+
+        await processarMensagemWhatsapp(phone, '??', 'message-question-mark');
+
+        expect(mocks.generateContent).not.toHaveBeenCalled();
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(phone, summary);
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toEqual(originalDraft);
+    });
+
+    it('envia mensagem sem letras ou dígitos ao Gemini quando não há rascunho', async () => {
+        await processarMensagemWhatsapp(phone, '?', 'message-question-mark');
+
+        expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            'Resposta do Gemini.',
+        );
+    });
+
+    it.each([EstadoEscalonamento.ESCALADO, EstadoEscalonamento.HUMANO_ATIVO])(
+        'ignora mensagem sem letras ou dígitos em estado %s',
+        async (estado) => {
+            await seedDraft();
+            escalationRepository.obter = vi.fn().mockResolvedValue({
+                estado,
+                escaladoEm: currentTime,
+            });
+
+            await processarMensagemWhatsapp(
+                phone,
+                '?',
+                'message-question-mark',
+            );
+
+            expect(mocks.generateContent).not.toHaveBeenCalled();
+            expect(mocks.sendWhatsAppText).not.toHaveBeenCalled();
+            await expect(
+                pendingRepository.obterValido(phone, currentTime),
+            ).resolves.not.toBeNull();
+        },
+    );
+
     it('confirma sim com rascunho e marcador, sem LLM, e grava histórico', async () => {
         await seedDraft();
         seedSummary();
