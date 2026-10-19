@@ -233,6 +233,8 @@ model RascunhoAgendamento {
   mensagemCriacaoId String
   criadoEm         DateTime @default(now()) @db.Timestamptz(3)
   expiraEm         DateTime @db.Timestamptz(3)
+  lembreteEnviadoEm DateTime? @db.Timestamptz(3)
+  resumoEnviadoEm  DateTime? @db.Timestamptz(3)
 
   servico          Servico  @relation(fields: [servicoId], references: [id], onDelete: Cascade)
 

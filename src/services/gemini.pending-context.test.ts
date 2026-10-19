@@ -89,7 +89,12 @@ class MemoryPendingRepository implements PendingAgendamentoRepository {
     async salvar(
         draft: Omit<PendingAgendamento, 'criadoEm'> & { criadoEm?: Date },
     ): Promise<PendingAgendamento> {
-        const value = { ...draft, criadoEm: draft.criadoEm ?? new Date() };
+        const value = {
+            ...draft,
+            criadoEm: draft.criadoEm ?? new Date(),
+            lembreteEnviadoEm: null,
+            resumoEnviadoEm: null,
+        };
         this.drafts.set(value.telefoneSessao, value);
         return { ...value };
     }
@@ -125,8 +130,73 @@ class MemoryPendingRepository implements PendingAgendamentoRepository {
         return true;
     }
 
-    async apagar(telefoneSessao: string): Promise<void> {
+    async listarElegiveisParaLembrete(
+        agora: Date,
+        criadoAte: Date,
+    ): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter(
+                (draft) =>
+                    draft.lembreteEnviadoEm == null &&
+                    draft.expiraEm > agora &&
+                    draft.criadoEm <= criadoAte,
+            )
+            .map((draft) => ({ ...draft }));
+    }
+
+    async reivindicarLembrete(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.lembreteEnviadoEm != null ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.lembreteEnviadoEm = agora;
+        return true;
+    }
+
+    async marcarResumoEnviado(
+        telefoneSessao: string,
+        mensagemCriacaoId: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.mensagemCriacaoId !== mensagemCriacaoId ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.resumoEnviadoEm = agora;
+        return true;
+    }
+
+    async listarExpirados(agora: Date): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter((draft) => draft.expiraEm < agora)
+            .map((draft) => ({ ...draft }));
+    }
+
+    async apagarExpirado(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (!draft || draft.expiraEm >= agora) return false;
         this.drafts.delete(telefoneSessao);
+        return true;
+    }
+
+    async apagar(telefoneSessao: string): Promise<boolean> {
+        const existed = this.drafts.has(telefoneSessao);
+        this.drafts.delete(telefoneSessao);
+        return existed;
     }
 }
 

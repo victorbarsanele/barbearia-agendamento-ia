@@ -88,12 +88,13 @@ import type { IncomingWhatsAppMessage } from '../whatsapp/types';
 import { RecentConfirmationStore } from './recent-confirmation.store';
 import { ResumoEnviadoStore } from './resumo-enviado.store';
 import { __testables, processarMensagemWhatsapp } from './gemini.service';
+import { processarCicloLembretes } from './pending-agendamento-reminder.service';
 import { processarMensagemRecebida } from './whatsapp-incoming-message.service';
 
 const phone = '5511999999999';
 const creationId = 'message-created';
 const summary =
-    'Resumo: Corte, terça-feira, 20/10/2026, nome João Silva. Está tudo certo?';
+    'Resumo do seu agendamento:\n- Serviço: Corte\n- Data: terça-feira, 20/10/2026, às 13:00\n- Nome: João Silva\n- Telefone: (11) 99999-9999\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.';
 const draftValues = {
     nomeCliente: 'João Silva',
     telefoneCliente: phone,
@@ -114,7 +115,12 @@ class InMemoryPendingRepository implements PendingAgendamentoRepository {
     async salvar(
         draft: Omit<PendingAgendamento, 'criadoEm'> & { criadoEm?: Date },
     ): Promise<PendingAgendamento> {
-        const saved = { ...draft, criadoEm: draft.criadoEm ?? new Date() };
+        const saved = {
+            ...draft,
+            criadoEm: draft.criadoEm ?? new Date(),
+            lembreteEnviadoEm: null,
+            resumoEnviadoEm: null,
+        };
         this.drafts.set(saved.telefoneSessao, saved);
         return { ...saved };
     }
@@ -152,8 +158,73 @@ class InMemoryPendingRepository implements PendingAgendamentoRepository {
         return true;
     }
 
-    async apagar(telefoneSessao: string): Promise<void> {
+    async listarElegiveisParaLembrete(
+        agora: Date,
+        criadoAte: Date,
+    ): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter(
+                (draft) =>
+                    draft.lembreteEnviadoEm == null &&
+                    draft.expiraEm > agora &&
+                    draft.criadoEm <= criadoAte,
+            )
+            .map((draft) => ({ ...draft }));
+    }
+
+    async reivindicarLembrete(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.lembreteEnviadoEm != null ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.lembreteEnviadoEm = agora;
+        return true;
+    }
+
+    async marcarResumoEnviado(
+        telefoneSessao: string,
+        mensagemCriacaoId: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.mensagemCriacaoId !== mensagemCriacaoId ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.resumoEnviadoEm = agora;
+        return true;
+    }
+
+    async listarExpirados(agora: Date): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter((draft) => draft.expiraEm < agora)
+            .map((draft) => ({ ...draft }));
+    }
+
+    async apagarExpirado(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (!draft || draft.expiraEm >= agora) return false;
         this.drafts.delete(telefoneSessao);
+        return true;
+    }
+
+    async apagar(telefoneSessao: string): Promise<boolean> {
+        const existed = this.drafts.has(telefoneSessao);
+        this.drafts.delete(telefoneSessao);
+        return existed;
     }
 }
 
@@ -173,20 +244,25 @@ const escalationRepository = {
     registrarRespostaHumanaIdempotente: vi.fn(),
 } as unknown as EscalationStateRepository;
 
-function seedDraft(expiresAt = new Date(currentTime.getTime() + 60_000)) {
+function seedDraft(
+    expiresAt = new Date(currentTime.getTime() + 60_000),
+    createdAt = currentTime,
+) {
     return pendingRepository.salvar({
         telefoneSessao: phone,
         ...draftValues,
         mensagemCriacaoId: creationId,
+        criadoEm: createdAt,
         expiraEm: expiresAt,
     });
 }
 
-function seedSummary(): void {
+async function seedSummary(): Promise<void> {
     summaryStore.registrar(phone, {
         mensagemCriacaoId: creationId,
         resumo: summary,
     });
+    await pendingRepository.marcarResumoEnviado(phone, creationId, currentTime);
 }
 
 function makeIncomingMessage(
@@ -207,8 +283,8 @@ function makeIncomingMessage(
     };
 }
 
-function historyTextsFromGeminiRequest(): string[] {
-    const request = mocks.generateContent.mock.calls[0]?.[0] as
+function historyTextsFromGeminiRequest(requestIndex = 0): string[] {
+    const request = mocks.generateContent.mock.calls[requestIndex]?.[0] as
         | { contents?: Array<{ parts?: Array<{ text?: string }> }> }
         | undefined;
     return (request?.contents ?? [])
@@ -280,14 +356,152 @@ afterEach(() => {
 });
 
 describe('gemini confirmation fast path', () => {
+    it('marca reação do cliente e não envia lembrete depois', async () => {
+        const expiresAt = new Date(currentTime.getTime() + 20 * 60_000);
+        await seedDraft(
+            expiresAt,
+            new Date(currentTime.getTime() - 10 * 60_000),
+        );
+        mocks.generateContent.mockResolvedValueOnce({
+            text: 'Resposta Gemini.',
+        });
+
+        await processarMensagemWhatsapp(phone, 'oi', 'message-reaction');
+
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({
+            lembreteEnviadoEm: currentTime,
+            expiraEm: expiresAt,
+        });
+        mocks.sendWhatsAppText.mockClear();
+
+        await processarCicloLembretes();
+
+        expect(mocks.sendWhatsAppText).not.toHaveBeenCalled();
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({ expiraEm: expiresAt });
+    });
+
+    it('envia resumo do backend após prepararAgendamento, não texto do Gemini', async () => {
+        vi.stubEnv('PENDING_BOOKING_TTL_MS', '');
+        mocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'prepararAgendamento',
+                        id: 'prepare-booking',
+                        args: {
+                            nomeCliente: 'João Silva',
+                            servicoId: 'servico-1',
+                            dataHoraInicio: '2026-10-20T13:00:00-03:00',
+                        },
+                    },
+                ],
+                candidates: [{ content: { parts: [] } }],
+            })
+            .mockResolvedValueOnce({ text: 'Resumo reescrito pelo Gemini.' });
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Quero agendar',
+            'message-prepare',
+        );
+
+        const expectedSummary = summary.replace('João Silva', 'Cliente');
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            expectedSummary,
+        );
+        expect(summaryStore.obterValido(phone)).toMatchObject({
+            mensagemCriacaoId: 'message-prepare',
+            resumo: expectedSummary,
+        });
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({
+            expiraEm: new Date(currentTime.getTime() + 30 * 60_000),
+            resumoEnviadoEm: currentTime,
+        });
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Tenho uma dúvida',
+            'message-next',
+        );
+        const history = historyTextsFromGeminiRequest(2);
+        expect(history).toContain(expectedSummary);
+        expect(history).not.toContain('Resumo reescrito pelo Gemini.');
+    });
+
+    it('reenvia resumo literal em mensagem sem letras ou dígitos, sem Gemini ou consumo do rascunho', async () => {
+        await seedDraft();
+        const originalDraft = await pendingRepository.obterValido(
+            phone,
+            currentTime,
+        );
+
+        await processarMensagemWhatsapp(phone, '??', 'message-question-mark');
+
+        expect(mocks.generateContent).not.toHaveBeenCalled();
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(phone, summary);
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toEqual({
+            ...originalDraft,
+            lembreteEnviadoEm: currentTime,
+            resumoEnviadoEm: currentTime,
+        });
+    });
+
+    it('envia mensagem sem letras ou dígitos ao Gemini quando não há rascunho', async () => {
+        await processarMensagemWhatsapp(phone, '?', 'message-question-mark');
+
+        expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+        expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
+            phone,
+            'Resposta do Gemini.',
+        );
+    });
+
+    it.each([EstadoEscalonamento.ESCALADO, EstadoEscalonamento.HUMANO_ATIVO])(
+        'ignora mensagem sem letras ou dígitos em estado %s',
+        async (estado) => {
+            await seedDraft();
+            escalationRepository.obter = vi.fn().mockResolvedValue({
+                estado,
+                escaladoEm: currentTime,
+            });
+
+            await processarMensagemWhatsapp(
+                phone,
+                '?',
+                'message-question-mark',
+            );
+
+            expect(mocks.generateContent).not.toHaveBeenCalled();
+            expect(mocks.sendWhatsAppText).not.toHaveBeenCalled();
+            await expect(
+                pendingRepository.obterValido(phone, currentTime),
+            ).resolves.not.toBeNull();
+        },
+    );
+
     it('confirma sim com rascunho e marcador, sem LLM, e grava histórico', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
+        const infoSpy = vi.spyOn(console, 'info');
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
 
         expect(mocks.createBooking).toHaveBeenCalledTimes(1);
         expect(mocks.generateContent).not.toHaveBeenCalled();
+        expect(infoSpy).toHaveBeenCalledWith(
+            '[GEMINI TOOL] confirmarAgendamento confirmado',
+            expect.objectContaining({ via: 'atalho' }),
+        );
+        infoSpy.mockRestore();
         expect(mocks.sendWhatsAppText).toHaveBeenCalledWith(
             phone,
             'Agendamento confirmado: Corte, terça-feira, 20/10/2026, 13:00.',
@@ -355,7 +569,7 @@ describe('gemini confirmation fast path', () => {
 
     it('responde já confirmado a segundo sim com outro messageId', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm-1');
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm-2');
@@ -379,7 +593,7 @@ describe('gemini confirmation fast path', () => {
 
     it('não confirma rascunho expirado', async () => {
         await seedDraft(new Date(currentTime.getTime() - 1));
-        seedSummary();
+        await seedSummary();
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
 
@@ -387,28 +601,34 @@ describe('gemini confirmation fast path', () => {
         expect(mocks.generateContent).toHaveBeenCalledTimes(1);
     });
 
-    it('limpa marcador se resposta LLM não reapresenta resumo', async () => {
-        await seedDraft();
-        seedSummary();
-        mocks.generateContent.mockResolvedValueOnce({
-            text: 'Resposta do Gemini.',
-        });
+    it('confirma após 15 minutos mesmo com marcador de memória expirado', async () => {
+        await seedDraft(new Date(currentTime.getTime() + 30 * 60_000));
+        await seedSummary();
+        currentTime = new Date(currentTime.getTime() + 15 * 60_000);
+        vi.setSystemTime(currentTime);
 
-        await processarMensagemWhatsapp(
-            phone,
-            'Tenho uma dúvida',
-            'message-question',
-        );
         expect(summaryStore.obterValido(phone)).toBeNull();
+        await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
+
+        expect(mocks.createBooking).toHaveBeenCalledTimes(1);
+        expect(mocks.generateContent).not.toHaveBeenCalled();
+    });
+
+    it('confirma após reinício simulado sem marcador ou histórico em memória', async () => {
+        await seedDraft(new Date(currentTime.getTime() + 30 * 60_000));
+        await seedSummary();
+        summaryStore.limpar(phone);
+        __testables.limparMemoriaConversa(phone);
 
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
-        expect(mocks.createBooking).not.toHaveBeenCalled();
-        expect(mocks.generateContent).toHaveBeenCalledTimes(2);
+
+        expect(mocks.createBooking).toHaveBeenCalledTimes(1);
+        expect(mocks.generateContent).not.toHaveBeenCalled();
     });
 
     it('mantém marcador quando resposta LLM reapresenta resumo literal', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
         mocks.generateContent.mockResolvedValueOnce({ text: summary });
 
         await processarMensagemWhatsapp(
@@ -425,11 +645,60 @@ describe('gemini confirmation fast path', () => {
         expect(mocks.generateContent).toHaveBeenCalledTimes(1);
     });
 
+    it('não persiste envio quando o WhatsApp falha ao enviar o resumo', async () => {
+        await seedDraft();
+        mocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'prepararAgendamento',
+                        id: 'prepare-booking',
+                        args: {
+                            nomeCliente: 'João Silva',
+                            servicoId: 'servico-1',
+                            dataHoraInicio: '2026-10-20T13:00:00-03:00',
+                        },
+                    },
+                ],
+                candidates: [{ content: { parts: [] } }],
+            })
+            .mockResolvedValueOnce({ text: 'Resumo alternativo.' });
+        mocks.sendWhatsAppText.mockRejectedValueOnce(
+            new Error('whatsapp unavailable'),
+        );
+
+        await processarMensagemWhatsapp(
+            phone,
+            'Quero agendar',
+            'message-prepare',
+        );
+
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({ resumoEnviadoEm: null });
+    });
+
+    it('registra via gemini no log de confirmação pela ferramenta', async () => {
+        await seedDraft();
+        const infoSpy = vi.spyOn(console, 'info');
+
+        await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-confirm',
+            'gemini',
+        );
+
+        expect(infoSpy).toHaveBeenCalledWith(
+            '[GEMINI TOOL] confirmarAgendamento confirmado',
+            expect.objectContaining({ via: 'gemini' }),
+        );
+    });
+
     it.each(['sim, mas muda pra 11h', 'não'])(
         'envia mensagem ambígua %s ao Gemini',
         async (text) => {
             await seedDraft();
-            seedSummary();
+            await seedSummary();
 
             await processarMensagemWhatsapp(phone, text, 'message-ambiguous');
 
@@ -440,7 +709,7 @@ describe('gemini confirmation fast path', () => {
 
     it('conflito usa texto fixo, consome rascunho e próximo sim usa contrato LLM', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
         mocks.createBooking.mockRejectedValueOnce(
             new Error('EXCLUSION_CONFLICT'),
         );
@@ -495,7 +764,7 @@ describe('gemini confirmation fast path', () => {
 
     it('restaura rascunho após erro inesperado e tenta novamente no segundo sim', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
         mocks.createBooking
             .mockRejectedValueOnce(new Error('database unavailable'))
             .mockResolvedValueOnce(booking);
@@ -521,7 +790,7 @@ describe('gemini confirmation fast path', () => {
         'não usa atalho em estado %s',
         async (estado) => {
             await seedDraft();
-            seedSummary();
+            await seedSummary();
             escalationRepository.obter = vi.fn().mockResolvedValue({
                 estado,
                 escaladoEm: currentTime,
@@ -536,7 +805,7 @@ describe('gemini confirmation fast path', () => {
 
     it('messageId ausente segue para Gemini sem confirmar', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
 
         await processarMensagemWhatsapp(phone, 'sim', null);
 
@@ -546,7 +815,7 @@ describe('gemini confirmation fast path', () => {
 
     it('usa messageId original da mensagem de áudio transcrita', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
         const audioMessage: IncomingWhatsAppMessage = {
             ...makeIncomingMessage('audio-original-id', ''),
             kind: 'non_text',
@@ -569,7 +838,7 @@ describe('gemini confirmation fast path', () => {
 
     it('serializa dois sims concorrentes pela fila do telefone', async () => {
         await seedDraft();
-        seedSummary();
+        await seedSummary();
         let releaseCreation!: () => void;
         let markCreationStarted!: () => void;
         const creationStarted = new Promise<void>((resolve) => {

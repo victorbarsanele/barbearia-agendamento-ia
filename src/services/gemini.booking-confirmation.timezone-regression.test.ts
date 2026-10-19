@@ -165,7 +165,7 @@ describe('regressão de timezone na confirmação', () => {
             ['João Silva'],
         );
 
-        expect(result.resumo).toContain('24/10/2026, 15:00');
+        expect(result.resumo).toContain('sábado, 24/10/2026, às 15:00');
     });
 
     it('registra recusa de regra com status e mensagem sem sequências numéricas', async () => {

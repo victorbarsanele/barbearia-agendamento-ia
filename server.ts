@@ -25,9 +25,15 @@ import { webhookRoutes } from './src/routes/webhook.routes';
 import { horarioFuncionamentoRoutes } from './src/routes/horario-funcionamento.routes';
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 import { validateWhatsAppConfiguration } from './src/whatsapp/config';
+import { iniciarJobLembretesRascunho } from './src/services/pending-agendamento-reminder.service';
 
 const app = Fastify({
     logger: true,
+});
+let stopPendingBookingReminder: (() => void) | undefined;
+
+app.addHook('onClose', async () => {
+    stopPendingBookingReminder?.();
 });
 
 const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
@@ -97,6 +103,13 @@ const start = async (): Promise<void> => {
     try {
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
+        stopPendingBookingReminder = iniciarJobLembretesRascunho();
+
+        const shutdown = (): void => {
+            void app.close().catch((error: unknown) => app.log.error(error));
+        };
+        process.once('SIGINT', shutdown);
+        process.once('SIGTERM', shutdown);
     } catch (error) {
         app.log.error(error);
         process.exit(1);
