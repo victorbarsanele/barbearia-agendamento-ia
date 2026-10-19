@@ -27,12 +27,12 @@ const PLACEHOLDERS = new Set([
     'x',
 ]);
 
+export function normalizarSemAcentos(value: string): string {
+    return value.replace(/[’]/gu, "'").normalize('NFD').replace(/\p{M}/gu, '');
+}
+
 function normalizarPalavra(value: string): string {
-    return value
-        .replace(/[’]/gu, "'")
-        .normalize('NFD')
-        .replace(/\p{M}/gu, '')
-        .toLocaleLowerCase('pt-BR');
+    return normalizarSemAcentos(value).toLocaleLowerCase('pt-BR');
 }
 
 function extrairPalavras(value: string): string[] {

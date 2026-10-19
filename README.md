@@ -90,6 +90,8 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `BARBER_USER`
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
+- `BARBER_NAME` (opcional; nome do barbeiro usado no prompt)
+- `BARBER_ALIASES` (opcional; apelidos separados por vírgula)
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
@@ -257,6 +259,8 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `BARBER_USER`
 - `BARBER_PASSWORD_HASH`
 - `BARBER_PHONE`
+- `BARBER_NAME` (optional; barber name used in the prompt)
+- `BARBER_ALIASES` (optional; comma-separated aliases)
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (optional, in milliseconds; default `900000` or 15 minutes)

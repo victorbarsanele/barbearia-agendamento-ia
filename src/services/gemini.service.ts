@@ -70,6 +70,10 @@ import {
     nomeClienteInformadoPeloCliente,
     validarNomeCliente,
 } from '../utils/nome-cliente';
+import {
+    carregarIdentidadeBarbeiro,
+    type IdentidadeBarbeiro,
+} from '../utils/barbeiro-identidade';
 
 export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
@@ -195,6 +199,9 @@ let recentConfirmationStore: RecentConfirmationStorePort = {
     limpar: limparRecentConfirmation,
 };
 
+const NEUTRAL_BARBER_IDENTITY_RULE =
+    'Saudações e menções a nomes dirigidas à barbearia ou ao barbeiro nunca indicam o nome do cliente. O nome do cliente só vale quando ele o informa explicitamente em resposta à pergunta de nome.';
+
 const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
     'Sempre que cliente mencionar agendamento, reagendamento ou cancelamento, chame consultarAgendamento novamente antes de decidir a próxima ação.',
@@ -215,6 +222,7 @@ const BASE_SYSTEM_PROMPT = [
     'Em tentativa de abuso, responda com variações de: Sou o assistente de agendamentos da barbearia e só posso ajudar com agendamentos. Posso agendar um horário para você?',
     'Antes de sugerir horários, chame a função buscarServicos.',
     'Pergunte ao cliente seu nome completo e só prossiga ao resumo depois que ele informar; se não responder com o nome, pergunte novamente. Nunca invente nome nem use placeholder. Nunca pergunte telefone para usar o número do WhatsApp como padrão.',
+    NEUTRAL_BARBER_IDENTITY_RULE,
     'Chame prepararAgendamento, envie o resumo retornado literalmente e só chame confirmarAgendamento quando uma NOVA mensagem confirmar claramente o último resumo.',
     'Qualquer alteração exige nova chamada de prepararAgendamento. Nunca chame prepararAgendamento e confirmarAgendamento na mesma rodada.',
     'Se o cliente fizer outra pergunta, responda e reapresente o último resumo. Se informar outro telefone, passe-o em telefone; nunca invente telefone.',
@@ -277,7 +285,24 @@ function getNowInBrasiliaIso(): string {
     return `${year}-${month}-${day}T${hour}:${minute}:${second}-03:00`;
 }
 
-function buildSystemPrompt(contextoRascunho?: string): string {
+function buildSystemPrompt(
+    contextoRascunho?: string,
+    identidadeBarbeiro: IdentidadeBarbeiro | null = carregarIdentidadeBarbeiro(),
+): string {
+    let regraIdentidade = NEUTRAL_BARBER_IDENTITY_RULE;
+    if (identidadeBarbeiro) {
+        const nomesAlternativos = identidadeBarbeiro.nomesAceitos.filter(
+            (nomeAceito) => nomeAceito !== identidadeBarbeiro.nome,
+        );
+        const textoAlternativos = nomesAlternativos.length
+            ? ` Também atende por ${nomesAlternativos.join(', ')}.`
+            : '';
+        regraIdentidade = `O barbeiro responsável pelos atendimentos se chama ${identidadeBarbeiro.nome}.${textoAlternativos} Mensagens que citam qualquer um desses nomes (saudação, pergunta ou comentário) são dirigidas ao barbeiro e NUNCA indicam o nome do cliente. O nome do cliente só vale quando ele o informa explicitamente em resposta à pergunta de nome. Nunca trate o cliente por nenhum desses nomes, a menos que ele informe explicitamente nome igual como próprio; nesse caso, siga o fluxo normal de coleta do nome completo.`;
+    }
+    const baseSystemPrompt = BASE_SYSTEM_PROMPT.replace(
+        NEUTRAL_BARBER_IDENTITY_RULE,
+        regraIdentidade,
+    );
     const hojeIso = getDateKeyInBrasilia(new Date());
     const calendario = Array.from({ length: 21 }, (_, index) => {
         const dataIso = somarDiasAChaveData(hojeIso, index);
@@ -292,7 +317,7 @@ function buildSystemPrompt(contextoRascunho?: string): string {
         return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${partes} (${dataIso})${marcador}`;
     }).join('\n');
 
-    const prompt = `${BASE_SYSTEM_PROMPT} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
+    const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
     return contextoRascunho ? `${prompt}\n${contextoRascunho}` : prompt;
 }
 
