@@ -245,6 +245,11 @@ describe('gemini pending context', () => {
         expect(prompt).toContain(
             'Rascunho pendente aguardando confirmação do cliente:',
         );
+        expect(prompt).toContain(
+            'a duração e o preço retornados por buscarServicos podem ser informados quando úteis',
+        );
+        expect(prompt).toContain('IDs e códigos internos (cuid)');
+        expect(prompt).toContain('nunca em texto ao cliente');
         expect(prompt).toContain('servicoId=service-cut');
         expect(prompt).toContain('nome=João Silva');
         expect(prompt).toContain(
