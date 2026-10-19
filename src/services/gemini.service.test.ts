@@ -982,6 +982,72 @@ describe('gemini.service tools de pacotes', () => {
         vi.mocked(pacoteRepository.listarLiberadosParaGemini).mockReset();
     }
 
+    it('carrega funcionamento uma vez por turno mesmo com várias iterações', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-10-14T15:00:00Z'));
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarServicos',
+                        args: {},
+                        id: 'call-servicos',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({ text: 'Resposta final.' });
+
+        await processarMensagemWhatsapp(remoteJid, 'oi');
+
+        expect(
+            horarioFuncionamentoRepository.listarTodos,
+        ).toHaveBeenCalledOnce();
+        const prompts = geminiMocks.generateContent.mock.calls.map(
+            ([request]) =>
+                (request as { config: { systemInstruction: string } }).config
+                    .systemInstruction,
+        );
+        expect(prompts).toHaveLength(2);
+        expect(prompts[0]).toContain('domingo 18/10/2026 (FECHADO)');
+        expect(prompts[1]).toBe(prompts[0]);
+    });
+
+    it('continua turno sem marcadores quando carga de funcionamento falha', async () => {
+        prepararGemini();
+        const aviso = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.mocked(
+            horarioFuncionamentoRepository.listarTodos,
+        ).mockRejectedValueOnce(new Error('falha simulada'));
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarServicos',
+                        args: {},
+                        id: 'call-servicos',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({ text: 'Resposta final.' });
+
+        await processarMensagemWhatsapp(remoteJid, 'oi');
+
+        expect(geminiMocks.generateContent).toHaveBeenCalledTimes(2);
+        expect(aviso).toHaveBeenCalledOnce();
+        const prompt = (
+            geminiMocks.generateContent.mock.calls[0][0] as {
+                config: { systemInstruction: string };
+            }
+        ).config.systemInstruction;
+        expect(prompt).not.toContain('(FECHADO)');
+        expect(prompt).toContain(
+            'Nunca afirme, sugira ou insinue disponibilidade para data ou horário sem retorno de buscarHorariosDisponiveis no mesmo turno',
+        );
+        expect(prompt).toContain(
+            'pergunte apenas qual data prefere, sem sugerir datas.',
+        );
+    });
+
     it('consulta pacotes liberados e responde nome, preço e serviços corretos', async () => {
         prepararGemini();
         vi.mocked(pacoteRepository.listarLiberadosParaGemini).mockResolvedValue(

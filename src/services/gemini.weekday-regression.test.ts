@@ -214,28 +214,108 @@ describe('calendário e validação de weekday do Gemini', () => {
         );
     });
 
-    it('gera calendário de 21 dias correto em Brasília', () => {
-        const prompt = __testables.buildSystemPrompt();
+    it('marca dias sem funcionamento no calendário e mantém dias configurados abertos', () => {
+        const configuracao = [1, 2, 3, 4, 5, 6].map((diaSemana) => ({
+            diaSemana,
+            horaAberturaMinutos: 540,
+            horaFechamentoMinutos: 1200,
+            almocoInicioMinutos: null,
+            almocoFimMinutos: null,
+            limiteExtensaoMinutos: null,
+            ultimoInicioExtensaoMinutos: null,
+        }));
+        const prompt = __testables.buildSystemPrompt(
+            undefined,
+            undefined,
+            configuracao,
+        );
         for (const line of [
-            'quarta-feira 14/10 (2026-10-14) — hoje',
-            'quinta-feira 15/10 (2026-10-15) — amanhã',
-            'sexta-feira 16/10 (2026-10-16)',
-            'sábado 17/10 (2026-10-17)',
-            'sexta-feira 23/10 (2026-10-23)',
-            'sábado 24/10 (2026-10-24)',
-            'sexta-feira 30/10 (2026-10-30)',
-            'sábado 31/10 (2026-10-31)',
-            'terça-feira 03/11 (2026-11-03)',
+            'quarta-feira 14/10/2026 — hoje',
+            'quinta-feira 15/10/2026 — amanhã',
+            'sexta-feira 16/10/2026',
+            'sábado 17/10/2026',
+            'domingo 18/10/2026 (FECHADO)',
+            'sexta-feira 23/10/2026',
+            'sábado 24/10/2026',
+            'domingo 25/10/2026 (FECHADO)',
+            'sexta-feira 30/10/2026',
+            'sábado 31/10/2026',
+            'domingo 01/11/2026 (FECHADO)',
+            'terça-feira 03/11/2026',
         ]) {
             expect(prompt).toContain(line);
         }
+        expect(prompt).not.toContain('quarta-feira 14/10/2026 (FECHADO)');
         expect(prompt).toContain('Use SOMENTE a tabela de calendário');
         expect(prompt).toContain('preencha diaDaSemana nas tools');
     });
 
+    it('não marca domingo fechado quando há configuração para domingo', () => {
+        const configuracao = [0, 1, 2, 3, 4, 5, 6].map((diaSemana) => ({
+            diaSemana,
+            horaAberturaMinutos: 540,
+            horaFechamentoMinutos: 1200,
+            almocoInicioMinutos: null,
+            almocoFimMinutos: null,
+            limiteExtensaoMinutos: null,
+            ultimoInicioExtensaoMinutos: null,
+        }));
+        const prompt = __testables.buildSystemPrompt(
+            undefined,
+            undefined,
+            configuracao,
+        );
+
+        expect(prompt).toContain('domingo 18/10/2026');
+        expect(prompt).not.toContain('domingo 18/10/2026 (FECHADO)');
+    });
+
+    it('marca dia sem registro como fechado', () => {
+        const configuracao = [0, 2, 3, 4, 5, 6].map((diaSemana) => ({
+            diaSemana,
+            horaAberturaMinutos: 540,
+            horaFechamentoMinutos: 1200,
+            almocoInicioMinutos: null,
+            almocoFimMinutos: null,
+            limiteExtensaoMinutos: null,
+            ultimoInicioExtensaoMinutos: null,
+        }));
+        const prompt = __testables.buildSystemPrompt(
+            undefined,
+            undefined,
+            configuracao,
+        );
+
+        expect(prompt).toContain('segunda-feira 19/10/2026 (FECHADO)');
+        expect(prompt).not.toContain('terça-feira 20/10/2026 (FECHADO)');
+    });
+
+    it('inclui regras de disponibilidade e resposta à oferta de outra data', () => {
+        const prompt = __testables.buildSystemPrompt();
+
+        expect(prompt).toContain(
+            'Nunca afirme, sugira ou insinue disponibilidade para data ou horário sem retorno de buscarHorariosDisponiveis no mesmo turno',
+        );
+        expect(prompt).toContain(
+            'Nunca ofereça, sugira ou consulte como opção dia identificado como fechado no calendário.',
+        );
+        expect(prompt).toContain(
+            'pergunte apenas qual data prefere, sem sugerir datas.',
+        );
+        expect(
+            (
+                __testables.functionDeclarations as Array<{
+                    name: string;
+                    description: string;
+                }>
+            ).find((tool) => tool.name === 'buscarHorariosDisponiveis')
+                ?.description,
+        ).not.toMatch(/09h-20h|08h-17h/u);
+    });
+
     it.each([
-        ['2026-10-15T02:59:00Z', 'quarta-feira 14/10 (2026-10-14) — hoje'],
-        ['2026-10-15T03:00:00Z', 'quinta-feira 15/10 (2026-10-15) — hoje'],
+        ['2026-10-15T02:59:00Z', 'quarta-feira 14/10/2026 — hoje'],
+        ['2026-10-15T03:00:00Z', 'quinta-feira 15/10/2026 — hoje'],
     ])('calcula hoje em Brasília para %s', (now, expected) => {
         vi.setSystemTime(new Date(now));
         expect(__testables.buildSystemPrompt()).toContain(expected);

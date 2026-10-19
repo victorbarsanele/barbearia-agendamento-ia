@@ -34,6 +34,7 @@ import {
     obterHorarioFuncionamento,
     estaDentroDoHorarioDoAgendamento,
     estaDentroDoHorarioDeAlmoco,
+    type HorarioFuncionamentoConfig,
 } from './horario-funcionamento';
 import { carregarConfiguracao } from './horario-funcionamento.service';
 import {
@@ -206,6 +207,9 @@ const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
     'Sempre que cliente mencionar agendamento, reagendamento ou cancelamento, chame consultarAgendamento novamente antes de decidir a próxima ação.',
     'Sempre que cliente perguntar sobre disponibilidade de horário, chame buscarHorariosDisponiveis novamente, mesmo que já tenha consultado antes na mesma conversa.',
+    'Nunca afirme, sugira ou insinue disponibilidade para data ou horário sem retorno de buscarHorariosDisponiveis no mesmo turno, inclusive "temos disponibilidade a partir de [data]".',
+    'Nunca ofereça, sugira ou consulte como opção dia identificado como fechado no calendário. Se cliente pedir esse dia, informe que a barbearia não abre nele e pergunte qual outro dia prefere; não cite disponibilidade sem consultar buscarHorariosDisponiveis.',
+    'Se cliente responder "sim", "pode" ou equivalente a uma oferta para verificar outra data, pergunte apenas qual data prefere, sem sugerir datas.',
     'Nunca reutilize resposta antiga do histórico para inferir se cliente tem agendamento ativo, pois estado pode ter mudado no painel administrativo.',
     'Sempre responda em português brasileiro.',
     'Seja cordial, direta e breve.',
@@ -288,6 +292,7 @@ function getNowInBrasiliaIso(): string {
 function buildSystemPrompt(
     contextoRascunho?: string,
     identidadeBarbeiro: IdentidadeBarbeiro | null = carregarIdentidadeBarbeiro(),
+    configuracaoFuncionamento?: HorarioFuncionamentoConfig[],
 ): string {
     let regraIdentidade = NEUTRAL_BARBER_IDENTITY_RULE;
     if (identidadeBarbeiro) {
@@ -307,14 +312,18 @@ function buildSystemPrompt(
     const calendario = Array.from({ length: 21 }, (_, index) => {
         const dataIso = somarDiasAChaveData(hojeIso, index);
         const instante = new Date(`${dataIso}T12:00:00-03:00`);
-        const partes = new Intl.DateTimeFormat('pt-BR', {
+        const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
             timeZone: TIME_ZONE,
             day: '2-digit',
             month: '2-digit',
+            year: 'numeric',
         }).format(instante);
         const marcador =
             index === 0 ? ' — hoje' : index === 1 ? ' — amanhã' : '';
-        return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${partes} (${dataIso})${marcador}`;
+        const fechado =
+            configuracaoFuncionamento !== undefined &&
+            !ehDiaDeFuncionamento(configuracaoFuncionamento, instante);
+        return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${dataFormatada}${fechado ? ' (FECHADO)' : ''}${marcador}`;
     }).join('\n');
 
     const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}`;
@@ -334,7 +343,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'buscarHorariosDisponiveis',
         description:
-            "Retorna horários livres em uma data desejada, considerando agenda, funcionamento (09h-20h de segunda a sexta, 08h-17h sábado) e bloqueios administrativos. O retorno pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
+            "Retorna horários livres em uma data desejada, considerando configuração de funcionamento, agenda e bloqueios administrativos. O retorno pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
         parametersJsonSchema: {
             type: 'object',
             properties: {
@@ -2762,6 +2771,15 @@ async function runGeminiFunctionCalling(
     };
 
     try {
+        let configuracaoFuncionamento: HorarioFuncionamentoConfig[] | undefined;
+        try {
+            configuracaoFuncionamento = await carregarConfiguracao();
+        } catch {
+            console.warn(
+                '[GEMINI SERVICE] Falha ao carregar configuração de funcionamento para calendário.',
+            );
+        }
+
         for (let i = 0; i < 6; i += 1) {
             iteracoes += 1;
             const result = await executeWith429Retry(
@@ -2770,8 +2788,11 @@ async function runGeminiFunctionCalling(
                         model: GEMINI_MODEL,
                         contents,
                         config: {
-                            systemInstruction:
-                                buildSystemPrompt(contextoRascunho),
+                            systemInstruction: buildSystemPrompt(
+                                contextoRascunho,
+                                undefined,
+                                configuracaoFuncionamento,
+                            ),
                             tools: [
                                 {
                                     functionDeclarations:
