@@ -87,7 +87,7 @@ const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
     'Estou com alta demanda no momento, tente novamente em alguns instantes.';
 const HUMAN_TAKEOVER_DEFAULT_TTL_MS = 30 * 60 * 1000;
-const PENDING_BOOKING_DEFAULT_TTL_MS = 10 * 60 * 1000;
+const PENDING_BOOKING_DEFAULT_TTL_MS = 30 * 60 * 1000;
 
 function getEscalationDefaultCooldownMs(): number {
     return Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
@@ -187,6 +187,12 @@ type RecentConfirmationStorePort = Pick<
 type PreparacaoAgendamentoBemSucedida = {
     mensagemCriacaoId: string;
     resumo: string;
+};
+type ResultadoTurnoGemini = {
+    text: string;
+    usouTool: boolean;
+    escalonado: boolean;
+    resumoEnviado?: { mensagemCriacaoId: string };
 };
 
 let resumoEnviadoStore: ResumoEnviadoStorePort = {
@@ -1193,9 +1199,10 @@ function getPendingBookingTtlMs(): number {
         : PENDING_BOOKING_DEFAULT_TTL_MS;
 }
 
-async function apagarRascunhoAgendamento(phone: string): Promise<void> {
+async function apagarRascunhoAgendamento(phone: string): Promise<boolean> {
+    let apagado = false;
     try {
-        await getPendingAgendamentoRepository().apagar(phone);
+        apagado = await getPendingAgendamentoRepository().apagar(phone);
     } catch (error) {
         console.error(
             '[GEMINI SERVICE] Falha ao apagar rascunho de agendamento.',
@@ -1207,6 +1214,7 @@ async function apagarRascunhoAgendamento(phone: string): Promise<void> {
         resumoEnviadoStore.limpar(phone);
         recentConfirmationStore.limpar(phone);
     }
+    return apagado;
 }
 
 export function limparMemoriaConversa(phone: string): void {
@@ -1253,7 +1261,12 @@ export async function registrarRespostaHumanaIdempotente(
         return false;
     }
 
-    await apagarRascunhoAgendamento(normalizedPhone);
+    const rascunhoDescartado = await apagarRascunhoAgendamento(normalizedPhone);
+    if (rascunhoDescartado) {
+        console.info('[GEMINI SERVICE] rascunho_descartado_takeover', {
+            evento: 'rascunho_descartado_takeover',
+        });
+    }
     limparMemoriaConversa(normalizedPhone);
     return true;
 }
@@ -2021,16 +2034,21 @@ type ResultadoConfirmacaoTool = {
     instrucao?: string;
 };
 
-function logConfirmacao(motivo: 'confirmado' | 'ja_confirmado'): void {
+function logConfirmacao(
+    motivo: 'confirmado' | 'ja_confirmado',
+    via: 'atalho' | 'gemini' = 'gemini',
+): void {
     console.info(`[GEMINI TOOL] confirmarAgendamento ${motivo}`, {
         tool: 'confirmarAgendamento',
         motivo,
+        via,
     });
 }
 
 async function confirmarAgendamentoTool(
     phone: string,
     messageId: string | null,
+    via: 'atalho' | 'gemini' = 'gemini',
 ): Promise<ResultadoConfirmacaoTool> {
     if (!messageId) {
         logFalhaConfirmacao('sem_message_id');
@@ -2056,7 +2074,7 @@ async function confirmarAgendamentoTool(
     if (!draft) {
         const confirmacao = recentConfirmationStore.obterValido(phone);
         if (confirmacao && confirmacao.mensagemConfirmacaoId !== messageId) {
-            logConfirmacao('ja_confirmado');
+            logConfirmacao('ja_confirmado', via);
             return {
                 sucesso: true,
                 jaConfirmado: true,
@@ -2125,7 +2143,7 @@ async function confirmarAgendamentoTool(
             mensagemConfirmacaoId: messageId,
         });
         resumoEnviadoStore.limpar(phone);
-        logConfirmacao('confirmado');
+        logConfirmacao('confirmado', via);
         return {
             sucesso: true,
             mensagem: `Agendamento confirmado: ${agendamento.servico}, ${diaSemana}, ${data}, ${hora}.`,
@@ -2228,12 +2246,41 @@ async function responderAtalho(
     phone: string,
     texto: string,
     resposta: string,
+    mensagemCriacaoId?: string,
 ): Promise<void> {
     addToHistory(remoteJid, 'user', texto);
     addToHistory(remoteJid, 'model', resposta);
     confusionStreak.delete(phone);
     noProgressStreak.delete(phone);
     await sendWhatsAppText(remoteJid, resposta);
+    if (mensagemCriacaoId) {
+        await marcarResumoEnviadoPersistente(phone, mensagemCriacaoId);
+    }
+}
+
+async function marcarResumoEnviadoPersistente(
+    phone: string,
+    mensagemCriacaoId: string,
+): Promise<void> {
+    try {
+        const repository = getPendingAgendamentoRepository();
+        const marcado = await repository.marcarResumoEnviado(
+            phone,
+            mensagemCriacaoId,
+            new Date(),
+        );
+        if (!marcado) {
+            console.warn(
+                '[GEMINI SERVICE] Resumo enviado sem rascunho correspondente.',
+                { evento: 'falha_ao_marcar_resumo_enviado' },
+            );
+        }
+    } catch (error) {
+        console.error('[GEMINI SERVICE] Falha ao persistir envio do resumo.', {
+            evento: 'falha_ao_marcar_resumo_enviado',
+            erro: describeSafeError(error),
+        });
+    }
 }
 
 async function tentarAtalhoConfirmacao(
@@ -2273,11 +2320,7 @@ async function tentarAtalhoConfirmacao(
         return false;
     }
 
-    const resumoEnviado = resumoEnviadoStore.obterValido(phone);
-    if (
-        !resumoEnviado ||
-        resumoEnviado.mensagemCriacaoId !== rascunho.mensagemCriacaoId
-    ) {
+    if (rascunho.resumoEnviadoEm == null) {
         logAtalho('atalho_fallback', 'sem_marcador');
         return false;
     }
@@ -2285,7 +2328,7 @@ async function tentarAtalhoConfirmacao(
     logAtalho('atalho_confirmacao');
     let resultado: ResultadoConfirmacaoTool;
     try {
-        resultado = await confirmarAgendamentoTool(phone, messageId);
+        resultado = await confirmarAgendamentoTool(phone, messageId, 'atalho');
     } catch (error) {
         console.error(
             '[GEMINI SERVICE] Falha inesperada no atalho de confirmação',
@@ -2738,7 +2781,7 @@ async function runGeminiFunctionCalling(
     contextoRascunho?: string,
     confirmarDisponivel = false,
     rascunhoPendenteNoInicio = false,
-): Promise<{ text: string; usouTool: boolean; escalonado: boolean }> {
+): Promise<ResultadoTurnoGemini> {
     const ai = getGeminiClient();
     const contents: Array<Record<string, unknown>> = buildConversationContents(
         phone,
@@ -2919,7 +2962,19 @@ async function runGeminiFunctionCalling(
             finalText,
             preparacoesBemSucedidas,
         );
-        return { text: finalText, usouTool, escalonado: false };
+        const resumoEnviado = resumoEnviadoStore.obterValido(phone);
+        return {
+            text: finalText,
+            usouTool,
+            escalonado: false,
+            ...(resumoEnviado && finalText.includes(resumoEnviado.resumo)
+                ? {
+                      resumoEnviado: {
+                          mensagemCriacaoId: resumoEnviado.mensagemCriacaoId,
+                      },
+                  }
+                : {}),
+        };
     } finally {
         console.info('[GEMINI TURNO]', {
             toolsChamadas,
@@ -2969,6 +3024,20 @@ export async function processarMensagemWhatsapp(
                 );
             }
 
+            if (rascunhoNoInicio) {
+                try {
+                    await getPendingAgendamentoRepository().reivindicarLembrete(
+                        phone,
+                        new Date(),
+                    );
+                } catch {
+                    console.warn(
+                        '[GEMINI SERVICE] Falha ao marcar reação ao rascunho.',
+                        { evento: 'falha_ao_marcar_reacao_rascunho' },
+                    );
+                }
+            }
+
             const confirmarDisponivel = Boolean(
                 rascunhoNoInicio &&
                 rascunhoNoInicio.mensagemCriacaoId !== messageId,
@@ -3014,7 +3083,13 @@ export async function processarMensagemWhatsapp(
                         resumo: resumoRascunho,
                     },
                 ]);
-                await responderAtalho(remoteJid, phone, texto, resumoRascunho);
+                await responderAtalho(
+                    remoteJid,
+                    phone,
+                    texto,
+                    resumoRascunho,
+                    rascunhoNoInicio.mensagemCriacaoId,
+                );
                 return;
             }
 
@@ -3069,9 +3144,9 @@ async function responderMensagemGemini(
     remoteJid: string,
     phone: string,
     texto: string,
-    resultado: { text: string; usouTool: boolean; escalonado: boolean },
+    resultado: ResultadoTurnoGemini,
 ): Promise<void> {
-    const { text: reply, usouTool, escalonado } = resultado;
+    const { text: reply, usouTool, escalonado, resumoEnviado } = resultado;
 
     addToHistory(remoteJid, 'user', texto);
 
@@ -3110,6 +3185,12 @@ async function responderMensagemGemini(
     addToHistory(remoteJid, 'model', reply);
 
     await sendWhatsAppText(remoteJid, reply);
+    if (resumoEnviado) {
+        await marcarResumoEnviadoPersistente(
+            phone,
+            resumoEnviado.mensagemCriacaoId,
+        );
+    }
 }
 
 export const __testables = {

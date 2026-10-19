@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { InMemoryPendingAgendamentoRepository } from './pending-agendamento.repository';
+import { describe, expect, it, vi } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+import {
+    InMemoryPendingAgendamentoRepository,
+    PrismaPendingAgendamentoRepository,
+} from './pending-agendamento.repository';
 
 const baseDraft = {
     telefoneSessao: '5519999999999',
@@ -70,6 +74,102 @@ describe('InMemoryPendingAgendamentoRepository', () => {
         expect(second).toBeNull();
     });
 
+    it('lista somente rascunhos elegíveis e permite um único claim', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        const now = new Date('2026-10-20T12:10:00-03:00');
+        await repository.salvar({
+            ...baseDraft,
+            criadoEm: new Date(now.getTime() - 10 * 60_000),
+            expiraEm: new Date(now.getTime() + 20 * 60_000),
+        });
+
+        await expect(
+            repository.listarElegiveisParaLembrete(
+                now,
+                new Date(now.getTime() - 10 * 60_000),
+            ),
+        ).resolves.toHaveLength(1);
+        await expect(
+            repository.reivindicarLembrete(baseDraft.telefoneSessao, now),
+        ).resolves.toBe(true);
+        await expect(
+            repository.reivindicarLembrete(baseDraft.telefoneSessao, now),
+        ).resolves.toBe(false);
+        await expect(
+            repository.listarElegiveisParaLembrete(
+                now,
+                new Date(now.getTime()),
+            ),
+        ).resolves.toHaveLength(0);
+    });
+
+    it('reseta claim ao substituir rascunho', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        await repository.salvar(baseDraft);
+        await repository.reivindicarLembrete(
+            baseDraft.telefoneSessao,
+            new Date('2026-10-20T12:05:00-03:00'),
+        );
+
+        await repository.salvar({
+            ...baseDraft,
+            mensagemCriacaoId: 'message-2',
+            criadoEm: new Date('2026-10-20T12:06:00-03:00'),
+        });
+
+        await expect(
+            repository.obterValido(
+                baseDraft.telefoneSessao,
+                new Date('2026-10-20T12:07:00-03:00'),
+            ),
+        ).resolves.toMatchObject({
+            mensagemCriacaoId: 'message-2',
+            lembreteEnviadoEm: null,
+            resumoEnviadoEm: null,
+        });
+    });
+
+    it('não marca como enviado um rascunho substituto', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        await repository.salvar(baseDraft);
+        await repository.salvar({
+            ...baseDraft,
+            mensagemCriacaoId: 'message-2',
+        });
+
+        await expect(
+            repository.marcarResumoEnviado(
+                baseDraft.telefoneSessao,
+                'message-1',
+                new Date('2026-10-20T12:05:00-03:00'),
+            ),
+        ).resolves.toBe(false);
+        await expect(
+            repository.obterValido(
+                baseDraft.telefoneSessao,
+                new Date('2026-10-20T12:05:00-03:00'),
+            ),
+        ).resolves.toMatchObject({
+            mensagemCriacaoId: 'message-2',
+            resumoEnviadoEm: null,
+        });
+    });
+
+    it('lista e apaga apenas rascunhos expirados', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        const now = new Date('2026-10-20T12:10:00-03:00');
+        await repository.salvar({
+            ...baseDraft,
+            expiraEm: new Date(now.getTime() - 1),
+        });
+
+        await expect(repository.listarExpirados(now)).resolves.toHaveLength(1);
+        await expect(
+            repository.apagarExpirado(baseDraft.telefoneSessao, now),
+        ).resolves.toBe(true);
+        await expect(repository.listarExpirados(now)).resolves.toHaveLength(0);
+    });
+
     it('obterValido lê sem consumir e ignora expirado', async () => {
         const repository = new InMemoryPendingAgendamentoRepository();
         await repository.salvar(baseDraft);
@@ -125,5 +225,30 @@ describe('InMemoryPendingAgendamentoRepository', () => {
                 new Date('2026-10-20T12:05:00-03:00'),
             ),
         ).resolves.toMatchObject({ nomeCliente: 'Novo cliente' });
+    });
+});
+
+describe('PrismaPendingAgendamentoRepository', () => {
+    it('zera timestamps de envio ao criar ou substituir rascunho', async () => {
+        const upsert = vi.fn().mockImplementation(({ create }) => ({
+            ...create,
+            criadoEm: create.criadoEm ?? new Date(),
+        }));
+        const prisma = {
+            rascunhoAgendamento: { upsert },
+        } as unknown as PrismaClient;
+        const repository = new PrismaPendingAgendamentoRepository(prisma);
+
+        await repository.salvar({
+            ...baseDraft,
+            lembreteEnviadoEm: new Date('2026-10-20T12:05:00-03:00'),
+            resumoEnviadoEm: new Date('2026-10-20T12:05:00-03:00'),
+        });
+
+        const input = upsert.mock.calls[0][0];
+        expect(input.create.lembreteEnviadoEm).toBeNull();
+        expect(input.update.lembreteEnviadoEm).toBeNull();
+        expect(input.create.resumoEnviadoEm).toBeNull();
+        expect(input.update.resumoEnviadoEm).toBeNull();
     });
 });

@@ -104,7 +104,12 @@ class InMemoryPendingRepository implements PendingAgendamentoRepository {
             criadoEm?: Date;
         },
     ): Promise<PendingAgendamento> {
-        const saved = { ...draft, criadoEm: draft.criadoEm ?? new Date() };
+        const saved = {
+            ...draft,
+            criadoEm: draft.criadoEm ?? new Date(),
+            lembreteEnviadoEm: null,
+            resumoEnviadoEm: null,
+        };
         this.drafts.set(saved.telefoneSessao, saved);
         return { ...saved };
     }
@@ -142,8 +147,73 @@ class InMemoryPendingRepository implements PendingAgendamentoRepository {
         return true;
     }
 
-    async apagar(telefoneSessao: string): Promise<void> {
+    async listarElegiveisParaLembrete(
+        agora: Date,
+        criadoAte: Date,
+    ): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter(
+                (draft) =>
+                    draft.lembreteEnviadoEm == null &&
+                    draft.expiraEm > agora &&
+                    draft.criadoEm <= criadoAte,
+            )
+            .map((draft) => ({ ...draft }));
+    }
+
+    async reivindicarLembrete(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.lembreteEnviadoEm != null ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.lembreteEnviadoEm = agora;
+        return true;
+    }
+
+    async marcarResumoEnviado(
+        telefoneSessao: string,
+        mensagemCriacaoId: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (
+            !draft ||
+            draft.mensagemCriacaoId !== mensagemCriacaoId ||
+            draft.expiraEm <= agora
+        ) {
+            return false;
+        }
+        draft.resumoEnviadoEm = agora;
+        return true;
+    }
+
+    async listarExpirados(agora: Date): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()]
+            .filter((draft) => draft.expiraEm < agora)
+            .map((draft) => ({ ...draft }));
+    }
+
+    async apagarExpirado(
+        telefoneSessao: string,
+        agora: Date,
+    ): Promise<boolean> {
+        const draft = this.drafts.get(telefoneSessao);
+        if (!draft || draft.expiraEm >= agora) return false;
         this.drafts.delete(telefoneSessao);
+        return true;
+    }
+
+    async apagar(telefoneSessao: string): Promise<boolean> {
+        const existed = this.drafts.has(telefoneSessao);
+        this.drafts.delete(telefoneSessao);
+        return existed;
     }
 }
 
@@ -429,6 +499,28 @@ describe('contrato de confirmarAgendamento', () => {
 });
 
 describe('limpeza central de estado de confirmação', () => {
+    it('registra descarte por takeover sem dados pessoais', async () => {
+        await seedDraft();
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        await __testables.registrarRespostaHumanaIdempotente(
+            phone,
+            'human-message',
+            currentTime,
+        );
+
+        const eventCall = info.mock.calls.find(
+            (call: unknown[]) =>
+                call[0] === '[GEMINI SERVICE] rascunho_descartado_takeover',
+        );
+        expect(eventCall?.[1]).toEqual({
+            evento: 'rascunho_descartado_takeover',
+        });
+        expect(JSON.stringify(eventCall)).not.toContain(phone);
+        expect(JSON.stringify(eventCall)).not.toContain('João Silva');
+        info.mockRestore();
+    });
+
     it.each(['escalonamento', 'takeover comum', 'takeover idempotente'])(
         '%s limpa rascunho, resumo e confirmação',
         async (path) => {
