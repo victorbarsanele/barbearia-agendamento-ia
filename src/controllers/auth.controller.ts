@@ -21,6 +21,8 @@ interface AuthenticatedUser {
 }
 
 const INVALID_CREDENTIALS_MESSAGE = 'Usuario ou senha incorretos';
+const SESSION_DURATION_HOURS = 12;
+const SESSION_DURATION_SECONDS = SESSION_DURATION_HOURS * 60 * 60;
 
 function isCookieSecureEnabled(): boolean {
     return process.env.COOKIE_SECURE === 'true';
@@ -74,7 +76,7 @@ export async function login(
             role: user.role,
         },
         {
-            expiresIn: '8h',
+            expiresIn: `${SESSION_DURATION_HOURS}h`,
         },
     );
 
@@ -86,7 +88,7 @@ export async function login(
             secure: cookieSecure,
             sameSite: cookieSecure ? 'none' : 'lax',
             path: '/',
-            maxAge: 8 * 60 * 60,
+            maxAge: SESSION_DURATION_SECONDS,
         })
         .send({ message: 'Login realizado com sucesso.' });
 }

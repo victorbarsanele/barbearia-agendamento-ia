@@ -102,7 +102,11 @@ describe('auth cookie integration', () => {
         expect(setCookie).toContain('HttpOnly');
         expect(setCookie).toContain('Secure');
         expect(setCookie).toContain('SameSite=None');
-        expect(setCookie).toContain('Max-Age=28800');
+        expect(setCookie).toContain('Max-Age=43200');
+
+        const token = extractCookiePair(setCookie).slice('token='.length);
+        const payload = app.jwt.decode<{ iat: number; exp: number }>(token);
+        expect(payload?.exp - payload?.iat).toBe(12 * 60 * 60);
     });
 
     it('rota protegida sem cookie retorna 401', async () => {
