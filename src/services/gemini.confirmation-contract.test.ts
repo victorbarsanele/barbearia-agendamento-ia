@@ -515,4 +515,37 @@ describe('regras do prompt de sistema', () => {
             'Se o cliente confirmar ("sim", "pode", "isso") e houver na conversa um resumo recente enviado por você, chame confirmarAgendamento sem argumentos e NUNCA chame prepararAgendamento apenas porque o cliente confirmou.',
         );
     });
+
+    it('inclui identidade e regras de nome quando configuração existe', () => {
+        const prompt = __testables.buildSystemPrompt(undefined, {
+            nome: 'Carlos Silva',
+            nomesAceitos: ['Carlos Silva', 'Carlos', 'Cacá', 'Caca'],
+        });
+
+        expect(prompt).toContain(
+            'O barbeiro responsável pelos atendimentos se chama Carlos Silva. Também atende por Carlos, Cacá, Caca.',
+        );
+        expect(prompt).toContain(
+            'são dirigidas ao barbeiro e NUNCA indicam o nome do cliente.',
+        );
+        expect(prompt).toContain(
+            'O nome do cliente só vale quando ele o informa explicitamente em resposta à pergunta de nome.',
+        );
+    });
+
+    it('usa regra neutra sem identidade e mantém chamada compatível com um argumento', () => {
+        const prompt = __testables.buildSystemPrompt(
+            'CONTEXTO DE RASCUNHO',
+            null,
+        );
+
+        expect(prompt).toContain(
+            'Saudações e menções a nomes dirigidas à barbearia ou ao barbeiro nunca indicam o nome do cliente.',
+        );
+        expect(prompt).toContain('CONTEXTO DE RASCUNHO');
+        expect(prompt).not.toMatch(/undefined|null|\{nome\}/u);
+        expect(__testables.buildSystemPrompt('CONTEXTO DE RASCUNHO')).toContain(
+            'CONTEXTO DE RASCUNHO',
+        );
+    });
 });
