@@ -106,7 +106,16 @@ describe('auth cookie integration', () => {
 
         const token = extractCookiePair(setCookie).slice('token='.length);
         const payload = app.jwt.decode<{ iat: number; exp: number }>(token);
-        expect(payload?.exp - payload?.iat).toBe(12 * 60 * 60);
+
+        if (
+            !payload ||
+            typeof payload.exp !== 'number' ||
+            typeof payload.iat !== 'number'
+        ) {
+            throw new Error('JWT payload must contain numeric iat and exp.');
+        }
+
+        expect(payload.exp - payload.iat).toBe(12 * 60 * 60);
     });
 
     it('rota protegida sem cookie retorna 401', async () => {
