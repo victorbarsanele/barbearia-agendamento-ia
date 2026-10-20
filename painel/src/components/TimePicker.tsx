@@ -1,4 +1,9 @@
 import { useScrollTimePicker } from '../hooks/useScrollTimePicker';
+import {
+    HORAS_TIME_PICKER,
+    MINUTOS_TIME_PICKER,
+    horarioRepresentavelNoSeletor,
+} from '../utils/timePicker.js';
 
 interface TimePickerProps {
     value: string;
@@ -6,17 +11,16 @@ interface TimePickerProps {
     compact?: boolean;
 }
 
-const HOURS = Array.from({ length: 17 }, (_, index) =>
-    String(index + 6).padStart(2, '0'),
-);
-const MINUTES = ['00', '15', '30', '45'];
-
 export function TimePicker({
     value,
     onChange,
     compact = false,
 }: TimePickerProps) {
     const [selectedHour = '', selectedMinute = ''] = value.split(':');
+    const selectedTimeIsRepresentable = horarioRepresentavelNoSeletor(
+        selectedHour,
+        selectedMinute,
+    );
 
     const selectHour = (hour: string) => {
         onChange(`${hour}:${selectedMinute || '00'}`);
@@ -33,12 +37,14 @@ export function TimePicker({
         minuteButtonRefs,
         handleHourSelect,
         handleMinuteSelect,
+        markHourUserScrollIntent,
+        markMinuteUserScrollIntent,
         handleHourScroll,
         handleMinuteScroll,
     } = useScrollTimePicker({
         value,
-        hours: HOURS,
-        minutes: MINUTES,
+        hours: HORAS_TIME_PICKER,
+        minutes: MINUTOS_TIME_PICKER,
         onHourChange: selectHour,
         onMinuteChange: selectMinute,
     });
@@ -55,19 +61,41 @@ export function TimePicker({
             <div
                 ref={hourColumnRef}
                 onScroll={handleHourScroll}
+                onWheel={markHourUserScrollIntent}
+                onTouchStart={markHourUserScrollIntent}
+                onTouchMove={markHourUserScrollIntent}
+                onPointerDown={markHourUserScrollIntent}
+                onPointerMove={(event) => {
+                    if (event.buttons > 0) {
+                        markHourUserScrollIntent();
+                    }
+                }}
+                onKeyDown={(event) => {
+                    if (
+                        [
+                            'ArrowDown',
+                            'ArrowUp',
+                            'End',
+                            'Home',
+                            'PageDown',
+                            'PageUp',
+                        ].includes(event.key)
+                    ) {
+                        markHourUserScrollIntent();
+                    }
+                }}
                 className={columnClassName}
             >
                 <div className="space-y-1">
-                    {HOURS.map((hour) => (
+                    {HORAS_TIME_PICKER.map((hour, index) => (
                         <button
                             key={hour}
                             ref={(element) => {
-                                hourButtonRefs.current[HOURS.indexOf(hour)] =
-                                    element;
+                                hourButtonRefs.current[index] = element;
                             }}
                             type="button"
                             onClick={() => handleHourSelect(hour)}
-                            className={`${buttonClassName} ${hour === selectedHour ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                            className={`${buttonClassName} ${selectedTimeIsRepresentable && hour === selectedHour ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
                         >
                             {hour}
                         </button>
@@ -80,20 +108,41 @@ export function TimePicker({
             <div
                 ref={minuteColumnRef}
                 onScroll={handleMinuteScroll}
+                onWheel={markMinuteUserScrollIntent}
+                onTouchStart={markMinuteUserScrollIntent}
+                onTouchMove={markMinuteUserScrollIntent}
+                onPointerDown={markMinuteUserScrollIntent}
+                onPointerMove={(event) => {
+                    if (event.buttons > 0) {
+                        markMinuteUserScrollIntent();
+                    }
+                }}
+                onKeyDown={(event) => {
+                    if (
+                        [
+                            'ArrowDown',
+                            'ArrowUp',
+                            'End',
+                            'Home',
+                            'PageDown',
+                            'PageUp',
+                        ].includes(event.key)
+                    ) {
+                        markMinuteUserScrollIntent();
+                    }
+                }}
                 className={columnClassName}
             >
                 <div className="space-y-1">
-                    {MINUTES.map((minute) => (
+                    {MINUTOS_TIME_PICKER.map((minute, index) => (
                         <button
                             key={minute}
                             ref={(element) => {
-                                minuteButtonRefs.current[
-                                    MINUTES.indexOf(minute)
-                                ] = element;
+                                minuteButtonRefs.current[index] = element;
                             }}
                             type="button"
                             onClick={() => handleMinuteSelect(minute)}
-                            className={`${buttonClassName} ${minute === selectedMinute ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                            className={`${buttonClassName} ${selectedTimeIsRepresentable && minute === selectedMinute ? 'bg-[var(--color-gold-muted)] font-semibold text-[var(--color-gold)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
                         >
                             {minute}
                         </button>

@@ -22,6 +22,12 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { buscarSaldoPorServico } from '../utils/pacoteCliente';
 import { obterMotivosOverride } from '../utils/overrideExpediente';
+import {
+    horarioAgendamentoAlterado,
+    montarDataHoraInicioParaSalvar,
+    type PartesHorarioAgendamento,
+} from '../utils/horarioAgendamento.js';
+import { horarioRepresentavelNoSeletor } from '../utils/timePicker.js';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
@@ -66,6 +72,11 @@ function formatarDataHoraEmBrasilia(isoDate: string): string {
     }).format(new Date(isoDate));
 }
 
+function formatarHorarioSelecionado(partes: PartesHorarioAgendamento): string {
+    const [, mes = '', dia = ''] = partes.data.split('-');
+    return `${dia}/${mes} às ${partes.hora}:${partes.minuto}`;
+}
+
 function formatarPreco(valor: string | null): string {
     if (valor === null) {
         return 'Consultar';
@@ -93,6 +104,10 @@ export function EditarAgendamentoPage() {
     const [data, setData] = useState('');
     const [horaSelecionada, setHoraSelecionada] = useState('');
     const [minutoSelecionado, setMinutoSelecionado] = useState('');
+    const [horarioOriginal, setHorarioOriginal] = useState<{
+        dataHoraInicio: string;
+        partes: PartesHorarioAgendamento;
+    } | null>(null);
     const [notificarCliente, setNotificarCliente] = useState(false);
 
     const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
@@ -131,6 +146,20 @@ export function EditarAgendamentoPage() {
 
         return `${horaSelecionada}:${minutoSelecionado}`;
     }, [horaSelecionada, minutoSelecionado]);
+    const partesSelecionadas: PartesHorarioAgendamento = {
+        data,
+        hora: horaSelecionada,
+        minuto: minutoSelecionado,
+    };
+    const horarioAlterado =
+        horarioOriginal !== null &&
+        horarioAgendamentoAlterado(horarioOriginal.partes, partesSelecionadas);
+    const horarioOriginalRepresentavel =
+        horarioOriginal !== null &&
+        horarioRepresentavelNoSeletor(
+            horarioOriginal.partes.hora,
+            horarioOriginal.partes.minuto,
+        );
 
     useEffect(() => {
         return () => {
@@ -183,6 +212,14 @@ export function EditarAgendamentoPage() {
                 const [horaOnly, minutoOnly] = horaInicial.split(':');
                 setHoraSelecionada(horaOnly ?? '');
                 setMinutoSelecionado(minutoOnly ?? '');
+                setHorarioOriginal({
+                    dataHoraInicio: agendamentoResponse.dataHoraInicio,
+                    partes: {
+                        data: dataInicial,
+                        hora: horaOnly ?? '',
+                        minuto: minutoOnly ?? '',
+                    },
+                });
 
                 try {
                     const pacoteResponse = await buscarPacoteAtivoDoCliente(
@@ -309,7 +346,13 @@ export function EditarAgendamentoPage() {
         const payload: AtualizarAgendamentoPayload = {
             clienteId: agendamento.cliente.id,
             servicoId,
-            dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
+            dataHoraInicio: horarioOriginal
+                ? montarDataHoraInicioParaSalvar(
+                      horarioOriginal.dataHoraInicio,
+                      horarioOriginal.partes,
+                      partesSelecionadas,
+                  )
+                : toIsoWithBrasiliaOffset(data, hora),
             status: agendamento.status,
             notificarCliente,
         };
@@ -545,6 +588,34 @@ export function EditarAgendamentoPage() {
                                     timeTitle: 'SELECIONE UM NOVO HORÁRIO',
                                 }}
                             />
+                            {horarioOriginal && (
+                                <div className="mt-2 space-y-1 text-sm">
+                                    <p className="text-[var(--color-text-secondary)]">
+                                        Atual:{' '}
+                                        {formatarHorarioSelecionado(
+                                            horarioOriginal.partes,
+                                        )}
+                                    </p>
+                                    {horarioAlterado && (
+                                        <p
+                                            className="font-semibold text-[var(--color-gold)]"
+                                            aria-live="polite"
+                                        >
+                                            Novo:{' '}
+                                            {formatarHorarioSelecionado(
+                                                partesSelecionadas,
+                                            )}
+                                        </p>
+                                    )}
+                                    {!horarioOriginalRepresentavel && (
+                                        <p className="text-[var(--color-text-secondary)]">
+                                            Horário atual fora das opções do
+                                            seletor; será mantido se você não
+                                            escolher outro.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">

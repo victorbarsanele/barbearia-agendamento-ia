@@ -6,6 +6,11 @@ import {
     getBrazilDateKey,
     getBrazilDateParts,
 } from '../utils/dateTime';
+import {
+    HORAS_TIME_PICKER,
+    MINUTOS_TIME_PICKER,
+    horarioRepresentavelNoSeletor,
+} from '../utils/timePicker.js';
 
 type DateTimePickerProps = {
     value: Date | null;
@@ -19,11 +24,6 @@ type DateTimePickerProps = {
         timeTitle: string;
     };
 };
-
-const HOURS = Array.from({ length: 17 }, (_, index) =>
-    String(index + 6).padStart(2, '0'),
-);
-const MINUTES = ['00', '15', '30', '45'];
 
 export function DateTimePicker({
     value,
@@ -47,6 +47,10 @@ export function DateTimePicker({
     const valueParts = value ? getBrazilDateParts(value) : null;
     const selectedHour = valueParts?.hour ?? '';
     const selectedMinute = valueParts?.minute ?? '';
+    const selectedTimeIsRepresentable = horarioRepresentavelNoSeletor(
+        selectedHour,
+        selectedMinute,
+    );
     const activeDate = value ?? viewDate;
     const activeDateKey = getBrazilDateKey(activeDate);
     const minDateTimeKey = minDateTime ? getBrazilDateKey(minDateTime) : null;
@@ -126,12 +130,14 @@ export function DateTimePicker({
         minuteButtonRefs,
         handleHourSelect: handleHourClick,
         handleMinuteSelect: handleMinuteClick,
+        markHourUserScrollIntent,
+        markMinuteUserScrollIntent,
         handleHourScroll,
         handleMinuteScroll,
     } = useScrollTimePicker({
         value: `${selectedHour}:${selectedMinute}`,
-        hours: HOURS,
-        minutes: MINUTES,
+        hours: HORAS_TIME_PICKER,
+        minutes: MINUTOS_TIME_PICKER,
         onHourChange: handleHourSelect,
         onMinuteChange: handleMinuteSelect,
     });
@@ -167,14 +173,40 @@ export function DateTimePicker({
                         <div
                             ref={hourColumnRef}
                             onScroll={handleHourScroll}
+                            onWheel={markHourUserScrollIntent}
+                            onTouchStart={markHourUserScrollIntent}
+                            onTouchMove={markHourUserScrollIntent}
+                            onPointerDown={markHourUserScrollIntent}
+                            onPointerMove={(event) => {
+                                if (event.buttons > 0) {
+                                    markHourUserScrollIntent();
+                                }
+                            }}
+                            onKeyDown={(event) => {
+                                if (
+                                    [
+                                        'ArrowDown',
+                                        'ArrowUp',
+                                        'End',
+                                        'Home',
+                                        'PageDown',
+                                        'PageUp',
+                                    ].includes(event.key)
+                                ) {
+                                    markHourUserScrollIntent();
+                                }
+                            }}
                             className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-23"
                         >
                             <div className="space-y-1">
-                                {HOURS.map((hour, index) => {
-                                    const isSelected = hour === selectedHour;
-                                    const isDisabled = !MINUTES.some((minute) =>
-                                        isTimeAllowed(hour, minute),
-                                    );
+                                {HORAS_TIME_PICKER.map((hour, index) => {
+                                    const isSelected =
+                                        selectedTimeIsRepresentable &&
+                                        hour === selectedHour;
+                                    const isDisabled =
+                                        !MINUTOS_TIME_PICKER.some((minute) =>
+                                            isTimeAllowed(hour, minute),
+                                        );
 
                                     return (
                                         <button
@@ -206,11 +238,35 @@ export function DateTimePicker({
                         <div
                             ref={minuteColumnRef}
                             onScroll={handleMinuteScroll}
+                            onWheel={markMinuteUserScrollIntent}
+                            onTouchStart={markMinuteUserScrollIntent}
+                            onTouchMove={markMinuteUserScrollIntent}
+                            onPointerDown={markMinuteUserScrollIntent}
+                            onPointerMove={(event) => {
+                                if (event.buttons > 0) {
+                                    markMinuteUserScrollIntent();
+                                }
+                            }}
+                            onKeyDown={(event) => {
+                                if (
+                                    [
+                                        'ArrowDown',
+                                        'ArrowUp',
+                                        'End',
+                                        'Home',
+                                        'PageDown',
+                                        'PageUp',
+                                    ].includes(event.key)
+                                ) {
+                                    markMinuteUserScrollIntent();
+                                }
+                            }}
                             className="date-time-picker-scrollbar-hidden h-56 overflow-y-auto rounded-[14px] border border-[var(--color-border)] bg-[color:rgba(255,255,255,0.02)] px-2 py-23"
                         >
                             <div className="space-y-1">
-                                {MINUTES.map((minute, index) => {
+                                {MINUTOS_TIME_PICKER.map((minute, index) => {
                                     const isSelected =
+                                        selectedTimeIsRepresentable &&
                                         minute === selectedMinute;
                                     const isDisabled = !isTimeAllowed(
                                         selectedHour || '06',
