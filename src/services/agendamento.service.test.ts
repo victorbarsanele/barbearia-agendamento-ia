@@ -611,6 +611,260 @@ describe('agendamento.service.criar', () => {
         expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
         expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
     });
+
+    it('retorna todos os motivos brandos e permite override no painel', async () => {
+        vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
+            id: 'bloqueio-1',
+            dataHoraInicio: new Date('2026-07-20T08:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:00:00-03:00'),
+            motivo: 'Compromisso',
+            escopo: 'TODOS',
+            recorrencia: 'PONTUAL',
+            diaSemana: null,
+            horaInicioMinutos: null,
+            horaFimMinutos: null,
+            createdAt: new Date('2026-07-19T00:00:00Z'),
+        });
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T08:30:00-03:00',
+                registroRetroativo: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['fora_funcionamento', 'bloqueio_total'],
+            },
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T08:30:00-03:00',
+            registroRetroativo: true,
+            permitirForaDoExpediente: true,
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('retorna almoço como motivo brando e aceita override', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:30:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['almoco'],
+            },
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T11:30:00-03:00',
+            permitirForaDoExpediente: true,
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('retorna dia fechado como motivo brando e aceita override', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-26T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['dia_fechado'],
+            },
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-26T10:00:00-03:00',
+            permitirForaDoExpediente: true,
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('permite override de bloqueio total, mas ignora bloqueio SO_PAINEL', async () => {
+        vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
+            id: 'bloqueio-1',
+            dataHoraInicio: new Date('2026-07-20T10:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:00:00-03:00'),
+            motivo: 'Compromisso',
+            escopo: 'TODOS',
+            recorrencia: 'PONTUAL',
+            diaSemana: null,
+            horaInicioMinutos: null,
+            horaFimMinutos: null,
+            createdAt: new Date('2026-07-19T00:00:00Z'),
+        });
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['bloqueio_total'],
+            },
+        });
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            permitirForaDoExpediente: true,
+        });
+
+        vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
+            id: 'bloqueio-painel',
+            dataHoraInicio: new Date('2026-07-20T10:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:00:00-03:00'),
+            motivo: 'Pausa interna',
+            escopo: 'SO_PAINEL',
+            recorrencia: 'PONTUAL',
+            diaSemana: null,
+            horaInicioMinutos: null,
+            horaFimMinutos: null,
+            createdAt: new Date('2026-07-19T00:00:00Z'),
+        });
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+        });
+
+        expect(bloqueioRepository.buscarConflito).toHaveBeenLastCalledWith(
+            expect.any(Date),
+            expect.any(Date),
+            'PAINEL',
+        );
+        expect(agendamentoRepository.criar).toHaveBeenCalledTimes(2);
+    });
+
+    it('mantém conflito duro mesmo com override e rejeita cruzamento de dia', async () => {
+        vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue({
+            ...agendamentoAtual,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T08:30:00-03:00',
+                registroRetroativo: true,
+                permitirForaDoExpediente: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            message: 'Já existe um agendamento nesse horário.',
+        });
+
+        vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue(null);
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            duracaoMinutos: 60,
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T23:30:00-03:00',
+                permitirForaDoExpediente: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            message:
+                'Agendamento deve começar e terminar no mesmo dia (horário de Brasília).',
+        });
+    });
+
+    it('ignora override quando origem é Gemini', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-21T08:30:00-03:00',
+                origem: 'GEMINI',
+                permitirForaDoExpediente: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['fora_funcionamento'],
+            },
+        });
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('Gemini continua bloqueado por SO_PAINEL mesmo com override', async () => {
+        vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
+            id: 'bloqueio-painel',
+            dataHoraInicio: new Date('2026-07-21T10:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-21T11:00:00-03:00'),
+            motivo: 'Pausa interna',
+            escopo: 'SO_PAINEL',
+            recorrencia: 'PONTUAL',
+            diaSemana: null,
+            horaInicioMinutos: null,
+            horaFimMinutos: null,
+            createdAt: new Date('2026-07-19T00:00:00Z'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-21T10:00:00-03:00',
+                origem: 'GEMINI',
+                permitirForaDoExpediente: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['bloqueio_so_painel'],
+            },
+        });
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
 });
 
 describe('agendamento.service.cancelar', () => {
@@ -926,6 +1180,97 @@ describe('agendamento.service.atualizar', () => {
             statusCode: 422,
         });
 
+        expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+    });
+
+    it('não revalida antecedência ou regras brandas quando horário e serviço não mudam', async () => {
+        const foraDoExpediente = {
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T08:30:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:00:00-03:00'),
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(
+            foraDoExpediente,
+        );
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue(
+            foraDoExpediente,
+        );
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T08:30:00-03:00',
+                status: StatusAgendamento.CONFIRMADO,
+            }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-07-20T08:30:00-03:00'),
+        });
+
+        expect(
+            horarioFuncionamentoRepository.listarTodos,
+        ).not.toHaveBeenCalled();
+        expect(bloqueioRepository.buscarConflito).not.toHaveBeenCalled();
+        expect(agendamentoRepository.buscarConflito).not.toHaveBeenCalled();
+    });
+
+    it('exige override ao mover horário para fora do expediente', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(
+            agendamentoAtual,
+        );
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-21T08:30:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['fora_funcionamento'],
+            },
+        });
+        expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-21T08:30:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                permitirForaDoExpediente: true,
+            }),
+        ).resolves.toBeDefined();
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignora override explícito quando reagendamento tem origem Gemini', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-21T08:30:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                origem: 'GEMINI',
+                permitirForaDoExpediente: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['fora_funcionamento'],
+            },
+        });
         expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
     });
 });

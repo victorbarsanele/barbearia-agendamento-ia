@@ -370,6 +370,37 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).toContain('13:00');
     });
 
+    it('agendamentos fora do expediente ocupam apenas slots que se sobrepõem', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            {
+                ...agendamentoAtivoProximo,
+                dataHoraInicio: new Date('2026-07-22T08:30:00-03:00'),
+                dataHoraFim: new Date('2026-07-22T09:00:00-03:00'),
+            },
+            {
+                ...agendamentoAtivoProximo,
+                id: 'agendamento-almoco',
+                dataHoraInicio: new Date('2026-07-22T12:30:00-03:00'),
+                dataHoraFim: new Date('2026-07-22T13:30:00-03:00'),
+            },
+        ]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = (await __testables.buscarHorariosDisponiveisTool({
+            data: '2026-07-22',
+            servicoId: 'servico-1',
+        })) as { horarios: string[] };
+
+        expect(resultado.horarios).toContain('09:00');
+        expect(resultado.horarios).not.toContain('13:00');
+    });
+
+    it('nenhuma tool Gemini declara permitirForaDoExpediente', () => {
+        expect(JSON.stringify(__testables.functionDeclarations)).not.toContain(
+            'permitirForaDoExpediente',
+        );
+    });
+
     it('remove horários dentro de bloqueio e retorna motivo', async () => {
         vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
         vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([
@@ -882,6 +913,33 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             mensagem: 'Já existe um agendamento nesse horário.',
             motivoRecusa: 'Já existe um agendamento nesse horário.',
         });
+    });
+
+    it('reagendamento fora do expediente falha sem override Gemini', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+        ]);
+        vi.mocked(agendamentoService.atualizar).mockRejectedValue(
+            new Error('Agendamento fora do expediente.'),
+        );
+
+        const resultado = await __testables.atualizarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T08:30:00-03:00' },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            mensagem: 'Agendamento fora do expediente.',
+        });
+        expect(agendamentoService.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ origem: 'GEMINI' }),
+        );
+        expect(agendamentoService.atualizar).not.toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ permitirForaDoExpediente: true }),
+        );
     });
 
     it('cancelamento válido cancela agendamento ativo mais próximo', async () => {

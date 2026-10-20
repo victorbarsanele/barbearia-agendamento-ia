@@ -6,6 +6,7 @@ import * as clienteRepository from './cliente.repository';
 import * as agendamentoRepository from './agendamento.repository';
 import * as pacoteClienteRepository from './pacoteCliente.repository';
 import * as pacoteService from '../services/pacote.service';
+import * as horarioFuncionamentoService from '../services/horario-funcionamento.service';
 
 vi.mock('../services/horario-funcionamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
@@ -860,6 +861,39 @@ describe('agendamento.repository integração concorrência', () => {
         });
 
         expect(quantidade).toBe(1);
+    });
+
+    it('cria fora do expediente com override e constraint do banco barra sobreposição', async () => {
+        vi.mocked(
+            horarioFuncionamentoService.estaDentroDoHorarioDoAgendamentoComConfiguracao,
+        ).mockReturnValue(false);
+        const inicio = new Date('2035-06-04T08:30:00-03:00');
+        const fim = new Date(inicio.getTime() + 30 * 60_000);
+
+        const criado = await agendamentoService.criar({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            dataHoraInicio: inicio.toISOString(),
+            permitirForaDoExpediente: true,
+            origem: 'PAINEL',
+        });
+
+        await expect(
+            agendamentoRepository.criar({
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                status: StatusAgendamento.AGENDADO,
+            }),
+        ).rejects.toMatchObject({
+            message: 'Já existe um agendamento nesse horário.',
+            statusCode: 409,
+        });
+
+        await expect(
+            prisma.agendamento.findUnique({ where: { id: criado.id } }),
+        ).resolves.toMatchObject({ id: criado.id });
     });
 
     it('finaliza pacote somente quando todos os saldos de serviço zeram', async () => {
