@@ -34,6 +34,7 @@ export interface CriarAgendamentoBasePayload {
     servicoId: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+    permitirForaDoExpediente?: boolean;
 }
 
 export type CriarAgendamentoPayload = CriarAgendamentoBasePayload &
@@ -65,6 +66,7 @@ export interface AtualizarAgendamentoPayload {
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
+    permitirForaDoExpediente?: boolean;
 }
 
 export interface CancelarAgendamentoPayload {
@@ -104,6 +106,8 @@ export interface CriarLoteResultado {
 
 export interface ApiErrorBody {
     message?: string;
+    code?: string;
+    motivos?: unknown;
     slot?: SlotLote;
     motivo?: string;
     [key: string]: unknown;

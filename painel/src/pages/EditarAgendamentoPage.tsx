@@ -7,6 +7,7 @@ import {
     desvincularPacoteAgendamento,
     vincularPacoteAgendamento,
     type Agendamento,
+    type AtualizarAgendamentoPayload,
 } from '../services/agendamentos.service';
 import {
     buscarPacoteAtivoDoCliente,
@@ -15,10 +16,12 @@ import {
 import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { PageHeader } from '../components/ui/PageHeader';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { buscarSaldoPorServico } from '../utils/pacoteCliente';
+import { obterMotivosOverride } from '../utils/overrideExpediente';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
@@ -102,6 +105,10 @@ export function EditarAgendamentoPage() {
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
+    const [overridePendente, setOverridePendente] = useState<{
+        payload: AtualizarAgendamentoPayload;
+        motivos: string[];
+    } | null>(null);
 
     const fieldClassName =
         'h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]';
@@ -299,15 +306,51 @@ export function EditarAgendamentoPage() {
         setSubmetendo(true);
         setErro(null);
         setSucesso(null);
+        const payload: AtualizarAgendamentoPayload = {
+            clienteId: agendamento.cliente.id,
+            servicoId,
+            dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
+            status: agendamento.status,
+            notificarCliente,
+        };
 
         try {
+            await atualizarAgendamento(id, payload);
+            setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
+            redirectTimeoutRef.current = window.setTimeout(() => {
+                navigate('/');
+            }, 1200);
+        } catch (error) {
+            const motivosOverride = obterMotivosOverride(error);
+            if (motivosOverride) {
+                setOverridePendente({ payload, motivos: motivosOverride });
+                return;
+            }
+
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível atualizar o agendamento.';
+            setErro(message);
+            setSucesso(null);
+        } finally {
+            setSubmetendo(false);
+        }
+    };
+
+    const confirmarOverrideExpediente = async () => {
+        if (!overridePendente || !id) {
+            return;
+        }
+
+        setSubmetendo(true);
+        setErro(null);
+        try {
             await atualizarAgendamento(id, {
-                clienteId: agendamento.cliente.id,
-                servicoId,
-                dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
-                status: agendamento.status,
-                notificarCliente,
+                ...overridePendente.payload,
+                permitirForaDoExpediente: true,
             });
+            setOverridePendente(null);
             setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
                 navigate('/');
@@ -317,6 +360,7 @@ export function EditarAgendamentoPage() {
                 error instanceof Error
                     ? error.message
                     : 'Não foi possível atualizar o agendamento.';
+            setOverridePendente(null);
             setErro(message);
             setSucesso(null);
         } finally {
@@ -444,9 +488,10 @@ export function EditarAgendamentoPage() {
                             <select
                                 id="servico"
                                 value={servicoId}
-                                onChange={(event) =>
-                                    setServicoId(event.target.value)
-                                }
+                                onChange={(event) => {
+                                    setOverridePendente(null);
+                                    setServicoId(event.target.value);
+                                }}
                                 disabled={servicos.length === 0}
                                 className={`${fieldClassName} disabled:cursor-not-allowed disabled:opacity-60`}
                             >
@@ -486,6 +531,7 @@ export function EditarAgendamentoPage() {
                             <DateTimePicker
                                 value={dataHoraSelecionada}
                                 onChange={(nextDate: Date) => {
+                                    setOverridePendente(null);
                                     const parts = getBrazilDateParts(nextDate);
 
                                     setData(
@@ -534,6 +580,7 @@ export function EditarAgendamentoPage() {
                         )}
 
                         <Button
+                            id="editar-agendamento-submit"
                             type="submit"
                             variant="primary"
                             fullWidth
@@ -545,6 +592,21 @@ export function EditarAgendamentoPage() {
                     </form>
                 </Card>
             )}
+            <ConfirmDialog
+                open={overridePendente !== null}
+                alertDialog
+                title="Encaixar fora do expediente?"
+                description="O horário selecionado está fora da disponibilidade configurada:"
+                descriptionItems={overridePendente?.motivos}
+                confirmText="Encaixar mesmo assim"
+                loadingText="Encaixando..."
+                confirmVariant="primary"
+                cancelVariant="outline"
+                restoreFocusId="editar-agendamento-submit"
+                loading={submetendo}
+                onConfirm={() => void confirmarOverrideExpediente()}
+                onCancel={() => setOverridePendente(null)}
+            />
         </main>
     );
 }

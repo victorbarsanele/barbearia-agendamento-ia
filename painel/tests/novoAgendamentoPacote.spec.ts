@@ -250,6 +250,98 @@ test('sem pacote mantém o payload avulso sem campos de pacote', async ({
     expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
 });
 
+test('fora do expediente exige confirmação e reenvia o mesmo payload com override', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        createResponse: (attempt) =>
+            attempt === 1
+                ? {
+                      status: 422,
+                      body: {
+                          message: 'Horário fora do expediente.',
+                          code: 'FORA_DO_EXPEDIENTE',
+                          motivos: ['fora_funcionamento', 'almoco'],
+                      },
+                  }
+                : { status: 201, body: { id: 'agendamento-mock' } },
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Fora do horário de funcionamento');
+    await expect(dialog).toContainText('Horário de almoço');
+    await expect(page.getByRole('button', { name: 'Cancelar' })).toBeFocused();
+    await expect.poll(() => api.posts.length).toBe(1);
+    expect(api.posts[0]).not.toHaveProperty('permitirForaDoExpediente');
+
+    await dialog.getByRole('button', { name: 'Encaixar mesmo assim' }).click();
+    await expect.poll(() => api.posts.length).toBe(2);
+    expect(api.posts[1]).toEqual({
+        ...api.posts[0],
+        permitirForaDoExpediente: true,
+    });
+});
+
+test('cancelar confirmação de expediente não reenvia agendamento', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        createResponse: () => ({
+            status: 422,
+            body: {
+                message: 'Horário fora do expediente.',
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['dia_fechado'],
+            },
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(
+        page.getByRole('button', { name: 'Salvar agendamento' }),
+    ).toBeFocused();
+    expect(api.posts).toHaveLength(1);
+});
+
+test('conflito duro continua inline e não oferece override', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        createResponse: () => ({
+            status: 409,
+            body: {
+                message: 'Já existe um agendamento nesse horário.',
+                code: 'CONFLITO_HORARIO',
+            },
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(
+        page.getByText('Já existe um agendamento nesse horário.'),
+    ).toBeVisible();
+    expect(api.posts).toHaveLength(1);
+});
+
 test('pacote ativo com saldo oculta catálogo e alterna o vínculo', async ({
     page,
 }) => {
