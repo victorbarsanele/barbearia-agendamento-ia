@@ -372,6 +372,7 @@ describe('calendário e validação de weekday do Gemini', () => {
     it('rejeita divergência na busca sem consultar horários', async () => {
         const result = await __testables.buscarHorariosDisponiveisTool({
             data: '2026-10-30',
+            servicoId: service.id,
             diaDaSemana: 'sabado',
         });
         expect(result).toMatchObject({

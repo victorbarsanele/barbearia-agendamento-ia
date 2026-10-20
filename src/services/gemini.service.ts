@@ -131,6 +131,18 @@ interface BuscarHorariosDisponiveisArgs {
     diaDaSemana?: string;
 }
 
+interface ServicoParaDisponibilidade {
+    id: string;
+    nome: string;
+    duracaoMinutos: number;
+    permiteExtensaoFechamento: boolean;
+}
+
+interface ResultadoCalculoDisponibilidade {
+    horarios: string[];
+    bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
+}
+
 interface CriarAgendamentoArgs {
     nomeCliente: string;
     telefone: string;
@@ -214,6 +226,10 @@ const BASE_SYSTEM_PROMPT = [
     'Sempre que cliente mencionar agendamento, reagendamento ou cancelamento, chame consultarAgendamento novamente antes de decidir a próxima ação.',
     'Sempre que cliente perguntar sobre disponibilidade de horário, chame buscarHorariosDisponiveis novamente, mesmo que já tenha consultado antes na mesma conversa.',
     'Nunca afirme, sugira ou insinue disponibilidade para data ou horário sem retorno de buscarHorariosDisponiveis no mesmo turno, inclusive "temos disponibilidade a partir de [data]".',
+    'No agendamento, colete nesta ordem: serviço, disponibilidade com servicoId, horário e nome completo.',
+    'Se cliente informar horário antes do serviço, pergunte qual serviço deseja; depois chame buscarHorariosDisponiveis com o servicoId e só então valide ou ofereça o horário.',
+    'Nunca liste horários sem chamar buscarHorariosDisponiveis com servicoId no mesmo turno. A lista vale apenas para serviço e data consultados.',
+    'Após mudança de serviço ou data, consulte disponibilidade novamente. Nunca reutilize nem edite lista antiga. Após conflito, use somente alternativas retornadas pela tool; se lista vier vazia, consulte outra data após cliente escolher.',
     'Nunca ofereça, sugira ou consulte como opção dia identificado como fechado no calendário. Se cliente pedir esse dia, informe que a barbearia não abre nele e pergunte qual outro dia prefere; não cite disponibilidade sem consultar buscarHorariosDisponiveis.',
     'Se cliente responder "sim", "pode" ou equivalente a uma oferta para verificar outra data, pergunte apenas qual data prefere, sem sugerir datas.',
     'Nunca reutilize resposta antiga do histórico para inferir se cliente tem agendamento ativo, pois estado pode ter mudado no painel administrativo.',
@@ -349,7 +365,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'buscarHorariosDisponiveis',
         description:
-            "Retorna horários livres em uma data desejada, considerando configuração de funcionamento, agenda e bloqueios administrativos. O retorno pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
+            "Retorna horários livres em uma data para o serviço informado, considerando duração, funcionamento, agenda e bloqueios administrativos. servicoId é obrigatório; a lista vale somente para duração desse serviço. O retorno inclui serviço e duracaoMinutos e pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
         parametersJsonSchema: {
             type: 'object',
             properties: {
@@ -367,10 +383,10 @@ const functionDeclarations: FunctionDeclaration[] = [
                 servicoId: {
                     type: 'string',
                     description:
-                        'ID do serviço para considerar a duração ao calcular disponibilidade.',
+                        'Obrigatório. ID interno do serviço; a lista retornada vale somente para a duração deste serviço.',
                 },
             },
-            required: ['data'],
+            required: ['data', 'servicoId'],
         },
     },
     {
@@ -975,6 +991,8 @@ type MotivoPrepararAgendamento =
     | 'nome_longo'
     | 'telefone_invalido'
     | 'servico_nao_encontrado'
+    | 'servico_ausente'
+    | 'servico_busca_nao_encontrado'
     | 'horario_rejeitado'
     | 'dia_semana_divergente'
     | 'dia_semana_invalido';
@@ -1029,7 +1047,11 @@ function logPrepararAgendamento(
 }
 
 function logBuscaHorarios(
-    motivo: 'dia_semana_divergente' | 'dia_semana_invalido',
+    motivo:
+        | 'dia_semana_divergente'
+        | 'dia_semana_invalido'
+        | 'servico_ausente'
+        | 'servico_busca_nao_encontrado',
 ): void {
     logToolData('buscarHorariosDisponiveis', motivo);
 }
@@ -1451,95 +1473,23 @@ async function resolverServicoId(
     return (await resolverServico(servicoIdOuNome)).servico?.id ?? null;
 }
 
-async function buscarHorariosDisponiveisTool(
-    args: BuscarHorariosDisponiveisArgs,
-): Promise<{
-    data: string;
-    diaSemana: string | null;
-    horarios: string[];
-    bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
-    observacao?: string;
-    sucesso?: false;
-    mensagem?: string;
-    opcoes?: [OpcaoDataDia, OpcaoDataDia];
-}> {
-    if (
-        args.diaDaSemana !== undefined &&
-        !DIAS_SEMANA.includes(args.diaDaSemana as DiaDaSemana)
-    ) {
-        logBuscaHorarios('dia_semana_invalido');
-        return {
-            sucesso: false,
-            data: args.data,
-            diaSemana: null,
-            horarios: [],
-            bloqueios: [],
-            mensagem: resultadoDiaInvalido().mensagem,
-        };
-    }
-
-    const date = parseDateOnly(args.data);
-
-    if (!date) {
-        return {
-            data: args.data,
-            diaSemana: null,
-            horarios: [],
-            bloqueios: [],
-            observacao:
-                'Data inválida. Informe dia, mês e ano para eu verificar horários.',
-        };
-    }
-
-    const diaReal = diaDaSemanaEmBrasilia(args.data);
-    const validacaoDia = validarDiaDaSemanaInformado(
-        args.data,
-        args.diaDaSemana,
-    );
-    if (validacaoDia.tipo === 'divergente') {
-        logBuscaHorarios('dia_semana_divergente');
-        return {
-            data: args.data,
-            diaSemana: nomeDiaDaSemana(diaReal),
-            horarios: [],
-            bloqueios: [],
-            ...mensagemValidacaoDia(validacaoDia),
-        };
-    }
-
-    const configuracao = await carregarConfiguracao();
-
-    if (!isWorkingDay(configuracao, date)) {
-        return {
-            data: args.data,
-            diaSemana: nomeDiaDaSemana(diaReal),
-            horarios: [],
-            bloqueios: [],
-            observacao:
-                'A barbearia funciona de segunda a sexta, das 09h às 20h, e sábado, das 08h às 17h.',
-        };
+async function calcularHorariosDisponiveis(
+    data: string,
+    date: Date,
+    configuracao: HorarioFuncionamentoConfig[],
+    servico: ServicoParaDisponibilidade,
+): Promise<ResultadoCalculoDisponibilidade> {
+    const horario = obterHorarioFuncionamento(configuracao, date);
+    if (!horario) {
+        return { horarios: [], bloqueios: [] };
     }
 
     const allAgendamentos = await agendamentoRepository.listarTodos();
     const bloqueios = await bloqueioRepository.listarTodos({
-        dataHoraInicio: dateAtMinutesInBrasilia(args.data, 0),
-        dataHoraFim: dateAtMinutesInBrasilia(args.data, 24 * 60),
+        dataHoraInicio: dateAtMinutesInBrasilia(data, 0),
+        dataHoraFim: dateAtMinutesInBrasilia(data, 24 * 60),
     });
-    const servicos = await servicoRepository.listarTodos();
     const targetDateKey = getDateKeyInBrasilia(date);
-
-    const servicoNormalizado = args.servicoId?.trim().toLowerCase() ?? '';
-    const servicoSelecionado = servicos.find((servico) => {
-        const nomeNormalizado = servico.nome.trim().toLowerCase();
-
-        return (
-            servico.id === args.servicoId ||
-            (servicoNormalizado.length > 0 &&
-                nomeNormalizado === servicoNormalizado)
-        );
-    });
-    const duracaoConsulta = servicoSelecionado?.duracaoMinutos ?? SLOT_MINUTOS;
-
     const intervals = allAgendamentos
         .filter(
             (agendamento) => agendamento.status !== StatusAgendamento.CANCELADO,
@@ -1580,22 +1530,9 @@ async function buscarHorariosDisponiveisTool(
         ];
     });
 
-    const horario = obterHorarioFuncionamento(configuracao, date);
-    if (!horario) {
-        return {
-            data: args.data,
-            diaSemana: nomeDiaDaSemana(diaReal),
-            horarios: [],
-            bloqueios: [],
-            observacao: 'A barbearia não funciona aos domingos.',
-        };
-    }
-
-    const permiteExtensaoFechamento =
-        servicoSelecionado?.permiteExtensaoFechamento ?? false;
-    const openMinutes = horario.horaAberturaMinutos;
     const closeMinutes =
-        permiteExtensaoFechamento && horario.limiteExtensaoMinutos !== null
+        servico.permiteExtensaoFechamento &&
+        horario.limiteExtensaoMinutos !== null
             ? horario.limiteExtensaoMinutos
             : horario.horaFechamentoMinutos;
     const freeSlots: string[] = [];
@@ -1604,38 +1541,32 @@ async function buscarHorariosDisponiveisTool(
     );
 
     for (
-        let minute = openMinutes;
-        minute + duracaoConsulta <= closeMinutes;
+        let minute = horario.horaAberturaMinutos;
+        minute + servico.duracaoMinutos <= closeMinutes;
         minute += SLOT_MINUTOS
     ) {
-        const slotStart = minute;
-        const slotEnd = minute + duracaoConsulta;
-        const slotStartDate = dateAtMinutesInBrasilia(args.data, slotStart);
-        const slotEndDate = dateAtMinutesInBrasilia(args.data, slotEnd);
+        const slotEnd = minute + servico.duracaoMinutos;
+        const slotStartDate = dateAtMinutesInBrasilia(data, minute);
+        const slotEndDate = dateAtMinutesInBrasilia(data, slotEnd);
 
         if (
             !estaDentroDoHorarioDoAgendamento(
                 configuracao,
                 slotStartDate,
                 slotEndDate,
-                permiteExtensaoFechamento,
-            )
+                servico.permiteExtensaoFechamento,
+            ) ||
+            slotStartDate.getTime() < earliestAllowedStart.getTime()
         ) {
             continue;
         }
 
-        if (slotStartDate.getTime() < earliestAllowedStart.getTime()) {
-            continue;
-        }
-
         const hasConflict = intervals.some(
-            (interval) => interval.start < slotEnd && interval.end > slotStart,
+            (interval) => interval.start < slotEnd && interval.end > minute,
         );
-
         const hasBlockedTime = bloqueioIntervals.some(
-            (interval) => interval.start < slotEnd && interval.end > slotStart,
+            (interval) => interval.start < slotEnd && interval.end > minute,
         );
-
         const sobrepoeAlmoco = estaDentroDoHorarioDeAlmoco(
             horario,
             slotStartDate,
@@ -1648,8 +1579,6 @@ async function buscarHorariosDisponiveisTool(
     }
 
     return {
-        data: args.data,
-        diaSemana: nomeDiaDaSemana(diaReal),
         horarios: freeSlots,
         bloqueios: bloqueios.flatMap((bloqueio) => {
             if (
@@ -1668,6 +1597,166 @@ async function buscarHorariosDisponiveisTool(
                 },
             ];
         }),
+    };
+}
+
+function resultadoBuscaSemServico(
+    data: string,
+    motivo: 'servico_ausente' | 'servico_busca_nao_encontrado',
+) {
+    logBuscaHorarios(motivo);
+    return {
+        sucesso: false as const,
+        data,
+        diaSemana: null,
+        horarios: [],
+        bloqueios: [],
+        mensagem:
+            'Para consultar horários, preciso confirmar qual serviço você deseja.',
+        instrucao:
+            'Pergunte qual serviço o cliente deseja e chame buscarServicos antes de consultar horários.',
+    };
+}
+
+function ehConflitoDeAgendamento(error: unknown): boolean {
+    if (!(error instanceof Error) || statusDoErro(error) !== 409) {
+        return false;
+    }
+
+    return (
+        error.message === 'Já existe um agendamento nesse horário.' ||
+        error.message === 'Você já tem agendamento nesse horário.'
+    );
+}
+
+async function buscarAlternativasDeConflito(
+    dataHoraInicio: string,
+    servico: ServicoParaDisponibilidade,
+): Promise<string[]> {
+    const data = chaveDataDeEntrada(dataHoraInicio);
+    const date = data ? parseDateOnly(data) : null;
+    if (!data || !date) {
+        return [];
+    }
+
+    try {
+        const configuracao = await carregarConfiguracao();
+        if (!isWorkingDay(configuracao, date)) {
+            return [];
+        }
+
+        return (
+            await calcularHorariosDisponiveis(data, date, configuracao, servico)
+        ).horarios;
+    } catch {
+        return [];
+    }
+}
+
+async function buscarHorariosDisponiveisTool(
+    args: BuscarHorariosDisponiveisArgs,
+): Promise<{
+    data: string;
+    diaSemana: string | null;
+    horarios: string[];
+    bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
+    servico?: string;
+    duracaoMinutos?: number;
+    observacao?: string;
+    sucesso?: false;
+    mensagem?: string;
+    instrucao?: string;
+    opcoes?: [OpcaoDataDia, OpcaoDataDia];
+}> {
+    const servicoId = args.servicoId?.trim();
+    if (!servicoId) {
+        return resultadoBuscaSemServico(args.data, 'servico_ausente');
+    }
+
+    const servico = (await servicoRepository.listarTodos()).find(
+        (item) => item.id === servicoId,
+    );
+    if (!servico) {
+        return resultadoBuscaSemServico(
+            args.data,
+            'servico_busca_nao_encontrado',
+        );
+    }
+
+    if (
+        args.diaDaSemana !== undefined &&
+        !DIAS_SEMANA.includes(args.diaDaSemana as DiaDaSemana)
+    ) {
+        logBuscaHorarios('dia_semana_invalido');
+        return {
+            sucesso: false,
+            data: args.data,
+            diaSemana: null,
+            horarios: [],
+            bloqueios: [],
+            mensagem: resultadoDiaInvalido().mensagem,
+        };
+    }
+
+    const date = parseDateOnly(args.data);
+
+    if (!date) {
+        return {
+            data: args.data,
+            diaSemana: null,
+            horarios: [],
+            bloqueios: [],
+            observacao:
+                'Data inválida. Informe dia, mês e ano para eu verificar horários.',
+        };
+    }
+
+    const diaReal = diaDaSemanaEmBrasilia(args.data);
+    const validacaoDia = validarDiaDaSemanaInformado(
+        args.data,
+        args.diaDaSemana,
+    );
+    if (validacaoDia.tipo === 'divergente') {
+        logBuscaHorarios('dia_semana_divergente');
+        return {
+            data: args.data,
+            diaSemana: nomeDiaDaSemana(diaReal),
+            horarios: [],
+            bloqueios: [],
+            servico: servico.nome,
+            duracaoMinutos: servico.duracaoMinutos,
+            ...mensagemValidacaoDia(validacaoDia),
+        };
+    }
+
+    const configuracao = await carregarConfiguracao();
+
+    if (!isWorkingDay(configuracao, date)) {
+        return {
+            data: args.data,
+            diaSemana: nomeDiaDaSemana(diaReal),
+            horarios: [],
+            bloqueios: [],
+            servico: servico.nome,
+            duracaoMinutos: servico.duracaoMinutos,
+            observacao:
+                'A barbearia funciona de segunda a sexta, das 09h às 20h, e sábado, das 08h às 17h.',
+        };
+    }
+    const resultado = await calcularHorariosDisponiveis(
+        args.data,
+        date,
+        configuracao,
+        servico,
+    );
+
+    return {
+        data: args.data,
+        diaSemana: nomeDiaDaSemana(diaReal),
+        horarios: resultado.horarios,
+        bloqueios: resultado.bloqueios,
+        servico: servico.nome,
+        duracaoMinutos: servico.duracaoMinutos,
     };
 }
 
@@ -1890,6 +1979,9 @@ async function prepararAgendamentoTool(
     instrucao?: string;
     resumo?: string;
     opcoes?: [OpcaoDataDia, OpcaoDataDia];
+    alternativas?: string[];
+    servico?: string;
+    duracaoMinutos?: number;
 }> {
     if (!messageId) {
         logPrepararAgendamento('sem_message_id');
@@ -1987,17 +2079,29 @@ async function prepararAgendamentoTool(
             cliente?.id,
         );
     } catch (error) {
+        const mensagem =
+            error instanceof Error
+                ? error.message
+                : 'Não foi possível validar esse horário.';
+        const conflitoDeAgendamento = ehConflitoDeAgendamento(error);
         logPrepararAgendamento(
             'horario_rejeitado',
             statusDoErro(error),
-            error instanceof Error ? error.message : undefined,
+            mensagem,
         );
         return {
             sucesso: false,
-            mensagem:
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível validar esse horário.',
+            mensagem,
+            ...(conflitoDeAgendamento
+                ? {
+                      alternativas: await buscarAlternativasDeConflito(
+                          dataHoraInicio,
+                          servico,
+                      ),
+                      servico: servico.nome,
+                      duracaoMinutos: servico.duracaoMinutos,
+                  }
+                : {}),
         };
     }
 
