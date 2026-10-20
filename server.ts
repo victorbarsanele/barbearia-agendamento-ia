@@ -43,7 +43,9 @@ const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
 
 app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AppError) {
-        void reply.status(error.statusCode).send({ message: error.message });
+        void reply
+            .status(error.statusCode)
+            .send({ message: error.message, ...(error.details ?? {}) });
         return;
     }
 

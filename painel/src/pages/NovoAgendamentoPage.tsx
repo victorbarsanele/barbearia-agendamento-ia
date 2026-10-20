@@ -20,10 +20,12 @@ import { listarServicos, type Servico } from '../services/servicos.service';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PageHeader } from '../components/ui/PageHeader';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
+import { obterMotivosOverride } from '../utils/overrideExpediente';
 import {
     buscarSaldoPorServico,
     filtrarServicosPorPacoteAtivo,
@@ -138,6 +140,10 @@ export function NovoAgendamentoPage() {
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
+    const [overridePendente, setOverridePendente] = useState<{
+        payload: CriarAgendamentoPayload;
+        motivos: string[];
+    } | null>(null);
 
     const clienteIdSelecionado = clienteSelecionado?.id ?? null;
     const resultadoConsultaPacoteAtivoAtual =
@@ -462,6 +468,7 @@ export function NovoAgendamentoPage() {
     ]);
 
     const handleSelecionarCliente = (cliente: Cliente) => {
+        setOverridePendente(null);
         if (clienteSelecionado?.id !== cliente.id) {
             setPacoteCatalogoId('');
             setUsarPacoteAtivo(false);
@@ -475,6 +482,7 @@ export function NovoAgendamentoPage() {
     };
 
     const handleChangeCliente = (value: string) => {
+        setOverridePendente(null);
         setQueryCliente(value);
         setErro(null);
         setSucesso(null);
@@ -493,6 +501,7 @@ export function NovoAgendamentoPage() {
     };
 
     const limparClienteSelecionado = () => {
+        setOverridePendente(null);
         setClienteSelecionado(null);
         setPacoteCatalogoId('');
         setUsarPacoteAtivo(false);
@@ -505,6 +514,7 @@ export function NovoAgendamentoPage() {
     };
 
     const handlePacoteCatalogoChange = (pacoteId: string) => {
+        setOverridePendente(null);
         const pacote = pacotesCatalogo.find((item) => item.id === pacoteId);
         const servicosDoPacote = filtrarServicosPorPacoteCatalogo(
             servicos,
@@ -520,6 +530,7 @@ export function NovoAgendamentoPage() {
     };
 
     const handleUsarPacoteAtivoChange = (checked: boolean) => {
+        setOverridePendente(null);
         setUsarPacoteAtivo(checked);
         if (checked) {
             setPacoteCatalogoId('');
@@ -541,6 +552,7 @@ export function NovoAgendamentoPage() {
     };
 
     const handleChangeDataHora = (nextDate: Date) => {
+        setOverridePendente(null);
         const parts = getBrazilDateParts(nextDate);
         const nextData = `${String(parts.year).padStart(4, '0')}-${String(
             parts.monthIndex + 1,
@@ -568,6 +580,7 @@ export function NovoAgendamentoPage() {
     };
 
     const handleRegistroRetroativoChange = (checked: boolean) => {
+        setOverridePendente(null);
         setRegistroRetroativo(checked);
 
         if (!checked && dataHoraSelecionada) {
@@ -639,6 +652,12 @@ export function NovoAgendamentoPage() {
                 navigate(getAgendaUrlForAgendamento(payload.dataHoraInicio));
             }, 1200);
         } catch (error) {
+            const motivosOverride = obterMotivosOverride(error);
+            if (motivosOverride) {
+                setOverridePendente({ payload, motivos: motivosOverride });
+                return;
+            }
+
             if (
                 error instanceof ApiError &&
                 error.status === 409 &&
@@ -662,6 +681,40 @@ export function NovoAgendamentoPage() {
                 error instanceof Error
                     ? error.message
                     : 'Não foi possível criar o agendamento.';
+            setErro(message);
+            setSucesso(null);
+        } finally {
+            setSubmetendo(false);
+        }
+    };
+
+    const confirmarOverrideExpediente = async () => {
+        if (!overridePendente) {
+            return;
+        }
+
+        setSubmetendo(true);
+        setErro(null);
+        try {
+            await criarAgendamento({
+                ...overridePendente.payload,
+                permitirForaDoExpediente: true,
+            });
+            setOverridePendente(null);
+            setSucesso('Agendamento criado com sucesso! Redirecionando...');
+            redirectTimeoutRef.current = window.setTimeout(() => {
+                navigate(
+                    getAgendaUrlForAgendamento(
+                        overridePendente.payload.dataHoraInicio,
+                    ),
+                );
+            }, 1200);
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível criar o agendamento.';
+            setOverridePendente(null);
             setErro(message);
             setSucesso(null);
         } finally {
@@ -952,9 +1005,10 @@ export function NovoAgendamentoPage() {
                                                 name="servico"
                                                 value={servico.id}
                                                 checked={selecionado}
-                                                onChange={() =>
-                                                    setServicoId(servico.id)
-                                                }
+                                                onChange={() => {
+                                                    setOverridePendente(null);
+                                                    setServicoId(servico.id);
+                                                }}
                                                 className="sr-only"
                                             />
                                             <div className="min-w-0 flex-1 break-words">
@@ -1135,6 +1189,7 @@ export function NovoAgendamentoPage() {
                     )}
 
                     <Button
+                        id="novo-agendamento-submit"
                         type="submit"
                         variant="primary"
                         fullWidth
@@ -1145,6 +1200,21 @@ export function NovoAgendamentoPage() {
                     </Button>
                 </form>
             </Card>
+            <ConfirmDialog
+                open={overridePendente !== null}
+                alertDialog
+                title="Encaixar fora do expediente?"
+                description="O horário selecionado está fora da disponibilidade configurada:"
+                descriptionItems={overridePendente?.motivos}
+                confirmText="Encaixar mesmo assim"
+                loadingText="Encaixando..."
+                confirmVariant="primary"
+                cancelVariant="outline"
+                restoreFocusId="novo-agendamento-submit"
+                loading={submetendo}
+                onConfirm={() => void confirmarOverrideExpediente()}
+                onCancel={() => setOverridePendente(null)}
+            />
         </main>
     );
 }

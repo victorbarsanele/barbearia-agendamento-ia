@@ -56,6 +56,7 @@ vi.mock('./agendamento.service', () => ({
 import { InMemoryPendingAgendamentoRepository } from '../repositories/pending-agendamento.repository';
 import { EstadoEscalonamento } from '@prisma/client';
 import { AppError } from '../lib/app-error';
+import * as agendamentoService from './agendamento.service';
 import { __testables, escalarParaHumano } from './gemini.service';
 
 const phone = '5511999999999';
@@ -153,6 +154,37 @@ describe('confirmação de agendamento', () => {
         );
         await expect(prepare('m1')).resolves.toMatchObject({ sucesso: false });
         expect(mocks.criar).not.toHaveBeenCalled();
+    });
+
+    it('recusa horário fora do expediente durante preparação', async () => {
+        mocks.validarDisponibilidade.mockRejectedValueOnce(
+            new Error('Agendamento fora do expediente.'),
+        );
+
+        await expect(
+            prepare('outside', {
+                ...draft,
+                dataHoraInicio: '2026-07-22T08:30:00',
+            }),
+        ).resolves.toMatchObject({ sucesso: false });
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'confirm-outside'),
+        ).resolves.toMatchObject({ sucesso: false });
+        expect(mocks.criar).not.toHaveBeenCalled();
+    });
+
+    it('confirmação revalida e não grava quando horário deixou de ser permitido', async () => {
+        await prepare('prepare-before-change');
+        mocks.criar.mockRejectedValueOnce(
+            new Error('Agendamento fora do expediente.'),
+        );
+
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'confirm-after-change'),
+        ).resolves.toMatchObject({ sucesso: false });
+        expect(agendamentoService.criar).toHaveBeenCalledWith(
+            expect.not.objectContaining({ permitirForaDoExpediente: true }),
+        );
     });
 
     it.each([EstadoEscalonamento.ESCALADO, EstadoEscalonamento.HUMANO_ATIVO])(

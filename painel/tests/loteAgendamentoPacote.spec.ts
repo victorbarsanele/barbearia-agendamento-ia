@@ -622,8 +622,10 @@ test('lote sem pacote mantém payload e sucesso atual', async ({ page }) => {
 
     expect(api.simulations[0]).not.toHaveProperty('pacoteId');
     expect(api.simulations[0]).not.toHaveProperty('pacoteClienteId');
+    expect(api.simulations[0]).not.toHaveProperty('permitirForaDoExpediente');
     expect(api.creates[0]).not.toHaveProperty('pacoteId');
     expect(api.creates[0]).not.toHaveProperty('pacoteClienteId');
+    expect(api.creates[0]).not.toHaveProperty('permitirForaDoExpediente');
     await expect(
         page.getByRole('heading', { name: 'Agendar em lote' }),
     ).toHaveCount(0);

@@ -16,6 +16,7 @@ import {
     resolverServicoAposTrocaPacote,
     traduzirMotivoConflitoLote,
 } from '../src/utils/pacoteCatalogo.js';
+import { obterMotivosOverride } from '../src/utils/overrideExpediente.js';
 
 const servicos: Servico[] = [
     {
@@ -165,4 +166,55 @@ test('criarAgendamento lança ApiError com status e mensagem HTTP intacta', asyn
     } finally {
         globalThis.fetch = fetchOriginal;
     }
+});
+
+test('lê erro estruturado da raiz e traduz motivos de expediente', async () => {
+    const fetchOriginal = globalThis.fetch;
+    globalThis.fetch = async () =>
+        new Response(
+            JSON.stringify({
+                message: 'Horário fora do expediente.',
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['fora_funcionamento', 'almoco'],
+            }),
+            {
+                status: 422,
+                headers: { 'Content-Type': 'application/json' },
+            },
+        );
+
+    try {
+        let erro: unknown;
+        try {
+            await criarAgendamento(base);
+        } catch (error) {
+            erro = error;
+        }
+
+        expect(erro).toBeInstanceOf(ApiError);
+        expect(obterMotivosOverride(erro)).toEqual([
+            'Fora do horário de funcionamento',
+            'Horário de almoço',
+        ]);
+    } finally {
+        globalThis.fetch = fetchOriginal;
+    }
+});
+
+test('motivo desconhecido usa mensagem legada; erro duro não abre override', () => {
+    expect(
+        obterMotivosOverride(
+            new ApiError('Mensagem legada', 422, {
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['futuro_motivo'],
+            }),
+        ),
+    ).toEqual(['Mensagem legada']);
+    expect(
+        obterMotivosOverride(
+            new ApiError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            }),
+        ),
+    ).toBeNull();
 });

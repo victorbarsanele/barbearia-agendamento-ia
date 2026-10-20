@@ -18,6 +18,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                         pacoteClienteId: { type: 'string', minLength: 1 },
                         dataHoraInicio: { type: 'string', format: 'date-time' },
                         registroRetroativo: { type: 'boolean', default: false },
+                        permitirForaDoExpediente: { type: 'boolean' },
                     },
                 },
             },
@@ -79,6 +80,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                             ],
                         },
                         notificarCliente: { type: 'boolean' },
+                        permitirForaDoExpediente: { type: 'boolean' },
                     },
                 },
             },
@@ -191,12 +193,18 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
         type: 'object',
         required: ['clienteId', 'servicoId', 'slots'],
         additionalProperties: false,
-        not: { required: ['pacoteId', 'pacoteClienteId'] },
+        not: {
+            anyOf: [
+                { required: ['pacoteId', 'pacoteClienteId'] },
+                { required: ['permitirForaDoExpediente'] },
+            ],
+        },
         properties: {
             clienteId: { type: 'string', minLength: 1 },
             servicoId: { type: 'string', minLength: 1 },
             pacoteId: { type: 'string', minLength: 1 },
             pacoteClienteId: { type: 'string', minLength: 1 },
+            permitirForaDoExpediente: { type: 'boolean' },
             slots: { type: 'array', items: slotLoteSchema, minItems: 1 },
         },
     } as const;

@@ -10,6 +10,7 @@ interface CriarAgendamentoBody {
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+    permitirForaDoExpediente?: boolean;
 }
 
 interface AtualizarAgendamentoBody {
@@ -18,6 +19,7 @@ interface AtualizarAgendamentoBody {
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
+    permitirForaDoExpediente?: boolean;
 }
 
 interface CancelarAgendamentoBody {
@@ -81,6 +83,8 @@ export async function criar(
             pacoteClienteId: request.body.pacoteClienteId,
             dataHoraInicio: request.body.dataHoraInicio,
             registroRetroativo: request.body.registroRetroativo === true,
+            permitirForaDoExpediente:
+                request.body.permitirForaDoExpediente === true,
             origem: 'PAINEL',
         });
         void reply.status(201).send(agendamento);
@@ -125,7 +129,12 @@ export async function atualizar(
     try {
         const agendamento = await agendamentoService.atualizar(
             request.params.id,
-            request.body,
+            {
+                ...request.body,
+                permitirForaDoExpediente:
+                    request.body.permitirForaDoExpediente === true,
+                origem: 'PAINEL',
+            },
         );
         void reply.send(agendamento);
     } catch (error) {

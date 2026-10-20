@@ -33,6 +33,7 @@ interface CriarAgendamentoData {
     pacoteClienteId?: string;
     dataHoraInicio: string;
     registroRetroativo?: boolean;
+    permitirForaDoExpediente?: boolean;
     origem?: 'PAINEL' | 'GEMINI';
 }
 
@@ -60,8 +61,16 @@ interface AtualizarAgendamentoData {
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
+    permitirForaDoExpediente?: boolean;
     origem?: 'PAINEL' | 'GEMINI';
 }
+
+type MotivoForaDoExpediente =
+    | 'fora_funcionamento'
+    | 'dia_fechado'
+    | 'almoco'
+    | 'bloqueio_total'
+    | 'bloqueio_so_painel';
 
 function converterParaData(valor: string): Date {
     const possuiTimezoneExplicito = /(?:Z|[+-]\d{2}:\d{2})$/i.test(valor);
@@ -311,23 +320,110 @@ async function validarConflito(
     }
 }
 
-async function validarNaoInterceptaBloqueio(
+function validarMesmoDiaEmBrasilia(
     dataHoraInicio: Date,
     dataHoraFim: Date,
-    origem: 'PAINEL' | 'GEMINI' = 'PAINEL',
-): Promise<void> {
+): void {
+    const inicio = toZonedTime(dataHoraInicio, TIME_ZONE);
+    const fim = toZonedTime(dataHoraFim, TIME_ZONE);
+
+    if (
+        inicio.getFullYear() !== fim.getFullYear() ||
+        inicio.getMonth() !== fim.getMonth() ||
+        inicio.getDate() !== fim.getDate()
+    ) {
+        throw new AppError(
+            'Agendamento deve começar e terminar no mesmo dia (horário de Brasília).',
+            422,
+        );
+    }
+}
+
+async function coletarMotivosForaDoExpediente(
+    dataHoraInicio: Date,
+    dataHoraFim: Date,
+    permiteExtensaoFechamento: boolean,
+    origem: 'PAINEL' | 'GEMINI',
+): Promise<{
+    motivos: MotivoForaDoExpediente[];
+    bloqueio: Awaited<ReturnType<typeof bloqueioRepository.buscarConflito>>;
+    horario: horarioFuncionamentoService.HorarioFuncionamentoConfig | null;
+}> {
+    const configuracao =
+        await horarioFuncionamentoService.carregarConfiguracao();
+    const horario =
+        horarioFuncionamentoService.obterHorarioFuncionamentoComConfiguracao(
+            configuracao,
+            dataHoraInicio,
+        );
+    const motivos: MotivoForaDoExpediente[] = [];
+
+    if (!horario) {
+        motivos.push('dia_fechado');
+    } else {
+        if (
+            !horarioFuncionamentoService.estaDentroDoHorarioDoAgendamentoComConfiguracao(
+                [horario],
+                dataHoraInicio,
+                dataHoraFim,
+                permiteExtensaoFechamento,
+            )
+        ) {
+            motivos.push('fora_funcionamento');
+        }
+
+        if (estaDentroDoHorarioDeAlmoco(horario, dataHoraInicio, dataHoraFim)) {
+            motivos.push('almoco');
+        }
+    }
+
     const bloqueio = await bloqueioRepository.buscarConflito(
         dataHoraInicio,
         dataHoraFim,
         origem,
     );
-
-    if (bloqueio) {
-        throw new AppError(
-            `Horário bloqueado pelo barbeiro: ${bloqueio.motivo}.`,
-            409,
+    if (bloqueio && (origem === 'GEMINI' || bloqueio.escopo !== 'SO_PAINEL')) {
+        motivos.push(
+            bloqueio.escopo === 'SO_PAINEL'
+                ? 'bloqueio_so_painel'
+                : 'bloqueio_total',
         );
     }
+
+    return { motivos, bloqueio, horario };
+}
+
+function rejeitarForaDoExpediente(
+    motivos: MotivoForaDoExpediente[],
+    bloqueio: Awaited<ReturnType<typeof bloqueioRepository.buscarConflito>>,
+    horario: horarioFuncionamentoService.HorarioFuncionamentoConfig | null,
+): void {
+    if (motivos.length === 0) {
+        return;
+    }
+
+    let message: string;
+    let statusCode: number;
+    if (motivos.includes('dia_fechado')) {
+        message =
+            'Barbearia funciona de segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).';
+        statusCode = 422;
+    } else if (motivos.includes('fora_funcionamento')) {
+        message =
+            'Agendamento deve estar dentro do horário de funcionamento: segunda a sexta, das 9h às 20h, e sábado, das 8h às 17h (horário de Brasília).';
+        statusCode = 422;
+    } else if (motivos.includes('almoco')) {
+        message = `Agendamento não pode ocorrer no horário de almoço (${formatarMinutosComoHorario(horario!.almocoInicioMinutos!)} às ${formatarMinutosComoHorario(horario!.almocoFimMinutos!)}).`;
+        statusCode = 422;
+    } else {
+        message = `Horário bloqueado pelo barbeiro: ${bloqueio?.motivo ?? 'Bloqueio administrativo'}.`;
+        statusCode = 409;
+    }
+
+    throw new AppError(message, statusCode, {
+        code: 'FORA_DO_EXPEDIENTE',
+        motivos,
+    });
 }
 
 async function validarPacoteCliente(
@@ -546,21 +642,35 @@ export async function validarDisponibilidade(
     registroRetroativo = false,
     origem: 'PAINEL' | 'GEMINI' = 'PAINEL',
     clienteId?: string,
+    permitirForaDoExpediente = false,
+    ignorarAgendamentoId?: string,
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
+    validarMesmoDiaEmBrasilia(dataHoraInicio, dataHoraFim);
     if (!registroRetroativo) {
         validarAntecedenciaMinima(dataHoraInicio);
     }
-    const horario = await validarHorarioFuncionamento(
+
+    await validarConflito(
+        dataHoraInicio,
+        dataHoraFim,
+        ignorarAgendamentoId,
+        clienteId,
+    );
+
+    const { motivos, bloqueio, horario } = await coletarMotivosForaDoExpediente(
         dataHoraInicio,
         dataHoraFim,
         permiteExtensaoFechamento,
+        origem,
     );
-    validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim, horario);
-    await validarNaoInterceptaBloqueio(dataHoraInicio, dataHoraFim, origem);
-    await validarConflito(dataHoraInicio, dataHoraFim, undefined, clienteId);
+    const overridePermitido =
+        origem === 'PAINEL' && permitirForaDoExpediente === true;
+    if (!overridePermitido) {
+        rejeitarForaDoExpediente(motivos, bloqueio, horario);
+    }
 
     return { dataHoraInicio, dataHoraFim };
 }
@@ -597,6 +707,8 @@ export async function criar(data: CriarAgendamentoData) {
             servico.permiteExtensaoFechamento,
             data.registroRetroativo,
             data.origem,
+            undefined,
+            data.permitirForaDoExpediente,
         );
 
         const dados = {
@@ -1085,27 +1197,34 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             dataHoraInicio,
             servico.duracaoMinutos,
         );
-
-        validarAntecedenciaMinima(dataHoraInicio);
-        const horario = await validarHorarioFuncionamento(
-            dataHoraInicio,
-            dataHoraFim,
-            servico.permiteExtensaoFechamento,
-        );
-        if (data.status !== StatusAgendamento.CANCELADO) {
-            validarNaoInterceptaAlmoco(dataHoraInicio, dataHoraFim, horario);
-            await validarNaoInterceptaBloqueio(
-                dataHoraInicio,
-                dataHoraFim,
-                data.origem,
-            );
-            await validarConflito(dataHoraInicio, dataHoraFim, id);
-        }
-
         const dataHoraMudou =
             agendamentoExistente.dataHoraInicio.getTime() !==
             dataHoraInicio.getTime();
         const servicoMudou = agendamentoExistente.servicoId !== data.servicoId;
+        const duracaoExistente =
+            agendamentoExistente.dataHoraFim.getTime() -
+            agendamentoExistente.dataHoraInicio.getTime();
+        const duracaoMudou =
+            duracaoExistente !== servico.duracaoMinutos * 60 * 1000;
+        const extensaoMudou =
+            agendamentoExistente.servico.permiteExtensaoFechamento !==
+            servico.permiteExtensaoFechamento;
+        const regrasDeHorarioMudaram =
+            dataHoraMudou || duracaoMudou || extensaoMudou;
+
+        if (regrasDeHorarioMudaram) {
+            const horarioValidado = await validarDisponibilidade(
+                data.dataHoraInicio,
+                servico.duracaoMinutos,
+                servico.permiteExtensaoFechamento,
+                false,
+                data.origem,
+                undefined,
+                data.permitirForaDoExpediente,
+                id,
+            );
+            dataHoraFim.setTime(horarioValidado.dataHoraFim.getTime());
+        }
 
         if (
             agendamentoExistente.pacoteClienteId &&

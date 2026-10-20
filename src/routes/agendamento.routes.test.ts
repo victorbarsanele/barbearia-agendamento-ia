@@ -55,7 +55,62 @@ describe('POST /agendamentos', () => {
             pacoteClienteId: undefined,
             dataHoraInicio: '2026-11-02T10:00:00-03:00',
             registroRetroativo: false,
+            permitirForaDoExpediente: false,
             origem: 'PAINEL',
+        });
+    });
+
+    it('aceita override explícito na criação avulsa', async () => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'POST',
+            url: '/agendamentos',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T08:30:00-03:00',
+                permitirForaDoExpediente: true,
+            },
+        });
+
+        expect(response.statusCode).toBe(201);
+        expect(agendamentoService.criar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                permitirForaDoExpediente: true,
+                origem: 'PAINEL',
+            }),
+        );
+    });
+
+    it('preserva contrato HTTP do erro estruturado', async () => {
+        vi.mocked(agendamentoService.criar).mockRejectedValueOnce(
+            new AppError(
+                'Agendamento deve estar dentro do horário de funcionamento.',
+                422,
+                {
+                    code: 'FORA_DO_EXPEDIENTE',
+                    motivos: ['fora_funcionamento', 'almoco'],
+                },
+            ),
+        );
+        await app.register(agendamentoRoutes);
+
+        const response = await app.inject({
+            method: 'POST',
+            url: '/agendamentos',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T08:30:00-03:00',
+            },
+        });
+
+        expect(response.statusCode).toBe(422);
+        expect(response.json()).toEqual({
+            message:
+                'Agendamento deve estar dentro do horário de funcionamento.',
+            code: 'FORA_DO_EXPEDIENTE',
+            motivos: ['fora_funcionamento', 'almoco'],
         });
     });
 
@@ -152,6 +207,33 @@ describe('POST /agendamentos/lote', () => {
     );
 
     it.each([
+        ['/agendamentos/lote', false],
+        ['/agendamentos/lote', true],
+        ['/agendamentos/lote/simular', false],
+        ['/agendamentos/lote/simular', true],
+    ] as const)(
+        'rejeita override em %s (pacoteId=%s)',
+        async (url, comPacote) => {
+            await app.register(agendamentoRoutes);
+            const response = await app.inject({
+                method: 'POST',
+                url,
+                payload: {
+                    clienteId: 'cliente-1',
+                    servicoId: 'servico-1',
+                    ...(comPacote ? { pacoteId: 'pacote-1' } : {}),
+                    slots: [{ data: '2026-11-02', horario: '10:00' }],
+                    permitirForaDoExpediente: true,
+                },
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(agendamentoService.simularLote).not.toHaveBeenCalled();
+            expect(agendamentoService.criarLote).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
         ['/agendamentos/lote/simular', 'simularLote'],
         ['/agendamentos/lote', 'criarLote'],
     ] as const)('preserva payload sem pacote em %s', async (url, method) => {
@@ -222,5 +304,45 @@ describe('POST /agendamentos/lote', () => {
             slot: { data: '2026-11-02', horario: '10:00' },
             motivo: 'conflito_horario',
         });
+    });
+});
+
+describe('PUT /agendamentos/:id', () => {
+    let app: ReturnType<typeof Fastify>;
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(agendamentoService.atualizar).mockResolvedValue({
+            id: 'agendamento-1',
+        } as never);
+        app = Fastify();
+    });
+
+    afterEach(async () => {
+        await app.close();
+    });
+
+    it('aceita override explícito e fixa origem do painel', async () => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'PUT',
+            url: '/agendamentos/agendamento-1',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T08:30:00-03:00',
+                status: 'AGENDADO',
+                permitirForaDoExpediente: true,
+            },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(agendamentoService.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                permitirForaDoExpediente: true,
+                origem: 'PAINEL',
+            }),
+        );
     });
 });
