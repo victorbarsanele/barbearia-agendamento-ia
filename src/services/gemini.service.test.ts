@@ -129,6 +129,22 @@ const agendamentoAtivoProximo = {
     servico: servicoBase,
 };
 
+function criarAgendamentoDas1430() {
+    return {
+        ...agendamentoAtivoProximo,
+        id: 'agendamento-1430',
+        dataHoraInicio: new Date('2026-07-22T14:30:00-03:00'),
+        dataHoraFim: new Date('2026-07-22T15:00:00-03:00'),
+    };
+}
+
+const servicoSessentaMinutos = {
+    ...servicoBase,
+    id: 'servico-60min',
+    nome: 'Corte e Barba',
+    duracaoMinutos: 60,
+};
+
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-21T12:00:00Z'));
@@ -368,6 +384,157 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('11:30');
         expect(resultado.horarios).not.toContain('12:00');
         expect(resultado.horarios).toContain('13:00');
+    });
+
+    it.each([undefined, '', 'servico-inexistente'])(
+        'buscarHorariosDisponiveis rejeita servicoId ausente ou inválido (%s)',
+        async (servicoId) => {
+            const resultado = (await __testables.executeToolCall(
+                {
+                    name: 'buscarHorariosDisponiveis',
+                    args: { data: '2026-07-22', servicoId },
+                } as any,
+                '5511999999999',
+                '5511999999999@s.whatsapp.net',
+            )) as {
+                sucesso: boolean;
+                horarios: string[];
+                mensagem: string;
+                instrucao: string;
+            };
+
+            expect(resultado).toMatchObject({
+                sucesso: false,
+                horarios: [],
+                mensagem:
+                    'Para consultar horários, preciso confirmar qual serviço você deseja.',
+                instrucao: expect.stringContaining('Pergunte qual serviço'),
+            });
+            expect(agendamentoRepository.listarTodos).not.toHaveBeenCalled();
+        },
+    );
+
+    it('busca exige servicoId no schema e calcula disponibilidade pela duração', async () => {
+        const buscarHorarios = (__testables.functionDeclarations as any[]).find(
+            (declaration) => declaration.name === 'buscarHorariosDisponiveis',
+        );
+        expect(buscarHorarios.parametersJsonSchema.required).toEqual([
+            'data',
+            'servicoId',
+        ]);
+
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoSessentaMinutos,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            criarAgendamentoDas1430(),
+        ]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultadoSessenta =
+            (await __testables.buscarHorariosDisponiveisTool({
+                data: '2026-07-22',
+                servicoId: servicoSessentaMinutos.id,
+            })) as {
+                horarios: string[];
+                servico: string;
+                duracaoMinutos: number;
+            };
+
+        expect(resultadoSessenta).toMatchObject({
+            servico: 'Corte e Barba',
+            duracaoMinutos: 60,
+        });
+        expect(resultadoSessenta.horarios).not.toContain('14:00');
+
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            { ...servicoBase, duracaoMinutos: 30 },
+        ]);
+        const resultadoTrinta =
+            (await __testables.buscarHorariosDisponiveisTool({
+                data: '2026-07-22',
+                servicoId: servicoBase.id,
+            })) as { horarios: string[]; duracaoMinutos: number };
+
+        expect(resultadoTrinta.duracaoMinutos).toBe(30);
+        expect(resultadoTrinta.horarios).toContain('14:00');
+    });
+
+    it('prepararAgendamento rejeita conflito e retorna alternativas do mesmo serviço sem salvar rascunho', async () => {
+        const pendingRepository = new InMemoryPendingAgendamentoRepository();
+        __testables.setPendingAgendamentoRepository(pendingRepository);
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoSessentaMinutos,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            criarAgendamentoDas1430(),
+        ]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(agendamentoService.validarDisponibilidade).mockRejectedValue(
+            Object.assign(
+                new Error('Já existe um agendamento nesse horário.'),
+                { statusCode: 409 },
+            ),
+        );
+
+        const resultado = await __testables.prepararAgendamentoTool(
+            '5511999999999',
+            'message-conflict',
+            {
+                nomeCliente: 'João Silva',
+                servicoId: servicoSessentaMinutos.id,
+                dataHoraInicio: '2026-07-22T14:00:00-03:00',
+            },
+            ['João Silva'],
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            servico: 'Corte e Barba',
+            duracaoMinutos: 60,
+        });
+        expect(resultado.alternativas).not.toContain('14:00');
+        expect(
+            await pendingRepository.obterValido('5511999999999', new Date()),
+        ).toBeNull();
+    });
+
+    it('prepararAgendamento retorna alternativas vazias quando nenhum horário cabe', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoSessentaMinutos,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            {
+                ...agendamentoAtivoProximo,
+                dataHoraInicio: new Date('2026-07-22T09:00:00-03:00'),
+                dataHoraFim: new Date('2026-07-22T20:00:00-03:00'),
+            },
+        ]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(agendamentoService.validarDisponibilidade).mockRejectedValue(
+            Object.assign(
+                new Error('Já existe um agendamento nesse horário.'),
+                { statusCode: 409 },
+            ),
+        );
+
+        const resultado = await __testables.prepararAgendamentoTool(
+            '5511999999999',
+            'message-no-alternatives',
+            {
+                nomeCliente: 'João Silva',
+                servicoId: servicoSessentaMinutos.id,
+                dataHoraInicio: '2026-07-22T14:00:00-03:00',
+            },
+            ['João Silva'],
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            alternativas: [],
+            servico: 'Corte e Barba',
+            duracaoMinutos: 60,
+        });
     });
 
     it('agendamentos fora do expediente ocupam apenas slots que se sobrepõem', async () => {
