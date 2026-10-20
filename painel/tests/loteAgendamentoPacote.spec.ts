@@ -273,6 +273,56 @@ test('catálogo aparece somente após consulta ativa confirmar ausência', async
     expect(api.unexpectedPosts).toEqual([]);
 });
 
+test('seletor de lote mantém 10:00 pré-selecionado e centralizado', async ({
+    page,
+}) => {
+    await mockApi(page);
+    await abrirLote(page);
+    await avançarParaDatas(page);
+    await page.waitForTimeout(200);
+
+    const metrics = await page.evaluate(() => {
+        const columns = Array.from(
+            document.querySelectorAll<HTMLElement>(
+                '.date-time-picker-scrollbar-hidden',
+            ),
+        );
+        return columns.map((column, index) => {
+            const expected = index === 0 ? '10' : '00';
+            const button = Array.from(
+                column.querySelectorAll<HTMLButtonElement>('button'),
+            ).find((item) => item.textContent?.trim() === expected);
+            if (!button) {
+                return null;
+            }
+
+            const columnRect = column.getBoundingClientRect();
+            const buttonRect = button.getBoundingClientRect();
+            return {
+                selected: button.className.includes('font-semibold'),
+                fullyVisible:
+                    buttonRect.top >= columnRect.top &&
+                    buttonRect.bottom <= columnRect.bottom,
+                centerDelta: Math.abs(
+                    buttonRect.top +
+                        buttonRect.height / 2 -
+                        (columnRect.top + columnRect.height / 2),
+                ),
+                itemHeight: buttonRect.height,
+            };
+        });
+    });
+
+    expect(metrics).toHaveLength(2);
+    for (const metric of metrics) {
+        expect(metric?.selected).toBe(true);
+        expect(metric?.fullyVisible).toBe(true);
+        expect(metric?.centerDelta).toBeLessThanOrEqual(
+            metric?.itemHeight ?? 0,
+        );
+    }
+});
+
 test('filtra serviço, mostra preço do pacote e omite preço avulso', async ({
     page,
 }) => {
