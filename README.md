@@ -95,6 +95,8 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
+- `MIN_ANTECEDENCIA_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; antecedência mínima para criação e alteração de agendamento)
+- `OFERTA_FOLGA_MINUTOS` (opcional, inteiro entre `0` e `120`; padrão `0`; folga adicional somente na oferta de horários pelo WhatsApp)
 - `HUMAN_TAKEOVER_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos; TTL deslizante contado desde a última mensagem do barbeiro na conversa)
 - `PENDING_BOOKING_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos)
 - `PENDING_BOOKING_REMINDER_DELAY_MS` (opcional, em milissegundos; padrão `600000` ou 10 minutos)
@@ -265,6 +267,8 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (optional, in milliseconds; default `900000` or 15 minutes)
+- `MIN_ANTECEDENCIA_MINUTOS` (optional integer from `0` to `1440`; default `60`; minimum lead time for creating or changing appointments)
+- `OFERTA_FOLGA_MINUTOS` (optional integer from `0` to `120`; default `0`; extra buffer only when offering WhatsApp time slots)
 - `HUMAN_TAKEOVER_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes; sliding TTL counted from the barber's last message in the conversation)
 - `PENDING_BOOKING_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes)
 - `PENDING_BOOKING_REMINDER_DELAY_MS` (optional, in milliseconds; default `600000` or 10 minutes)

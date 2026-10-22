@@ -6,6 +6,7 @@ import {
 } from '@google/genai';
 import { formatInTimeZone } from 'date-fns-tz';
 import { StatusAgendamento } from '@prisma/client';
+import { getAgendamentoConfig } from '../config/agendamento';
 import {
     DIAS_SEMANA,
     dataMaisProximaComDiaDaSemana,
@@ -1536,8 +1537,10 @@ async function calcularHorariosDisponiveis(
             ? horario.limiteExtensaoMinutos
             : horario.horaFechamentoMinutos;
     const freeSlots: string[] = [];
+    const { minAntecedenciaMinutos, ofertaFolgaMinutos } =
+        getAgendamentoConfig();
     const earliestAllowedStart = new Date(
-        Date.now() + agendamentoService.MIN_ANTECEDENCIA_MS,
+        Date.now() + (minAntecedenciaMinutos + ofertaFolgaMinutos) * 60 * 1000,
     );
 
     for (

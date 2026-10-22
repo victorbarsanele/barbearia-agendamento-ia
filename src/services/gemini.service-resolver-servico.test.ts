@@ -50,7 +50,6 @@ vi.mock('../repositories/escalation-state.repository', () => ({
 }));
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     validarDisponibilidade: mocks.validarDisponibilidade,
     criar: vi.fn(),
     atualizar: vi.fn(),

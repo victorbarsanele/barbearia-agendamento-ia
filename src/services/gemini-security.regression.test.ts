@@ -55,7 +55,6 @@ vi.mock('../repositories/pacote.repository', () => ({
 // atualizar()/cancelar() (não exercitados neste arquivo de teste).
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     criar: vi.fn(),
     validarDisponibilidade: vi.fn().mockResolvedValue({
         dataHoraInicio: new Date('2026-07-28T14:00:00Z'),

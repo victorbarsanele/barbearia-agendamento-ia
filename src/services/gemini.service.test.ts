@@ -43,7 +43,6 @@ vi.mock('../repositories/pacote.repository', () => ({
 
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     criar: vi.fn(),
     validarDisponibilidade: vi.fn(),
     atualizar: vi.fn(),
@@ -148,6 +147,8 @@ const servicoSessentaMinutos = {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-21T12:00:00Z'));
+    vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+    vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
     vi.clearAllMocks();
     vi.mocked(clienteRepository.buscarPorTelefone).mockResolvedValue(
         clienteBase,
@@ -384,6 +385,48 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('11:30');
         expect(resultado.horarios).not.toContain('12:00');
         expect(resultado.horarios).toContain('13:00');
+    });
+
+    it('aplica antecedência mínima mais folga somente ao ofertar horários', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('OFERTA_FOLGA_MINUTOS', '3');
+        vi.setSystemTime(new Date('2026-07-21T12:13:00Z'));
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const buscar = () =>
+            __testables.buscarHorariosDisponiveisTool({
+                data: '2026-07-21',
+                servicoId: servicoBase.id,
+            }) as Promise<{ horarios: string[] }>;
+
+        const slotCom17Minutos = await buscar();
+        expect(slotCom17Minutos.horarios).not.toContain('09:30');
+
+        vi.setSystemTime(new Date('2026-07-21T12:12:00Z'));
+        const slotCom18Minutos = await buscar();
+        expect(slotCom18Minutos.horarios).toContain('09:30');
+    });
+
+    it('com folga zero, oferta slot exatamente no mínimo configurado', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
+        vi.setSystemTime(new Date('2026-07-21T12:15:00Z'));
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = (await __testables.buscarHorariosDisponiveisTool({
+            data: '2026-07-21',
+            servicoId: servicoBase.id,
+        })) as { horarios: string[] };
+
+        expect(resultado.horarios).toContain('09:30');
     });
 
     it.each([undefined, '', 'servico-inexistente'])(

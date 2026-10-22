@@ -8,8 +8,8 @@ Referência: ESTRATEGIA_TESTES.md. Este documento lista o que deve ser testado a
 - [ ] Aceita agendamento em horário livre.
 - [ ] Rejeita agendamento fora do horário de funcionamento (antes das 9h, depois das 19h).
 - [ ] Rejeita agendamento em domingo (fechado).
-- [ ] Rejeita agendamento com antecedência menor que o mínimo permitido.
-- [ ] Aceita agendamento com antecedência exatamente no limite mínimo (edge case).
+- [x] Rejeita agendamento com antecedência menor que o mínimo permitido, inclusive com mínimo configurado em 15 minutos.
+- [x] Aceita agendamento com antecedência exatamente no limite mínimo (edge case), com padrões de 60 minutos e mínimo configurado em 15 minutos.
 - [ ] Cancelamento altera status para CANCELADO (não deleta fisicamente).
 - [ ] Reagendamento dispara notificação (verificar chamada da função de envio, não o envio real).
 

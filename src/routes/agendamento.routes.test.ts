@@ -153,6 +153,25 @@ describe('POST /agendamentos', () => {
             vi.mocked(agendamentoService.criar).mock.calls[0]?.[0],
         ).not.toHaveProperty('usosAnteriores');
     });
+    it('não aceita configuração de antecedência no body', async () => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'POST',
+            url: '/agendamentos',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T10:00:00-03:00',
+                MIN_ANTECEDENCIA_MINUTOS: 0,
+            },
+        });
+
+        expect(response.statusCode).toBe(201);
+        expect(agendamentoService.criar).toHaveBeenCalledOnce();
+        expect(agendamentoService.criar).not.toHaveBeenCalledWith(
+            expect.objectContaining({ MIN_ANTECEDENCIA_MINUTOS: 0 }),
+        );
+    });
 });
 
 describe('POST /agendamentos/lote', () => {
@@ -305,6 +324,33 @@ describe('POST /agendamentos/lote', () => {
             motivo: 'conflito_horario',
         });
     });
+    it.each([
+        ['/agendamentos/lote', 'criarLote'],
+        ['/agendamentos/lote/simular', 'simularLote'],
+    ] as const)(
+        'não aceita folga de oferta no body de %s',
+        async (url, method) => {
+            await app.register(agendamentoRoutes);
+            const response = await app.inject({
+                method: 'POST',
+                url,
+                payload: {
+                    clienteId: 'cliente-1',
+                    servicoId: 'servico-1',
+                    slots: [{ data: '2026-11-02', horario: '10:00' }],
+                    OFERTA_FOLGA_MINUTOS: 120,
+                },
+            });
+
+            expect(response.statusCode).toBe(
+                url.endsWith('/simular') ? 200 : 201,
+            );
+            expect(agendamentoService[method]).toHaveBeenCalledOnce();
+            expect(agendamentoService[method]).not.toHaveBeenCalledWith(
+                expect.objectContaining({ OFERTA_FOLGA_MINUTOS: 120 }),
+            );
+        },
+    );
 });
 
 describe('PUT /agendamentos/:id', () => {

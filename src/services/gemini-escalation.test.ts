@@ -74,7 +74,6 @@ vi.mock('../repositories/horarioFuncionamento.repository', () => ({
 
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     atualizar: mocks.atualizarAgendamento,
     cancelar: mocks.cancelarAgendamento,
 }));
@@ -92,9 +91,8 @@ type GeminiModule = Awaited<typeof import('./gemini.service')>;
 
 async function importGeminiModule(): Promise<GeminiModule> {
     const gemini = await import('./gemini.service');
-    const repository = await import(
-        '../repositories/escalation-state.repository'
-    );
+    const repository =
+        await import('../repositories/escalation-state.repository');
     gemini.__testables.setEscalationStateRepository(
         new repository.InMemoryEscalationStateRepository(),
     );
@@ -351,10 +349,10 @@ describe('gemini.service escalonamento humano', () => {
 
     it('trata falha de leitura do estado como BOT', async () => {
         const gemini = await importGeminiModule();
-        const repositoryModule = await import(
-            '../repositories/escalation-state.repository'
-        );
-        const repository = new repositoryModule.InMemoryEscalationStateRepository();
+        const repositoryModule =
+            await import('../repositories/escalation-state.repository');
+        const repository =
+            new repositoryModule.InMemoryEscalationStateRepository();
         vi.spyOn(repository, 'obter').mockRejectedValue(
             new Error('falha de leitura'),
         );
@@ -413,28 +411,25 @@ describe('gemini.service escalonamento humano', () => {
 
     it('takeover limpa histórico e cliente não renova TTL', async () => {
         const gemini = await importGeminiModule();
-        const repository = await import(
-            '../repositories/escalation-state.repository'
-        );
+        const repository =
+            await import('../repositories/escalation-state.repository');
         gemini.addToHistory(NUMERO_CLIENTE, 'user', 'histórico antigo');
         await gemini.registrarRespostaHumana(
             NUMERO_CLIENTE,
             new Date(AGORA.getTime()),
         );
-        const before = await repository.getEscalationStateRepository().obter(
-            NUMERO_CLIENTE,
-            AGORA,
-        );
+        const before = await repository
+            .getEscalationStateRepository()
+            .obter(NUMERO_CLIENTE, AGORA);
 
         vi.advanceTimersByTime(30 * 60 * 1000);
         await gemini.processarMensagemWhatsapp(
             TELEFONE_CLIENTE,
             'mensagem durante takeover',
         );
-        const after = await repository.getEscalationStateRepository().obter(
-            NUMERO_CLIENTE,
-            new Date(AGORA.getTime() + 30 * 60 * 1000),
-        );
+        const after = await repository
+            .getEscalationStateRepository()
+            .obter(NUMERO_CLIENTE, new Date(AGORA.getTime() + 30 * 60 * 1000));
 
         expect(after?.expiraEm).toEqual(before?.expiraEm);
         expect(mocks.generateContent).not.toHaveBeenCalled();

@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import { validarAgendamentoConfig } from './src/config/agendamento';
 
 const globalWithDotenvFlag = globalThis as typeof globalThis & {
     __dotenvConfigLoaded?: boolean;
@@ -103,6 +104,7 @@ const port = Number(process.env.PORT ?? 3333);
 
 const start = async (): Promise<void> => {
     try {
+        validarAgendamentoConfig();
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
         stopPendingBookingReminder = iniciarJobLembretesRascunho();
