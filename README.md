@@ -107,6 +107,8 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
 - `WHATSAPP_ALLOWLIST` (opcional; lista temporária de números para testes YCloud)
 
+O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local de antecedência. A resposta contém somente esse valor; a validação do backend continua sendo a fonte da verdade.
+
 #### 6.2 Backend (raiz)
 
 ```bash

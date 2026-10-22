@@ -24,6 +24,7 @@ import { pacoteRoutes } from './src/routes/pacote.routes';
 import { servicoRoutes } from './src/routes/servico.routes';
 import { webhookRoutes } from './src/routes/webhook.routes';
 import { horarioFuncionamentoRoutes } from './src/routes/horario-funcionamento.routes';
+import { configuracaoAgendamentoRoutes } from './src/routes/configuracao-agendamento.routes';
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 import { validateWhatsAppConfiguration } from './src/whatsapp/config';
 import { iniciarJobLembretesRascunho } from './src/services/pending-agendamento-reminder.service';
@@ -94,6 +95,7 @@ void app.register(pacoteRoutes);
 void app.register(agendamentoRoutes);
 void app.register(bloqueioRoutes);
 void app.register(horarioFuncionamentoRoutes);
+void app.register(configuracaoAgendamentoRoutes);
 void app.register(webhookRoutes);
 
 app.get('/health', async () => {
