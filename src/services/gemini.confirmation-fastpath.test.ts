@@ -434,6 +434,122 @@ describe('gemini confirmation fast path', () => {
         expect(history).not.toContain('Resumo reescrito pelo Gemini.');
     });
 
+    it('limita expiração pelo piso de confirmação e registra métricas sem PII', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '50');
+        vi.stubEnv('PENDING_BOOKING_TTL_MS', '7200000');
+        const infoLog = vi.spyOn(console, 'info');
+
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-limited-expiry',
+            {
+                nomeCliente: 'João Silva',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-10-15T10:20:00-03:00',
+            },
+            ['João Silva'],
+        );
+
+        expect(result.sucesso).toBe(true);
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toMatchObject({
+            expiraEm: new Date(currentTime.getTime() + 70 * 60_000),
+        });
+        const savedLog = infoLog.mock.calls.find(
+            (call: unknown[]) =>
+                call[0] === '[GEMINI TOOL] prepararAgendamento rascunho_salvo',
+        );
+        expect(savedLog?.[1]).toMatchObject({
+            antecedenciaMin: 80,
+            expiraEmMin: 70,
+        });
+        expect(JSON.stringify(savedLog)).not.toContain(phone);
+        expect(JSON.stringify(savedLog)).not.toContain('João Silva');
+        infoLog.mockRestore();
+    });
+
+    it('não salva quando resta menos de um minuto até o piso e informa o mínimo completo', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '50');
+        const warningSpy = vi
+            .spyOn(console, 'warn')
+            .mockImplementation(() => undefined);
+
+        const result = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-too-close',
+            {
+                nomeCliente: 'João Silva',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-10-15T09:10:30-03:00',
+            },
+            ['João Silva'],
+        );
+
+        expect(result).toMatchObject({
+            sucesso: false,
+            mensagem: expect.stringContaining('pelo menos 60 minutos'),
+        });
+        expect(warningSpy).toHaveBeenCalledWith(
+            '[GEMINI TOOL] prepararAgendamento horario_rejeitado',
+            expect.objectContaining({
+                tool: 'prepararAgendamento',
+                motivo: 'janela_confirmacao_curta',
+                status: 422,
+                antecedenciaMin: 10,
+            }),
+        );
+        expect(JSON.stringify(warningSpy.mock.calls)).not.toContain(phone);
+        expect(JSON.stringify(warningSpy.mock.calls)).not.toContain(
+            'João Silva',
+        );
+        await expect(
+            pendingRepository.obterValido(phone, currentTime),
+        ).resolves.toBeNull();
+        warningSpy.mockRestore();
+    });
+
+    it.each([
+        {
+            antecedencia: 1,
+            minimo: 1,
+            tolerancia: 1,
+            horario: '09:01',
+            expiraEmMin: 1,
+        },
+        {
+            antecedencia: 18,
+            minimo: 18,
+            tolerancia: 8,
+            horario: '09:18',
+            expiraEmMin: 8,
+        },
+    ])(
+        'formata aviso curto prazo com X=$antecedencia e Y=$expiraEmMin min',
+        async ({ antecedencia, minimo, tolerancia, horario, expiraEmMin }) => {
+            vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', String(minimo));
+            vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', String(tolerancia));
+            vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', '60');
+
+            const result = await __testables.prepararAgendamentoTool(
+                phone,
+                `message-short-notice-${antecedencia}`,
+                {
+                    nomeCliente: 'João Silva',
+                    servicoId: 'servico-1',
+                    dataHoraInicio: `2026-10-15T09:${String(antecedencia).padStart(2, '0')}:00-03:00`,
+                },
+                ['João Silva'],
+            );
+
+            expect(result.resumo).toBe(
+                `Resumo do seu agendamento:\n- Serviço: Corte\n- Data: quinta-feira, 15/10/2026, às ${horario}\n- Nome: Cliente\n- Telefone: (11) 99999-9999\n\n⚠️ Atenção: este horário é daqui a ${antecedencia} min (às ${horario}). Você consegue chegar na barbearia a tempo? Responda *sim* em até ${expiraEmMin} min para confirmar.\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.`,
+            );
+        },
+    );
+
     it('reenvia resumo literal em mensagem sem letras ou dígitos, sem Gemini ou consumo do rascunho', async () => {
         await seedDraft();
         const originalDraft = await pendingRepository.obterValido(
@@ -495,6 +611,9 @@ describe('gemini confirmation fast path', () => {
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
 
         expect(mocks.createBooking).toHaveBeenCalledTimes(1);
+        expect(mocks.createBooking.mock.calls[0][1]).toEqual({
+            minAntecedenciaMinutos: 60,
+        });
         expect(mocks.generateContent).not.toHaveBeenCalled();
         expect(infoSpy).toHaveBeenCalledWith(
             '[GEMINI TOOL] confirmarAgendamento confirmado',

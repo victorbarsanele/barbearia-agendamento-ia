@@ -322,6 +322,8 @@ beforeEach(() => {
     vi.resetAllMocks();
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
     currentTime = new Date('2026-10-15T12:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(currentTime);
     pendingRepository = new InMemoryPendingRepository();
     resumoStore = new ResumoEnviadoStore({ now: () => currentTime });
     confirmationStore = new RecentConfirmationStore({

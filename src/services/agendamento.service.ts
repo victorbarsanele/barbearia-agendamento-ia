@@ -35,6 +35,10 @@ interface CriarAgendamentoData {
     origem?: 'PAINEL' | 'GEMINI';
 }
 
+interface ValidarAntecedenciaOptions {
+    minAntecedenciaMinutos?: number;
+}
+
 interface SlotLote {
     data: string;
     horario: string;
@@ -211,7 +215,10 @@ async function enviarMensagemCancelamento(
     }
 }
 
-function validarAntecedenciaMinima(dataHoraInicio: Date): void {
+function validarAntecedenciaMinima(
+    dataHoraInicio: Date,
+    minAntecedenciaConfigurada?: number,
+): void {
     const agora = toZonedTime(new Date(), TIME_ZONE);
     const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
 
@@ -222,6 +229,7 @@ function validarAntecedenciaMinima(dataHoraInicio: Date): void {
     const diferencaEmMilissegundos =
         inicioEmBrasilia.getTime() - agora.getTime();
     const minAntecedenciaMinutos =
+        minAntecedenciaConfigurada ??
         getAgendamentoConfig().minAntecedenciaMinutos;
 
     if (diferencaEmMilissegundos < minAntecedenciaMinutos * 60 * 1000) {
@@ -644,13 +652,17 @@ export async function validarDisponibilidade(
     clienteId?: string,
     permitirForaDoExpediente = false,
     ignorarAgendamentoId?: string,
+    options: ValidarAntecedenciaOptions = {},
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
     validarMesmoDiaEmBrasilia(dataHoraInicio, dataHoraFim);
     if (!registroRetroativo) {
-        validarAntecedenciaMinima(dataHoraInicio);
+        validarAntecedenciaMinima(
+            dataHoraInicio,
+            options.minAntecedenciaMinutos,
+        );
     }
 
     await validarConflito(
@@ -675,7 +687,10 @@ export async function validarDisponibilidade(
     return { dataHoraInicio, dataHoraFim };
 }
 
-export async function criar(data: CriarAgendamentoData) {
+export async function criar(
+    data: CriarAgendamentoData,
+    options: ValidarAntecedenciaOptions = {},
+) {
     try {
         if (data.pacoteId && data.pacoteClienteId) {
             throw new AppError(
@@ -709,6 +724,8 @@ export async function criar(data: CriarAgendamentoData) {
             data.origem,
             undefined,
             data.permitirForaDoExpediente,
+            undefined,
+            options,
         );
 
         const dados = {

@@ -553,6 +553,28 @@ describe('agendamento.service.criar', () => {
         });
     });
 
+    it('usa override de antecedência apenas quando fornecido internamente', async () => {
+        const data = {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T09:50:00-03:00',
+        };
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:50:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T10:20:00-03:00'),
+        });
+
+        await expect(agendamentoService.criar(data)).rejects.toMatchObject({
+            statusCode: 422,
+        });
+        await expect(
+            agendamentoService.criar(data, { minAntecedenciaMinutos: 50 }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-07-20T09:50:00-03:00'),
+        });
+    });
+
     it.each([
         [60, '1 hora'],
         [120, '2 horas'],

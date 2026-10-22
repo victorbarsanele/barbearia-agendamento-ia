@@ -995,6 +995,7 @@ type MotivoPrepararAgendamento =
     | 'servico_ausente'
     | 'servico_busca_nao_encontrado'
     | 'horario_rejeitado'
+    | 'janela_confirmacao_curta'
     | 'dia_semana_divergente'
     | 'dia_semana_invalido';
 
@@ -1003,8 +1004,13 @@ function logToolData(
     motivo: MotivoPrepararAgendamento,
     status?: number,
     mensagem?: string,
+    detalhes?: Record<string, number>,
+    evento: string = motivo,
 ): void {
     const fields: Record<string, unknown> = { tool, motivo };
+    if (detalhes) {
+        Object.assign(fields, detalhes);
+    }
     if (status !== undefined) {
         fields.status = status;
     }
@@ -1012,7 +1018,7 @@ function logToolData(
         fields.mensagem = mensagem.slice(0, 160).replace(/\d+/g, '[mascarado]');
     }
     const logger = motivo === 'rascunho_salvo' ? console.info : console.warn;
-    logger(`[GEMINI TOOL] ${tool} ${motivo}`, fields);
+    logger(`[GEMINI TOOL] ${tool} ${evento}`, fields);
 }
 
 function logServicoNaoEncontrado(
@@ -1043,8 +1049,17 @@ function logPrepararAgendamento(
     motivo: MotivoPrepararAgendamento,
     status?: number,
     mensagem?: string,
+    detalhes?: Record<string, number>,
+    evento?: string,
 ): void {
-    logToolData('prepararAgendamento', motivo, status, mensagem);
+    logToolData(
+        'prepararAgendamento',
+        motivo,
+        status,
+        mensagem,
+        detalhes,
+        evento,
+    );
 }
 
 function logBuscaHorarios(
@@ -1812,6 +1827,7 @@ function logFalhaConfirmacao(
     error?: unknown,
     mensagem?: string,
     status?: number,
+    antecedenciaMin?: number,
 ): void {
     const errorRecord =
         typeof error === 'object' && error !== null
@@ -1832,6 +1848,9 @@ function logFalhaConfirmacao(
     if (statusValue !== undefined) {
         fields.status = statusValue;
     }
+    if (antecedenciaMin !== undefined) {
+        fields.antecedenciaMin = antecedenciaMin;
+    }
     if (motivo === 'regra' && mensagem) {
         fields.mensagem = mensagem.slice(0, 160).replace(/\d+/g, '[mascarado]');
     }
@@ -1841,6 +1860,7 @@ function logFalhaConfirmacao(
 
 async function criarAgendamentoInterno(
     args: CriarAgendamentoArgs,
+    options?: { minAntecedenciaMinutos?: number },
 ): Promise<ResultadoCriacaoAgendamento> {
     const telefoneNormalizado = normalizePhone(args.telefone);
 
@@ -1870,12 +1890,15 @@ async function criarAgendamentoInterno(
     }
 
     try {
-        const agendamento = await agendamentoService.criar({
+        const dadosAgendamento = {
             clienteId: cliente.id,
             servicoId: servicoIdResolvido,
             dataHoraInicio: args.dataHoraInicio,
-            origem: 'GEMINI',
-        });
+            origem: 'GEMINI' as const,
+        };
+        const agendamento = options
+            ? await agendamentoService.criar(dadosAgendamento, options)
+            : await agendamentoService.criar(dadosAgendamento);
 
         return {
             tipo: 'sucesso',
@@ -1919,14 +1942,25 @@ function formatarTelefoneResumo(telefone: string): string {
     return telefone;
 }
 
-function construirResumoAgendamento(args: {
-    servicoNome: string;
-    dataHoraInicio: Date;
-    nomeCliente: string;
-    telefoneCliente: string;
-    telefoneSessao: string;
-}): string {
-    return `Resumo do seu agendamento:\n- Serviço: ${args.servicoNome}\n- Data: ${formatarDataComDiaDaSemana(args.dataHoraInicio, false)}, às ${formatInTimeZone(args.dataHoraInicio, TIME_ZONE, 'HH:mm')}\n- Nome: ${args.nomeCliente}\n- Telefone: ${formatarTelefoneResumo(args.telefoneCliente)}\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.`;
+function construirResumoAgendamento(
+    args: {
+        servicoNome: string;
+        dataHoraInicio: Date;
+        expiraEm: Date;
+        nomeCliente: string;
+        telefoneCliente: string;
+        telefoneSessao: string;
+    },
+    agora = new Date(),
+): string {
+    const config = getAgendamentoConfig();
+    const antecedenciaMs = args.dataHoraInicio.getTime() - agora.getTime();
+    const avisoCurtoPrazo =
+        antecedenciaMs < config.avisoCurtoPrazoMinutos * 60_000
+            ? `\n\n⚠️ Atenção: este horário é daqui a ${Math.max(1, Math.floor(antecedenciaMs / 60_000))} min (às ${formatInTimeZone(args.dataHoraInicio, TIME_ZONE, 'HH:mm')}). Você consegue chegar na barbearia a tempo? Responda *sim* em até ${Math.max(1, Math.floor((args.expiraEm.getTime() - agora.getTime()) / 60_000))} min para confirmar.`
+            : '';
+
+    return `Resumo do seu agendamento:\n- Serviço: ${args.servicoNome}\n- Data: ${formatarDataComDiaDaSemana(args.dataHoraInicio, false)}, às ${formatInTimeZone(args.dataHoraInicio, TIME_ZONE, 'HH:mm')}\n- Nome: ${args.nomeCliente}\n- Telefone: ${formatarTelefoneResumo(args.telefoneCliente)}${avisoCurtoPrazo}\n\n*Para confirmar, responda SIM.* Seu horário só será reservado depois da sua confirmação. Se algo estiver errado, me diga o que corrigir.`;
 }
 
 type ContextoRascunho = {
@@ -1937,17 +1971,22 @@ type ContextoRascunho = {
 async function construirContextoRascunho(
     telefoneSessao: string,
     rascunho: PendingAgendamento,
+    agora = new Date(),
 ): Promise<ContextoRascunho | undefined> {
     const { servico } = await resolverServico(rascunho.servicoId);
     if (!servico) return undefined;
 
-    const resumo = construirResumoAgendamento({
-        servicoNome: servico.nome,
-        dataHoraInicio: rascunho.dataHoraInicio,
-        nomeCliente: rascunho.nomeCliente,
-        telefoneCliente: rascunho.telefoneCliente,
-        telefoneSessao,
-    });
+    const resumo = construirResumoAgendamento(
+        {
+            servicoNome: servico.nome,
+            dataHoraInicio: rascunho.dataHoraInicio,
+            expiraEm: rascunho.expiraEm,
+            nomeCliente: rascunho.nomeCliente,
+            telefoneCliente: rascunho.telefoneCliente,
+            telefoneSessao,
+        },
+        agora,
+    );
     const telefoneDescricao =
         normalizePhone(rascunho.telefoneCliente) ===
         normalizePhone(telefoneSessao)
@@ -2108,15 +2147,54 @@ async function prepararAgendamentoTool(
         };
     }
 
-    const resumo = construirResumoAgendamento({
-        servicoNome: servico.nome,
-        dataHoraInicio: new Date(dataHoraInicio),
-        nomeCliente,
-        telefoneCliente,
-        telefoneSessao: phone,
-    });
-
     const agora = new Date();
+    const config = getAgendamentoConfig();
+    const pisoConfirmacao = Math.max(
+        0,
+        config.minAntecedenciaMinutos - config.confirmacaoToleranciaMinutos,
+    );
+    const limiteExpiracao = new Date(
+        new Date(dataHoraInicio).getTime() - pisoConfirmacao * 60_000,
+    );
+    const expiraEm = new Date(
+        Math.min(
+            agora.getTime() + getPendingBookingTtlMs(),
+            limiteExpiracao.getTime(),
+        ),
+    );
+    if (expiraEm.getTime() - agora.getTime() < 60_000) {
+        const unidadeMinuto =
+            config.minAntecedenciaMinutos === 1 ? 'minuto' : 'minutos';
+        const mensagem = `Para agendar, escolha um horário com pelo menos ${config.minAntecedenciaMinutos} ${unidadeMinuto} de antecedência.`;
+        logPrepararAgendamento(
+            'janela_confirmacao_curta',
+            422,
+            mensagem,
+            {
+                antecedenciaMin: Math.floor(
+                    (new Date(dataHoraInicio).getTime() - agora.getTime()) /
+                        60_000,
+                ),
+            },
+            'horario_rejeitado',
+        );
+        return {
+            sucesso: false,
+            mensagem,
+        };
+    }
+
+    const resumo = construirResumoAgendamento(
+        {
+            servicoNome: servico.nome,
+            dataHoraInicio: new Date(dataHoraInicio),
+            expiraEm,
+            nomeCliente,
+            telefoneCliente,
+            telefoneSessao: phone,
+        },
+        agora,
+    );
     await getPendingAgendamentoRepository().salvar({
         telefoneSessao: phone,
         nomeCliente,
@@ -2124,11 +2202,18 @@ async function prepararAgendamentoTool(
         servicoId,
         dataHoraInicio: new Date(dataHoraInicio),
         mensagemCriacaoId: messageId,
-        expiraEm: new Date(agora.getTime() + getPendingBookingTtlMs()),
+        expiraEm,
     });
 
     recentConfirmationStore.limpar(phone);
-    logPrepararAgendamento('rascunho_salvo');
+    logPrepararAgendamento('rascunho_salvo', undefined, undefined, {
+        antecedenciaMin: Math.floor(
+            (new Date(dataHoraInicio).getTime() - agora.getTime()) / 60_000,
+        ),
+        expiraEmMin: Math.floor(
+            (expiraEm.getTime() - agora.getTime()) / 60_000,
+        ),
+    });
     return { sucesso: true, mensagem: resumo, resumo };
 }
 
@@ -2144,12 +2229,17 @@ type ResultadoConfirmacaoTool = {
 function logConfirmacao(
     motivo: 'confirmado' | 'ja_confirmado',
     via: 'atalho' | 'gemini' = 'gemini',
+    antecedenciaMin?: number,
 ): void {
-    console.info(`[GEMINI TOOL] confirmarAgendamento ${motivo}`, {
+    const fields: Record<string, unknown> = {
         tool: 'confirmarAgendamento',
         motivo,
         via,
-    });
+    };
+    if (antecedenciaMin !== undefined) {
+        fields.antecedenciaMin = antecedenciaMin;
+    }
+    console.info(`[GEMINI TOOL] confirmarAgendamento ${motivo}`, fields);
 }
 
 async function confirmarAgendamentoTool(
@@ -2173,10 +2263,11 @@ async function confirmarAgendamentoTool(
         };
     }
 
+    const agora = new Date();
     const draft = await getPendingAgendamentoRepository().consumir(
         phone,
         messageId,
-        new Date(),
+        agora,
     );
     if (!draft) {
         const confirmacao = recentConfirmationStore.obterValido(phone);
@@ -2200,18 +2291,31 @@ async function confirmarAgendamentoTool(
         };
     }
 
+    const antecedenciaMin = Math.floor(
+        (draft.dataHoraInicio.getTime() - agora.getTime()) / 60_000,
+    );
     let resultado: Awaited<ReturnType<typeof criarAgendamentoInterno>>;
     try {
-        resultado = await criarAgendamentoInterno({
-            nomeCliente: draft.nomeCliente,
-            telefone: draft.telefoneCliente,
-            servicoId: draft.servicoId,
-            dataHoraInicio: formatInTimeZone(
-                draft.dataHoraInicio,
-                TIME_ZONE,
-                "yyyy-MM-dd'T'HH:mm:ssXXX",
-            ),
-        });
+        const config = getAgendamentoConfig();
+        resultado = await criarAgendamentoInterno(
+            {
+                nomeCliente: draft.nomeCliente,
+                telefone: draft.telefoneCliente,
+                servicoId: draft.servicoId,
+                dataHoraInicio: formatInTimeZone(
+                    draft.dataHoraInicio,
+                    TIME_ZONE,
+                    "yyyy-MM-dd'T'HH:mm:ssXXX",
+                ),
+            },
+            {
+                minAntecedenciaMinutos: Math.max(
+                    0,
+                    config.minAntecedenciaMinutos -
+                        config.confirmacaoToleranciaMinutos,
+                ),
+            },
+        );
     } catch (error) {
         let rascunhoRestaurado = false;
         try {
@@ -2225,7 +2329,13 @@ async function confirmarAgendamentoTool(
                 { erro: describeSafeError(restoreError) },
             );
         }
-        logFalhaConfirmacao('excecao', error);
+        logFalhaConfirmacao(
+            'excecao',
+            error,
+            undefined,
+            undefined,
+            antecedenciaMin,
+        );
         return {
             sucesso: false,
             mensagem:
@@ -2250,7 +2360,7 @@ async function confirmarAgendamentoTool(
             mensagemConfirmacaoId: messageId,
         });
         resumoEnviadoStore.limpar(phone);
-        logConfirmacao('confirmado', via);
+        logConfirmacao('confirmado', via, antecedenciaMin);
         return {
             sucesso: true,
             mensagem: `Agendamento confirmado: ${agendamento.servico}, ${diaSemana}, ${data}, ${hora}.`,
@@ -2259,7 +2369,13 @@ async function confirmarAgendamentoTool(
     }
 
     if (resultado.tipo === 'conflito') {
-        logFalhaConfirmacao('conflito', undefined, undefined, resultado.status);
+        logFalhaConfirmacao(
+            'conflito',
+            undefined,
+            undefined,
+            resultado.status,
+            antecedenciaMin,
+        );
         return {
             sucesso: false,
             mensagem:
@@ -2287,6 +2403,7 @@ async function confirmarAgendamentoTool(
             undefined,
             undefined,
             resultado.status,
+            antecedenciaMin,
         );
         return {
             sucesso: false,
@@ -2301,6 +2418,7 @@ async function confirmarAgendamentoTool(
         undefined,
         resultado.mensagem,
         resultado.status,
+        antecedenciaMin,
     );
     return {
         sucesso: false,

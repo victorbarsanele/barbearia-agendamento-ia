@@ -484,6 +484,8 @@ describe('calendário e validação de weekday do Gemini', () => {
         expect(info.mock.calls[0][1]).toEqual({
             tool: 'prepararAgendamento',
             motivo: 'rascunho_salvo',
+            antecedenciaMin: expect.any(Number),
+            expiraEmMin: expect.any(Number),
         });
 
         await __testables.prepararAgendamentoTool(phone, null, validArgs, [

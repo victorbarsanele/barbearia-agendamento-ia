@@ -1,6 +1,8 @@
 export interface AgendamentoConfig {
     minAntecedenciaMinutos: number;
     ofertaFolgaMinutos: number;
+    confirmacaoToleranciaMinutos: number;
+    avisoCurtoPrazoMinutos: number;
 }
 
 function lerInteiroConfigurado(
@@ -43,6 +45,18 @@ export function getAgendamentoConfig(): AgendamentoConfig {
             0,
             0,
             120,
+        ),
+        confirmacaoToleranciaMinutos: lerInteiroConfigurado(
+            'CONFIRMACAO_TOLERANCIA_MINUTOS',
+            0,
+            0,
+            60,
+        ),
+        avisoCurtoPrazoMinutos: lerInteiroConfigurado(
+            'AVISO_CURTO_PRAZO_MINUTOS',
+            60,
+            0,
+            1440,
         ),
     };
 }

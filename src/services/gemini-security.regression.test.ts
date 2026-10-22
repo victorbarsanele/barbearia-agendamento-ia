@@ -388,6 +388,7 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
         expect(result).toMatchObject({ sucesso: true });
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.objectContaining({ clienteId: CLIENTE_SESSAO.id }),
+            { minAntecedenciaMinutos: 60 },
         );
         const dadosCriacao = vi.mocked(agendamentoService.criar).mock
             .calls[0]?.[0];

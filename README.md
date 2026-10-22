@@ -97,6 +97,8 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
 - `MIN_ANTECEDENCIA_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; antecedência mínima para criação e alteração de agendamento)
 - `OFERTA_FOLGA_MINUTOS` (opcional, inteiro entre `0` e `120`; padrão `0`; folga adicional somente na oferta de horários pelo WhatsApp)
+- `CONFIRMACAO_TOLERANCIA_MINUTOS` (opcional, inteiro entre `0` e `60`; padrão `0`; tolerância aplicada somente na confirmação de rascunho, sem alterar criação pelo painel/API)
+- `AVISO_CURTO_PRAZO_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; inclui aviso no resumo quando o horário estiver mais próximo que esse limite)
 - `HUMAN_TAKEOVER_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos; TTL deslizante contado desde a última mensagem do barbeiro na conversa)
 - `PENDING_BOOKING_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos)
 - `PENDING_BOOKING_REMINDER_DELAY_MS` (opcional, em milissegundos; padrão `600000` ou 10 minutos)
