@@ -65,18 +65,14 @@ describe('enviarNotificacaoWhatsApp', () => {
     it('sends YCloud notification template with sanitized ordered parameters', async () => {
         vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
 
-        await enviarNotificacaoWhatsApp(
-            'reagendamento',
-            '5511999999999',
-            {
-                nomeCliente: '  Ana\t Silva\n',
-                novaData: '10/10/2026',
-                novoHorario: '15:00',
-                novoHorarioCompleto: 'sexta-feira, 10/10 às 15:00',
-                servico: 'Corte',
-                contatoBarbeiro: '5511222333444',
-            },
-        );
+        await enviarNotificacaoWhatsApp('reagendamento', '5511999999999', {
+            nomeCliente: '  Ana\t Silva\n',
+            novaData: '10/10/2026',
+            novoHorario: '15:00',
+            novoHorarioCompleto: 'sexta-feira, 10/10 às 15:00',
+            servico: 'Corte',
+            contatoBarbeiro: '5511222333444',
+        });
 
         const [, init] = vi.mocked(fetch).mock.calls[0]!;
         expect(JSON.parse(String(init?.body))).toMatchObject({
@@ -125,19 +121,89 @@ describe('enviarNotificacaoWhatsApp', () => {
         ]);
     });
 
+    it('sends last-minute booking template with ordered sanitized parameters', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+
+        await enviarNotificacaoWhatsApp(
+            'agendamento_ultima_hora',
+            '5511222333444',
+            {
+                nomeCliente: '  Ana\t\n    Silva  ',
+                servicos: 'Corte    +   Barba',
+                horario: '09:14',
+                minutos: '14',
+            },
+        );
+
+        const [, init] = vi.mocked(fetch).mock.calls[0]!;
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+            type: 'template',
+            template: {
+                name: 'aviso_agendamento_ultima_hora',
+                language: { code: 'pt_BR' },
+                components: [
+                    {
+                        type: 'body',
+                        parameters: [
+                            { type: 'text', text: 'Ana Silva' },
+                            { type: 'text', text: 'Corte + Barba' },
+                            { type: 'text', text: '09:14' },
+                            { type: 'text', text: '14' },
+                        ],
+                    },
+                ],
+            },
+        });
+    });
+
+    it('does not send last-minute template when a required parameter is empty', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+
+        await expect(
+            enviarNotificacaoWhatsApp(
+                'agendamento_ultima_hora',
+                '5511222333444',
+                {
+                    nomeCliente: ' \n\t ',
+                    servicos: 'Corte',
+                    horario: '09:14',
+                    minutos: '14',
+                },
+            ),
+        ).rejects.toThrow('Parâmetro obrigatório de notificação vazio.');
+        expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('builds equivalent legacy text for last-minute booking notifications', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'evolution');
+        vi.stubEnv('EVOLUTION_API_KEY', 'evolution-test-key');
+        vi.stubEnv('EVOLUTION_API_URL', 'https://evolution.example.test');
+
+        const text = await enviarNotificacaoWhatsApp(
+            'agendamento_ultima_hora',
+            '5511222333444',
+            {
+                nomeCliente: 'Ana Silva',
+                servicos: 'Corte + Barba',
+                horario: '09:14',
+                minutos: '14',
+            },
+        );
+
+        expect(text).toBe(
+            'Novo agendamento de última hora: Ana Silva (Corte + Barba) às 09:14, daqui a 14 minutos. Confira na agenda do painel!',
+        );
+    });
+
     it('does not call YCloud for template notification in simulation mode', async () => {
         vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
         vi.stubEnv('SIMULACAO_WEBHOOK', 'true');
         const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-        await enviarNotificacaoWhatsApp(
-            'atendimento_humano',
-            '5511222333444',
-            {
-                telefoneCliente: '5511999999999',
-                motivo: 'PRIVATE MESSAGE',
-            },
-        );
+        await enviarNotificacaoWhatsApp('atendimento_humano', '5511222333444', {
+            telefoneCliente: '5511999999999',
+            motivo: 'PRIVATE MESSAGE',
+        });
 
         expect(fetch).not.toHaveBeenCalled();
         expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE MESSAGE');

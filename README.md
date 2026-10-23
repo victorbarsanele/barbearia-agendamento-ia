@@ -109,6 +109,8 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 
 O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local de antecedência. A resposta contém somente esse valor; a validação do backend continua sendo a fonte da verdade.
 
+Quando o Gemini confirma agendamento com antecedência menor que `AVISO_CURTO_PRAZO_MINUTOS`, o barbeiro recebe o template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, 4 parâmetros: cliente, serviço(s), horário e minutos), enviado a `BARBER_PHONE`. O template precisa de aprovação da YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
+
 #### 6.2 Backend (raiz)
 
 ```bash
@@ -280,6 +282,8 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)
 - `WHATSAPP_ALLOWLIST` (optional temporary list of test numbers for YCloud)
+
+When Gemini confirms a booking with lead time below `AVISO_CURTO_PRAZO_MINUTOS`, the barber receives YCloud template `aviso_agendamento_ultima_hora` (`pt_BR`, four parameters: customer, service(s), time, and minutes) at `BARBER_PHONE`. The template must be approved by YCloud/Meta before lowering `MIN_ANTECEDENCIA_MINUTOS` to 15.
 
 #### 6.2 Backend (root)
 

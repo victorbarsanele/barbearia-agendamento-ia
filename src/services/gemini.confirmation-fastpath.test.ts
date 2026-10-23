@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setImmediate } from 'node:timers/promises';
 
 const mocks = vi.hoisted(() => ({
     createBooking: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     transcribeAudio: vi.fn(),
     getAudioConfig: vi.fn(),
     downloadYCloudMedia: vi.fn(),
+    enviarNotificacaoWhatsApp: vi.fn(),
 }));
 
 vi.mock('@google/genai', () => ({
@@ -58,6 +60,9 @@ vi.mock('./horario-funcionamento.service', () => ({
 }));
 vi.mock('../whatsapp/whatsapp-outbound.service', () => ({
     sendWhatsAppText: mocks.sendWhatsAppText,
+}));
+vi.mock('./whatsapp-notification.service', () => ({
+    enviarNotificacaoWhatsApp: mocks.enviarNotificacaoWhatsApp,
 }));
 vi.mock('../whatsapp/audio-error', () => ({
     describeSafeError: (error: unknown) =>
@@ -246,10 +251,12 @@ const escalationRepository = {
 function seedDraft(
     expiresAt = new Date(currentTime.getTime() + 60_000),
     createdAt = currentTime,
+    dataHoraInicio = draftValues.dataHoraInicio,
 ) {
     return pendingRepository.salvar({
         telefoneSessao: phone,
         ...draftValues,
+        dataHoraInicio,
         mensagemCriacaoId: creationId,
         criadoEm: createdAt,
         expiraEm: expiresAt,
@@ -298,6 +305,11 @@ beforeEach(() => {
     vi.setSystemTime(currentTime);
     vi.resetAllMocks();
     vi.stubEnv('GEMINI_API_KEY', 'test-key');
+    vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+    vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '0');
+    vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', '60');
+    vi.stubEnv('BARBER_PHONE', '');
+    vi.stubEnv('WHATSAPP_ALLOWLIST', '');
 
     pendingRepository = new InMemoryPendingRepository();
     summaryStore = new ResumoEnviadoStore({ now: () => currentTime });
@@ -330,6 +342,7 @@ beforeEach(() => {
     mocks.createBooking.mockResolvedValue(booking);
     mocks.generateContent.mockResolvedValue({ text: 'Resposta do Gemini.' });
     mocks.sendWhatsAppText.mockResolvedValue(undefined);
+    mocks.enviarNotificacaoWhatsApp.mockResolvedValue(null);
     mocks.getAudioConfig.mockReturnValue({
         transcriptionEnabled: true,
         maxConcurrency: 1,
@@ -615,6 +628,7 @@ describe('gemini confirmation fast path', () => {
             minAntecedenciaMinutos: 60,
         });
         expect(mocks.generateContent).not.toHaveBeenCalled();
+        expect(mocks.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
         expect(infoSpy).toHaveBeenCalledWith(
             '[GEMINI TOOL] confirmarAgendamento confirmado',
             expect.objectContaining({ via: 'atalho' }),
@@ -633,6 +647,235 @@ describe('gemini confirmation fast path', () => {
         expect(historyTextsFromGeminiRequest()).toContain(
             'Agendamento confirmado: Corte, terça-feira, 20/10/2026, 13:00.',
         );
+    });
+
+    it('notifica barbeiro com parâmetros atuais quando confirmação fica abaixo do limiar', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+        vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', '60');
+        vi.stubEnv('BARBER_PHONE', '5511987654321');
+        const horario = new Date(currentTime.getTime() + 14 * 60_000);
+        await seedDraft(
+            new Date(currentTime.getTime() + 5 * 60_000),
+            currentTime,
+            horario,
+        );
+
+        const resultado = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-short-notice',
+        );
+
+        expect(resultado).toMatchObject({ sucesso: true });
+        expect(resultado.mensagem).toBe(
+            'Agendamento confirmado: Corte, quinta-feira, 15/10/2026, 09:14.',
+        );
+        expect(mocks.enviarNotificacaoWhatsApp).toHaveBeenCalledWith(
+            'agendamento_ultima_hora',
+            '5511987654321',
+            {
+                nomeCliente: 'Cliente',
+                servicos: 'Corte',
+                horario: '09:14',
+                minutos: '14',
+            },
+        );
+    });
+
+    it('preserva confirmação e resposta se configuração do aviso lança erro síncrono', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+        vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', 'abc');
+        vi.stubEnv('BARBER_PHONE', '5511987654321');
+        const errorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
+        await seedDraft(
+            new Date(currentTime.getTime() + 5 * 60_000),
+            currentTime,
+            new Date(currentTime.getTime() + 14 * 60_000),
+        );
+
+        const resultado = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-invalid-notice-config',
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: true,
+            mensagem:
+                'Agendamento confirmado: Corte, quinta-feira, 15/10/2026, 09:14.',
+        });
+        expect(mocks.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        expect(errorSpy).toHaveBeenCalledWith(
+            '[GEMINI TOOL] aviso_barbeiro_falhou',
+            expect.objectContaining({
+                evento: 'aviso_barbeiro_falhou',
+                erro: expect.any(String),
+            }),
+        );
+        expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(
+            '5511987654321',
+        );
+        errorSpy.mockRestore();
+    });
+
+    it.each([
+        {
+            descricao: 'acima do limiar',
+            antecedenciaMin: 70,
+            minimo: '15',
+            tolerancia: '5',
+        },
+        {
+            descricao: 'no padrão de 60 minutos',
+            antecedenciaMin: 60,
+            minimo: '60',
+            tolerancia: '0',
+        },
+    ])(
+        'não notifica barbeiro quando confirmação está $descricao',
+        async ({ antecedenciaMin, minimo, tolerancia }) => {
+            vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', minimo);
+            vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', tolerancia);
+            vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', '60');
+            vi.stubEnv('BARBER_PHONE', '5511987654321');
+            await seedDraft(
+                new Date(currentTime.getTime() + 5 * 60_000),
+                currentTime,
+                new Date(currentTime.getTime() + antecedenciaMin * 60_000),
+            );
+
+            const resultado = await __testables.confirmarAgendamentoTool(
+                phone,
+                'message-outside-short-notice',
+            );
+
+            expect(resultado.sucesso).toBe(true);
+            expect(mocks.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        { telefone: '', motivo: 'sem_telefone' },
+        { telefone: 'inválido', motivo: 'telefone_invalido' },
+    ])(
+        'pula aviso quando BARBER_PHONE está ausente ou inválido',
+        async ({ telefone, motivo }) => {
+            vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+            vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+            vi.stubEnv('BARBER_PHONE', telefone);
+            const infoSpy = vi
+                .spyOn(console, 'info')
+                .mockImplementation(() => {});
+            await seedDraft(
+                new Date(currentTime.getTime() + 5 * 60_000),
+                currentTime,
+                new Date(currentTime.getTime() + 14 * 60_000),
+            );
+
+            const resultado = await __testables.confirmarAgendamentoTool(
+                phone,
+                'message-no-barber-phone',
+            );
+
+            expect(resultado.sucesso).toBe(true);
+            expect(mocks.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+            expect(infoSpy).toHaveBeenCalledWith(
+                '[GEMINI TOOL] aviso_barbeiro_pulado',
+                expect.objectContaining({
+                    evento: 'aviso_barbeiro_pulado',
+                    motivo,
+                }),
+            );
+            infoSpy.mockRestore();
+        },
+    );
+
+    it('pula aviso quando BARBER_PHONE está fora da allowlist', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+        vi.stubEnv('BARBER_PHONE', '5511987654321');
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '+55 (11) 97777-7777');
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        await seedDraft(
+            new Date(currentTime.getTime() + 5 * 60_000),
+            currentTime,
+            new Date(currentTime.getTime() + 14 * 60_000),
+        );
+
+        await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-not-allowed',
+        );
+
+        expect(mocks.enviarNotificacaoWhatsApp).not.toHaveBeenCalled();
+        expect(infoSpy).toHaveBeenCalledWith(
+            '[GEMINI TOOL] aviso_barbeiro_pulado',
+            expect.objectContaining({ motivo: 'fora_da_allowlist' }),
+        );
+        infoSpy.mockRestore();
+    });
+
+    it('envia aviso quando BARBER_PHONE está na allowlist', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+        vi.stubEnv('BARBER_PHONE', '5511987654321');
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '+55 (11) 98765-4321');
+        await seedDraft(
+            new Date(currentTime.getTime() + 5 * 60_000),
+            currentTime,
+            new Date(currentTime.getTime() + 14 * 60_000),
+        );
+
+        await __testables.confirmarAgendamentoTool(phone, 'message-allowed');
+
+        expect(mocks.enviarNotificacaoWhatsApp).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserva confirmação e registra falha segura se aviso ao barbeiro falhar', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '5');
+        vi.stubEnv('BARBER_PHONE', '5511987654321');
+        mocks.enviarNotificacaoWhatsApp.mockRejectedValueOnce(
+            new Error('Falha do provedor sem dados pessoais.'),
+        );
+        const errorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
+        const unhandledRejectionSpy = vi.fn();
+        process.on('unhandledRejection', unhandledRejectionSpy);
+        await seedDraft(
+            new Date(currentTime.getTime() + 5 * 60_000),
+            currentTime,
+            new Date(currentTime.getTime() + 14 * 60_000),
+        );
+
+        try {
+            const resultado = await __testables.confirmarAgendamentoTool(
+                phone,
+                'message-notification-failure',
+            );
+            await Promise.resolve();
+            await setImmediate();
+
+            expect(resultado.sucesso).toBe(true);
+            expect(mocks.createBooking).toHaveBeenCalledTimes(1);
+            expect(errorSpy).toHaveBeenCalledWith(
+                '[GEMINI TOOL] aviso_barbeiro_falhou',
+                expect.objectContaining({
+                    evento: 'aviso_barbeiro_falhou',
+                    antecedenciaMin: 14,
+                }),
+            );
+            expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(
+                '5511987654321',
+            );
+            expect(unhandledRejectionSpy).not.toHaveBeenCalled();
+        } finally {
+            process.off('unhandledRejection', unhandledRejectionSpy);
+            errorSpy.mockRestore();
+        }
     });
 
     it('não mantém cuid da resposta do modelo no histórico', async () => {

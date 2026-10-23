@@ -6,7 +6,10 @@ import {
 } from '@google/genai';
 import { formatInTimeZone } from 'date-fns-tz';
 import { StatusAgendamento } from '@prisma/client';
-import { getAgendamentoConfig } from '../config/agendamento';
+import {
+    getAgendamentoConfig,
+    getConfirmacaoAgendamentoConfig,
+} from '../config/agendamento';
 import {
     DIAS_SEMANA,
     dataMaisProximaComDiaDaSemana,
@@ -43,6 +46,9 @@ import {
     validarTelefoneCelularBrasileiro,
 } from '../utils/telefone';
 import { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
+import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
+import { canonicalizeYCloudPhone } from '../whatsapp/ycloud-inbound.adapter';
+import { enviarNotificacaoWhatsApp } from './whatsapp-notification.service';
 import {
     getEscalationStateRepository,
     setEscalationStateRepository,
@@ -2242,6 +2248,86 @@ function logConfirmacao(
     console.info(`[GEMINI TOOL] confirmarAgendamento ${motivo}`, fields);
 }
 
+function mascararTelefoneAviso(phone: string): string {
+    return `${'*'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
+}
+
+function notificarBarbeiroAgendamentoUltimaHora(
+    agendamento: { cliente: string; servico: string },
+    dataHoraInicio: Date,
+): void {
+    let antecedenciaMin: number | undefined;
+    try {
+        antecedenciaMin = Math.floor(
+            (dataHoraInicio.getTime() - Date.now()) / 60_000,
+        );
+        const config = getAgendamentoConfig();
+        if (antecedenciaMin >= config.avisoCurtoPrazoMinutos) {
+            return;
+        }
+
+        const barberPhoneConfigured = process.env.BARBER_PHONE?.trim();
+        if (!barberPhoneConfigured) {
+            console.info('[GEMINI TOOL] aviso_barbeiro_pulado', {
+                evento: 'aviso_barbeiro_pulado',
+                motivo: 'sem_telefone',
+                antecedenciaMin,
+            });
+            return;
+        }
+
+        const barberPhone = canonicalizeYCloudPhone(barberPhoneConfigured);
+        if (!barberPhone || !validarTelefoneCelularBrasileiro(barberPhone)) {
+            console.info('[GEMINI TOOL] aviso_barbeiro_pulado', {
+                evento: 'aviso_barbeiro_pulado',
+                motivo: 'telefone_invalido',
+                antecedenciaMin,
+            });
+            return;
+        }
+
+        const allowlist = getWhatsAppAllowlist();
+        const telefoneMascarado = mascararTelefoneAviso(barberPhone);
+        if (allowlist.active && !allowlist.phones.has(barberPhone)) {
+            console.info('[GEMINI TOOL] aviso_barbeiro_pulado', {
+                evento: 'aviso_barbeiro_pulado',
+                motivo: 'fora_da_allowlist',
+                antecedenciaMin,
+                telefone: telefoneMascarado,
+            });
+            return;
+        }
+
+        void enviarNotificacaoWhatsApp('agendamento_ultima_hora', barberPhone, {
+            nomeCliente: agendamento.cliente,
+            servicos: agendamento.servico,
+            horario: formatInTimeZone(dataHoraInicio, TIME_ZONE, 'HH:mm'),
+            minutos: String(Math.max(1, antecedenciaMin)),
+        })
+            .then(() => {
+                console.info('[GEMINI TOOL] aviso_barbeiro_enviado', {
+                    evento: 'aviso_barbeiro_enviado',
+                    antecedenciaMin,
+                    telefone: telefoneMascarado,
+                });
+            })
+            .catch((error: unknown) => {
+                console.error('[GEMINI TOOL] aviso_barbeiro_falhou', {
+                    evento: 'aviso_barbeiro_falhou',
+                    antecedenciaMin,
+                    telefone: telefoneMascarado,
+                    erro: describeSafeError(error),
+                });
+            });
+    } catch (error) {
+        console.error('[GEMINI TOOL] aviso_barbeiro_falhou', {
+            evento: 'aviso_barbeiro_falhou',
+            ...(antecedenciaMin === undefined ? {} : { antecedenciaMin }),
+            erro: describeSafeError(error),
+        });
+    }
+}
+
 async function confirmarAgendamentoTool(
     phone: string,
     messageId: string | null,
@@ -2296,7 +2382,7 @@ async function confirmarAgendamentoTool(
     );
     let resultado: Awaited<ReturnType<typeof criarAgendamentoInterno>>;
     try {
-        const config = getAgendamentoConfig();
+        const config = getConfirmacaoAgendamentoConfig();
         resultado = await criarAgendamentoInterno(
             {
                 nomeCliente: draft.nomeCliente,
@@ -2361,6 +2447,7 @@ async function confirmarAgendamentoTool(
         });
         resumoEnviadoStore.limpar(phone);
         logConfirmacao('confirmado', via, antecedenciaMin);
+        notificarBarbeiroAgendamentoUltimaHora(agendamento, dataHoraInicio);
         return {
             sucesso: true,
             mensagem: `Agendamento confirmado: ${agendamento.servico}, ${diaSemana}, ${data}, ${hora}.`,
