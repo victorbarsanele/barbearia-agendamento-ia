@@ -17,6 +17,7 @@ import {
 } from '../services/pacoteCliente.service';
 import { listarPacotes, type Pacote } from '../services/pacotes.service';
 import { listarServicos, type Servico } from '../services/servicos.service';
+import { useMinAntecedenciaMinutos } from '../hooks/useMinAntecedenciaMinutos';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Checkbox } from '../components/ui/Checkbox';
@@ -24,6 +25,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PageHeader } from '../components/ui/PageHeader';
 import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateParts } from '../utils/dateTime';
+import { calcularPisoAntecedencia } from '../utils/antecedenciaAgendamento';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
 import { obterMotivosOverride } from '../utils/overrideExpediente';
 import {
@@ -110,6 +112,7 @@ function formatarDataHoraResumo(data: string, hora: string): string {
 
 export function NovoAgendamentoPage() {
     const navigate = useNavigate();
+    const minAntecedenciaMinutos = useMinAntecedenciaMinutos();
 
     const [queryCliente, setQueryCliente] = useState('');
     const [clienteSelecionado, setClienteSelecionado] =
@@ -212,9 +215,9 @@ export function NovoAgendamentoPage() {
     const minDateTime = useMemo(
         () =>
             registroRetroativoDisponivel
-                ? new Date(Date.now() + 60 * 60 * 1000)
+                ? calcularPisoAntecedencia(Date.now(), minAntecedenciaMinutos)
                 : undefined,
-        [registroRetroativoDisponivel],
+        [registroRetroativoDisponivel, minAntecedenciaMinutos],
     );
 
     useEffect(() => {
@@ -561,7 +564,11 @@ export function NovoAgendamentoPage() {
 
         const nextDateIsToday = nextData === minData;
         const nextDateIsInvalidWithoutRetroactive =
-            nextDate.getTime() < Date.now() + 60 * 60 * 1000;
+            nextDate.getTime() <
+            calcularPisoAntecedencia(
+                Date.now(),
+                minAntecedenciaMinutos,
+            ).getTime();
 
         setData(nextData);
         setRegistroRetroativo(nextDateIsToday ? registroRetroativo : false);
@@ -584,8 +591,11 @@ export function NovoAgendamentoPage() {
         setRegistroRetroativo(checked);
 
         if (!checked && dataHoraSelecionada) {
-            const antecedenciaMinima = Date.now() + 60 * 60 * 1000;
-            if (dataHoraSelecionada.getTime() < antecedenciaMinima) {
+            const antecedenciaMinima = calcularPisoAntecedencia(
+                Date.now(),
+                minAntecedenciaMinutos,
+            );
+            if (dataHoraSelecionada.getTime() < antecedenciaMinima.getTime()) {
                 setHoraSelecionada('');
                 setMinutoSelecionado('');
                 setDataHoraNoPassado(false);

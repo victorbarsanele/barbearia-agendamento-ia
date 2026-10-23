@@ -186,6 +186,38 @@ async function selecionarDataHoraFutura(page: Page): Promise<void> {
     await seletorHora.getByRole('button', { name: '00', exact: true }).click();
 }
 
+async function configurarMinAntecedencia(
+    page: Page,
+    status: number,
+    body: unknown,
+): Promise<void> {
+    await page.route('**/api/configuracao-agendamento', async (route) => {
+        await route.fulfill({ status, json: body });
+    });
+}
+
+async function abrirNovoAgendamentoHoje(page: Page): Promise<void> {
+    await page.clock.install({
+        time: new Date('2026-10-22T12:10:00.000Z'),
+    });
+    const respostaConfiguracao = page.waitForResponse(
+        (response) =>
+            new URL(response.url()).pathname ===
+            '/api/configuracao-agendamento',
+    );
+    await page.goto('/novo');
+    await respostaConfiguracao;
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+
+    const calendario = page
+        .getByText('SELECIONE UMA DATA')
+        .locator('..')
+        .locator('..')
+        .locator('..');
+    await calendario.getByRole('button', { name: '22', exact: true }).click();
+}
+
 async function salvar(page: Page): Promise<void> {
     await page.getByRole('button', { name: 'Salvar agendamento' }).click();
 }
@@ -248,6 +280,48 @@ test('sem pacote mantém o payload avulso sem campos de pacote', async ({
     });
     expect(api.posts[0]).not.toHaveProperty('pacoteId');
     expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
+});
+
+test('configuração de 15 minutos libera horário de hoje a 20 minutos', async ({
+    page,
+}) => {
+    await mockApi(page);
+    await configurarMinAntecedencia(page, 200, {
+        minAntecedenciaMinutos: 15,
+    });
+    await abrirNovoAgendamentoHoje(page);
+
+    const seletorHora = page.getByText('SELECIONE UM HORÁRIO').locator('..');
+    await expect(
+        seletorHora.getByRole('button', { name: '09', exact: true }),
+    ).toBeEnabled();
+    await seletorHora.getByRole('button', { name: '09', exact: true }).click();
+    await expect(
+        seletorHora.getByRole('button', { name: '30', exact: true }),
+    ).toBeEnabled();
+});
+
+test('falha de configuração mantém fallback de 60 minutos e permite horário posterior', async ({
+    page,
+}) => {
+    const api = await mockApi(page);
+    await configurarMinAntecedencia(page, 500, {
+        message: 'Falha ao carregar configuração.',
+    });
+    await abrirNovoAgendamentoHoje(page);
+
+    const seletorHora = page.getByText('SELECIONE UM HORÁRIO').locator('..');
+    await expect(
+        seletorHora.getByRole('button', { name: '09', exact: true }),
+    ).toBeDisabled();
+    await seletorHora.getByRole('button', { name: '10', exact: true }).click();
+    await seletorHora
+        .getByRole('button', { name: '15', exact: true })
+        .last()
+        .click();
+    await salvar(page);
+
+    await expect.poll(() => api.posts.length).toBe(1);
 });
 
 test('fora do expediente exige confirmação e reenvia o mesmo payload com override', async ({
