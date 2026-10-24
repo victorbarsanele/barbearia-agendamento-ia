@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 
+const REMINDER_MIN_EXPIRY_MARGIN_MS = 3 * 60_000;
+
 export interface PendingAgendamento {
     telefoneSessao: string;
     nomeCliente: string;
@@ -141,7 +143,12 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
         return prisma.rascunhoAgendamento.findMany({
             where: {
                 lembreteEnviadoEm: null,
-                expiraEm: { gt: agora },
+                expiraEm: {
+                    gte: new Date(
+                        agora.getTime() + REMINDER_MIN_EXPIRY_MARGIN_MS,
+                    ),
+                },
+                dataHoraInicio: { gt: agora },
                 criadoEm: { lte: criadoAte },
             },
         });
@@ -156,7 +163,12 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
             where: {
                 telefoneSessao,
                 lembreteEnviadoEm: null,
-                expiraEm: { gt: agora },
+                expiraEm: {
+                    gte: new Date(
+                        agora.getTime() + REMINDER_MIN_EXPIRY_MARGIN_MS,
+                    ),
+                },
+                dataHoraInicio: { gt: agora },
             },
             data: { lembreteEnviadoEm: agora },
         });
@@ -285,7 +297,9 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             .filter(
                 (draft) =>
                     draft.lembreteEnviadoEm == null &&
-                    draft.expiraEm > agora &&
+                    draft.expiraEm.getTime() >=
+                        agora.getTime() + REMINDER_MIN_EXPIRY_MARGIN_MS &&
+                    draft.dataHoraInicio > agora &&
                     draft.criadoEm <= criadoAte,
             )
             .map((draft) => ({ ...draft }));
@@ -299,7 +313,9 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
         if (
             !draft ||
             draft.lembreteEnviadoEm != null ||
-            draft.expiraEm <= agora
+            draft.expiraEm.getTime() <
+                agora.getTime() + REMINDER_MIN_EXPIRY_MARGIN_MS ||
+            draft.dataHoraInicio <= agora
         ) {
             return false;
         }

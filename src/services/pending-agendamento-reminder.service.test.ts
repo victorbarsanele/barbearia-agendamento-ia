@@ -43,6 +43,7 @@ async function seedDraft(
     options: {
         idadeMs?: number;
         expiracaoMs?: number;
+        inicioMs?: number;
         telefone?: string;
     } = {},
 ) {
@@ -55,7 +56,9 @@ async function seedDraft(
         nomeCliente: 'Nome privado',
         telefoneCliente: telefone,
         servicoId: 'servico-1',
-        dataHoraInicio: new Date('2026-10-20T16:00:00.000Z'),
+        dataHoraInicio: new Date(
+            now.getTime() + (options.inicioMs ?? 28 * 60 * 60_000),
+        ),
         mensagemCriacaoId: 'message-created',
         criadoEm: createdAt,
         expiraEm: new Date(
@@ -126,6 +129,22 @@ describe('pending booking reminder job', () => {
 
     it('não envia antes dos 10 minutos', async () => {
         await seedDraft({ idadeMs: 9 * 60_000 });
+
+        await processarCicloLembretes();
+
+        expect(mocks.sendWhatsAppText).not.toHaveBeenCalled();
+    });
+
+    it('não envia quando restam menos de 3 minutos para expirar', async () => {
+        await seedDraft({ expiracaoMs: 2 * 60_000 });
+
+        await processarCicloLembretes();
+
+        expect(mocks.sendWhatsAppText).not.toHaveBeenCalled();
+    });
+
+    it('não envia quando o horário já começou', async () => {
+        await seedDraft({ inicioMs: -1 });
 
         await processarCicloLembretes();
 

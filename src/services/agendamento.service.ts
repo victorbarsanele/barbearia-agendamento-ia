@@ -1,5 +1,6 @@
 import { Prisma, StatusAgendamento } from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
+import { getAgendamentoConfig } from '../config/agendamento';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
@@ -13,17 +14,14 @@ import { estaDentroDoHorarioDeAlmoco } from './horario-funcionamento';
 import * as horarioFuncionamentoService from './horario-funcionamento.service';
 
 export const TIME_ZONE = HORARIO_TIME_ZONE;
-export const MIN_ANTECEDENCIA_MS = 60 * 60 * 1000;
 
-function formatarAntecedenciaMinima(ms: number): string {
-    const minutos = ms / (60 * 1000);
-
+export function formatarAntecedenciaMinima(minutos: number): string {
     if (minutos % 60 === 0) {
         const horas = minutos / 60;
-        return horas === 1 ? '1 hora' : `${horas} horas`;
+        return `${horas} ${horas === 1 ? 'hora' : 'horas'}`;
     }
 
-    return minutos === 1 ? '1 minuto' : `${minutos} minutos`;
+    return `${minutos} ${minutos === 1 ? 'minuto' : 'minutos'}`;
 }
 
 interface CriarAgendamentoData {
@@ -35,6 +33,10 @@ interface CriarAgendamentoData {
     registroRetroativo?: boolean;
     permitirForaDoExpediente?: boolean;
     origem?: 'PAINEL' | 'GEMINI';
+}
+
+interface ValidarAntecedenciaOptions {
+    minAntecedenciaMinutos?: number;
 }
 
 interface SlotLote {
@@ -213,7 +215,10 @@ async function enviarMensagemCancelamento(
     }
 }
 
-function validarAntecedenciaMinima(dataHoraInicio: Date): void {
+function validarAntecedenciaMinima(
+    dataHoraInicio: Date,
+    minAntecedenciaConfigurada?: number,
+): void {
     const agora = toZonedTime(new Date(), TIME_ZONE);
     const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
 
@@ -223,10 +228,13 @@ function validarAntecedenciaMinima(dataHoraInicio: Date): void {
 
     const diferencaEmMilissegundos =
         inicioEmBrasilia.getTime() - agora.getTime();
+    const minAntecedenciaMinutos =
+        minAntecedenciaConfigurada ??
+        getAgendamentoConfig().minAntecedenciaMinutos;
 
-    if (diferencaEmMilissegundos < MIN_ANTECEDENCIA_MS) {
+    if (diferencaEmMilissegundos < minAntecedenciaMinutos * 60 * 1000) {
         throw new AppError(
-            `Agendamento deve ser feito com no mínimo ${formatarAntecedenciaMinima(MIN_ANTECEDENCIA_MS)} de antecedência.`,
+            `Agendamento deve ser feito com no mínimo ${formatarAntecedenciaMinima(minAntecedenciaMinutos)} de antecedência.`,
             422,
         );
     }
@@ -644,13 +652,17 @@ export async function validarDisponibilidade(
     clienteId?: string,
     permitirForaDoExpediente = false,
     ignorarAgendamentoId?: string,
+    options: ValidarAntecedenciaOptions = {},
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
     validarMesmoDiaEmBrasilia(dataHoraInicio, dataHoraFim);
     if (!registroRetroativo) {
-        validarAntecedenciaMinima(dataHoraInicio);
+        validarAntecedenciaMinima(
+            dataHoraInicio,
+            options.minAntecedenciaMinutos,
+        );
     }
 
     await validarConflito(
@@ -675,7 +687,10 @@ export async function validarDisponibilidade(
     return { dataHoraInicio, dataHoraFim };
 }
 
-export async function criar(data: CriarAgendamentoData) {
+export async function criar(
+    data: CriarAgendamentoData,
+    options: ValidarAntecedenciaOptions = {},
+) {
     try {
         if (data.pacoteId && data.pacoteClienteId) {
             throw new AppError(
@@ -709,6 +724,8 @@ export async function criar(data: CriarAgendamentoData) {
             data.origem,
             undefined,
             data.permitirForaDoExpediente,
+            undefined,
+            options,
         );
 
         const dados = {

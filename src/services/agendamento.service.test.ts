@@ -1,5 +1,5 @@
 import { StatusAgendamento } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const notificationMock = vi.hoisted(() => ({
     enviarNotificacaoWhatsApp: vi.fn(),
@@ -155,6 +155,8 @@ function mockarDependenciasPadrao(
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-20T12:00:00Z'));
+    vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+    vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
     vi.clearAllMocks();
     notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
         'Mensagem de notificação',
@@ -170,6 +172,11 @@ beforeEach(() => {
     transacaoMock.servico.findUnique.mockResolvedValue(servicoBase);
     vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
     mockarDependenciasPadrao();
+});
+
+afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
 });
 
 describe('agendamento.service.criar', () => {
@@ -509,6 +516,74 @@ describe('agendamento.service.criar', () => {
 
         expect(resultado.status).toBe(StatusAgendamento.AGENDADO);
         expect(agendamentoRepository.criar).toHaveBeenCalledTimes(1);
+    });
+
+    it('com mínimo configurado em 15, rejeita antecedência de 14 minutos e 59 segundos', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T09:14:59-03:00',
+            }),
+        ).rejects.toMatchObject({
+            message:
+                'Agendamento deve ser feito com no mínimo 15 minutos de antecedência.',
+            statusCode: 422,
+        });
+    });
+
+    it('com mínimo configurado em 15, aceita antecedência exata de 15 minutos', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:15:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:45:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T09:15:00-03:00',
+            }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-07-20T09:15:00-03:00'),
+        });
+    });
+
+    it('usa override de antecedência apenas quando fornecido internamente', async () => {
+        const data = {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T09:50:00-03:00',
+        };
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:50:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T10:20:00-03:00'),
+        });
+
+        await expect(agendamentoService.criar(data)).rejects.toMatchObject({
+            statusCode: 422,
+        });
+        await expect(
+            agendamentoService.criar(data, { minAntecedenciaMinutos: 50 }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-07-20T09:50:00-03:00'),
+        });
+    });
+
+    it.each([
+        [60, '1 hora'],
+        [120, '2 horas'],
+        [15, '15 minutos'],
+        [1, '1 minuto'],
+    ])('formata antecedência %i como %s', (minutos, esperado) => {
+        expect(agendamentoService.formatarAntecedenciaMinima(minutos)).toBe(
+            esperado,
+        );
     });
 
     it('rejeita agendamento que começa exatamente às 11:30', async () => {
@@ -906,6 +981,29 @@ describe('agendamento.service.cancelar', () => {
 });
 
 describe('agendamento.service.atualizar', () => {
+    it('reagenda no limite configurado de 15 minutos', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+        });
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:15:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:45:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T09:15:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+            }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-07-20T09:15:00-03:00'),
+        });
+    });
+
     it.each([
         ['concluído por booleano', { concluido: true }],
         ['com status concluído', { status: StatusAgendamento.CONCLUIDO }],
@@ -2072,6 +2170,27 @@ describe('agendamento.service.criarLote', () => {
         servico: servicoBase,
     };
 
+    it('usa o mínimo configurado ao criar lote comum', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue(
+            loteBase as never,
+        );
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T09:15:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T09:45:00-03:00'),
+        } as never);
+
+        const resultado = await agendamentoService.criarLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            slots: [{ data: '2026-07-20', horario: '09:15' }],
+        });
+
+        expect(resultado.criados).toHaveLength(1);
+        expect(resultado.falhados).toEqual([]);
+    });
+
     it('cria parcialmente quando há conflito no meio do lote', async () => {
         vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue(
             loteBase as never,
@@ -2185,6 +2304,21 @@ describe('agendamento.service.criarLote', () => {
 });
 
 describe('agendamento.service.simularLote', () => {
+    it('usa o mínimo configurado ao simular lote', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+
+        const resultado = await agendamentoService.simularLote({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            slots: [{ data: '2026-07-20', horario: '09:15' }],
+        });
+
+        expect(resultado.disponiveis).toEqual([
+            { data: '2026-07-20', horario: '09:15' },
+        ]);
+        expect(resultado.conflitos).toEqual([]);
+    });
+
     it('transforma slots além das vagas do pacote em conflitos', async () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
             id: 'pacote-cliente-1',
@@ -2280,6 +2414,28 @@ describe('agendamento.service lote com pacoteId', () => {
         origem: 'PAINEL' as const,
         slots: [{ data: '2026-07-21', horario: '10:00' }],
     };
+
+    it('aceita slot de pacote de catálogo no limite configurado de 15 minutos', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
+        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo());
+        vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
+            id: 'pacote-cliente-novo',
+        } as never);
+        vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue({
+            id: 'lote-1',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).mockResolvedValue(agendamentoAtual as never);
+
+        const resultado = await agendamentoService.criarLote({
+            ...payloadComCatalogo,
+            slots: [{ data: '2026-07-20', horario: '09:15' }],
+        });
+
+        expect(resultado.criados).toHaveLength(1);
+        expect(resultado.falhados).toEqual([]);
+    });
 
     it('rejeita pacoteId e pacoteClienteId no serviço', async () => {
         const payload = {

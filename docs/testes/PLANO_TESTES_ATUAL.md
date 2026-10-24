@@ -8,8 +8,12 @@ Referência: ESTRATEGIA_TESTES.md. Este documento lista o que deve ser testado a
 - [ ] Aceita agendamento em horário livre.
 - [ ] Rejeita agendamento fora do horário de funcionamento (antes das 9h, depois das 19h).
 - [ ] Rejeita agendamento em domingo (fechado).
-- [ ] Rejeita agendamento com antecedência menor que o mínimo permitido.
-- [ ] Aceita agendamento com antecedência exatamente no limite mínimo (edge case).
+- [x] Rejeita agendamento com antecedência menor que o mínimo permitido, inclusive com mínimo configurado em 15 minutos.
+- [x] Aceita agendamento com antecedência exatamente no limite mínimo (edge case), com padrões de 60 minutos e mínimo configurado em 15 minutos.
+- [x] Aplica tolerância reduzida somente na confirmação de rascunho; criação sem override continua no mínimo completo.
+- [x] Limita expiração do rascunho pelo piso de confirmação e suprime lembretes com menos de 3 minutos restantes ou após o início.
+- [x] Inclui aviso curto prazo com fuso de Brasília, arredondamento mínimo de 1 minuto e limiar exclusivo.
+- [x] Notifica `BARBER_PHONE` com template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, cliente, serviço(s), horário e minutos) quando Gemini confirma abaixo de `AVISO_CURTO_PRAZO_MINUTOS`; exige aprovação YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
 - [ ] Cancelamento altera status para CANCELADO (não deleta fisicamente).
 - [ ] Reagendamento dispara notificação (verificar chamada da função de envio, não o envio real).
 

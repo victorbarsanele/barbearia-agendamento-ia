@@ -103,6 +103,36 @@ describe('InMemoryPendingAgendamentoRepository', () => {
         ).resolves.toHaveLength(0);
     });
 
+    it('suprime lembretes próximos da expiração ou após o início', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        const now = new Date('2026-10-20T12:10:00-03:00');
+        const createdAt = new Date(now.getTime() - 10 * 60_000);
+        await repository.salvar({
+            ...baseDraft,
+            criadoEm: createdAt,
+            expiraEm: new Date(now.getTime() + 2 * 60_000),
+        });
+        await repository.salvar({
+            ...baseDraft,
+            telefoneSessao: '5519888888888',
+            expiraEm: new Date(now.getTime() + 5 * 60_000),
+            dataHoraInicio: new Date(now.getTime()),
+        });
+
+        await expect(
+            repository.listarElegiveisParaLembrete(
+                now,
+                new Date(now.getTime()),
+            ),
+        ).resolves.toHaveLength(0);
+        await expect(
+            repository.reivindicarLembrete(baseDraft.telefoneSessao, now),
+        ).resolves.toBe(false);
+        await expect(
+            repository.reivindicarLembrete('5519888888888', now),
+        ).resolves.toBe(false);
+    });
+
     it('reseta claim ao substituir rascunho', async () => {
         const repository = new InMemoryPendingAgendamentoRepository();
         await repository.salvar(baseDraft);
@@ -250,5 +280,28 @@ describe('PrismaPendingAgendamentoRepository', () => {
         expect(input.update.lembreteEnviadoEm).toBeNull();
         expect(input.create.resumoEnviadoEm).toBeNull();
         expect(input.update.resumoEnviadoEm).toBeNull();
+    });
+
+    it('filtra elegibilidade e claim por margem de expiração e início futuro', async () => {
+        const findMany = vi.fn().mockResolvedValue([]);
+        const updateMany = vi.fn().mockResolvedValue({ count: 0 });
+        const prisma = {
+            rascunhoAgendamento: { findMany, updateMany },
+        } as unknown as PrismaClient;
+        const repository = new PrismaPendingAgendamentoRepository(prisma);
+        const now = new Date('2026-10-20T12:10:00.000Z');
+        const margem = new Date(now.getTime() + 3 * 60_000);
+
+        await repository.listarElegiveisParaLembrete(now, now);
+        await repository.reivindicarLembrete(baseDraft.telefoneSessao, now);
+
+        expect(findMany.mock.calls[0][0].where).toMatchObject({
+            expiraEm: { gte: margem },
+            dataHoraInicio: { gt: now },
+        });
+        expect(updateMany.mock.calls[0][0].where).toMatchObject({
+            expiraEm: { gte: margem },
+            dataHoraInicio: { gt: now },
+        });
     });
 });

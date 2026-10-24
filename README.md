@@ -95,6 +95,10 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
+- `MIN_ANTECEDENCIA_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; antecedência mínima para criação e alteração de agendamento)
+- `OFERTA_FOLGA_MINUTOS` (opcional, inteiro entre `0` e `120`; padrão `0`; folga adicional somente na oferta de horários pelo WhatsApp)
+- `CONFIRMACAO_TOLERANCIA_MINUTOS` (opcional, inteiro entre `0` e `60`; padrão `0`; tolerância aplicada somente na confirmação de rascunho, sem alterar criação pelo painel/API)
+- `AVISO_CURTO_PRAZO_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; inclui aviso no resumo quando o horário estiver mais próximo que esse limite)
 - `HUMAN_TAKEOVER_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos; TTL deslizante contado desde a última mensagem do barbeiro na conversa)
 - `PENDING_BOOKING_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos)
 - `PENDING_BOOKING_REMINDER_DELAY_MS` (opcional, em milissegundos; padrão `600000` ou 10 minutos)
@@ -102,6 +106,10 @@ Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem
 - `YCLOUD_WEBHOOK_SECRET` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
 - `WHATSAPP_ALLOWLIST` (opcional; lista temporária de números para testes YCloud)
+
+O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local de antecedência. A resposta contém somente esse valor; a validação do backend continua sendo a fonte da verdade.
+
+Quando o Gemini confirma agendamento com antecedência menor que `AVISO_CURTO_PRAZO_MINUTOS`, o barbeiro recebe o template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, 4 parâmetros: cliente, serviço(s), horário e minutos), enviado a `BARBER_PHONE`. O template precisa de aprovação da YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
 
 #### 6.2 Backend (raiz)
 
@@ -265,6 +273,8 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `COOKIE_SECURE`
 - `CORS_ORIGINS`
 - `ESCALATION_COOLDOWN_MS` (optional, in milliseconds; default `900000` or 15 minutes)
+- `MIN_ANTECEDENCIA_MINUTOS` (optional integer from `0` to `1440`; default `60`; minimum lead time for creating or changing appointments)
+- `OFERTA_FOLGA_MINUTOS` (optional integer from `0` to `120`; default `0`; extra buffer only when offering WhatsApp time slots)
 - `HUMAN_TAKEOVER_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes; sliding TTL counted from the barber's last message in the conversation)
 - `PENDING_BOOKING_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes)
 - `PENDING_BOOKING_REMINDER_DELAY_MS` (optional, in milliseconds; default `600000` or 10 minutes)
@@ -272,6 +282,8 @@ Copy and fill variables from `.env.example` into a local `.env` file (do not com
 - `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
 - `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)
 - `WHATSAPP_ALLOWLIST` (optional temporary list of test numbers for YCloud)
+
+When Gemini confirms a booking with lead time below `AVISO_CURTO_PRAZO_MINUTOS`, the barber receives YCloud template `aviso_agendamento_ultima_hora` (`pt_BR`, four parameters: customer, service(s), time, and minutes) at `BARBER_PHONE`. The template must be approved by YCloud/Meta before lowering `MIN_ANTECEDENCIA_MINUTOS` to 15.
 
 #### 6.2 Backend (root)
 

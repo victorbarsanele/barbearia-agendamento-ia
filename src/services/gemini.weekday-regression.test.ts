@@ -55,7 +55,6 @@ vi.mock('../repositories/escalation-state.repository', () => ({
 }));
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     validarDisponibilidade: mocks.validarDisponibilidade,
     criar: mocks.criarAgendamento,
     atualizar: vi.fn(),
@@ -485,6 +484,8 @@ describe('calendário e validação de weekday do Gemini', () => {
         expect(info.mock.calls[0][1]).toEqual({
             tool: 'prepararAgendamento',
             motivo: 'rascunho_salvo',
+            antecedenciaMin: expect.any(Number),
+            expiraEmMin: expect.any(Number),
         });
 
         await __testables.prepararAgendamentoTool(phone, null, validArgs, [

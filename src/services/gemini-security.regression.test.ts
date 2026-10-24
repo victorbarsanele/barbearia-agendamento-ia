@@ -55,7 +55,6 @@ vi.mock('../repositories/pacote.repository', () => ({
 // atualizar()/cancelar() (não exercitados neste arquivo de teste).
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     criar: vi.fn(),
     validarDisponibilidade: vi.fn().mockResolvedValue({
         dataHoraInicio: new Date('2026-07-28T14:00:00Z'),
@@ -389,6 +388,7 @@ describe('Regressão de segurança: confirmação usa somente rascunho do backen
         expect(result).toMatchObject({ sucesso: true });
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.objectContaining({ clienteId: CLIENTE_SESSAO.id }),
+            { minAntecedenciaMinutos: 60 },
         );
         const dadosCriacao = vi.mocked(agendamentoService.criar).mock
             .calls[0]?.[0];

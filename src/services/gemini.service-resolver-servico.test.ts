@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     listarServicos: vi.fn(),
@@ -50,7 +50,6 @@ vi.mock('../repositories/escalation-state.repository', () => ({
 }));
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     validarDisponibilidade: mocks.validarDisponibilidade,
     criar: vi.fn(),
     atualizar: vi.fn(),
@@ -70,6 +69,8 @@ const service = {
 
 describe('resolver servicoId do Gemini', () => {
     beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-10-15T12:00:00.000Z'));
         vi.clearAllMocks();
         mocks.listarServicos.mockResolvedValue([service]);
         mocks.buscarCliente.mockResolvedValue(null);
@@ -81,6 +82,10 @@ describe('resolver servicoId do Gemini', () => {
         __testables.setPendingAgendamentoRepository(
             new InMemoryPendingAgendamentoRepository(),
         );
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('aceita ID ou nome completo normalizado, mas rejeita nomes parciais', async () => {

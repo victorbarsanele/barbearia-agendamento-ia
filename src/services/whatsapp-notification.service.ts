@@ -9,7 +9,8 @@ import { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 export type WhatsAppNotificationType =
     | 'reagendamento'
     | 'cancelamento'
-    | 'atendimento_humano';
+    | 'atendimento_humano'
+    | 'agendamento_ultima_hora';
 
 export type WhatsAppNotificationParameters =
     | {
@@ -34,6 +35,13 @@ export type WhatsAppNotificationParameters =
           tipo: 'atendimento_humano';
           telefoneCliente: string;
           motivo: string;
+      }
+    | {
+          tipo: 'agendamento_ultima_hora';
+          nomeCliente: string;
+          servicos: string;
+          horario: string;
+          minutos: string;
       };
 
 type RebookingParameters = Omit<
@@ -48,11 +56,19 @@ type HumanSupportParameters = Omit<
     Extract<WhatsAppNotificationParameters, { tipo: 'atendimento_humano' }>,
     'tipo'
 >;
+type LastMinuteBookingParameters = Omit<
+    Extract<
+        WhatsAppNotificationParameters,
+        { tipo: 'agendamento_ultima_hora' }
+    >,
+    'tipo'
+>;
 
 const TEMPLATE_NAMES: Record<WhatsAppNotificationType, string> = {
     reagendamento: 'aviso_reagendamento',
     cancelamento: 'aviso_cancelamento',
     atendimento_humano: 'aviso_atendimento_humano',
+    agendamento_ultima_hora: 'aviso_agendamento_ultima_hora',
 };
 
 function sanitizeParameter(value: string): string {
@@ -63,6 +79,20 @@ function sanitizeParameter(value: string): string {
         .slice(0, 200);
 
     return sanitized || 'não informado';
+}
+
+function sanitizeRequiredParameter(value: string): string {
+    const sanitized = value
+        .replace(/[\r\n\t]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+
+    if (!sanitized) {
+        throw new Error('Parâmetro obrigatório de notificação vazio.');
+    }
+
+    return sanitized;
 }
 
 function buildLegacyText(parameters: WhatsAppNotificationParameters): string {
@@ -86,7 +116,11 @@ function buildLegacyText(parameters: WhatsAppNotificationParameters): string {
         ].join('\n');
     }
 
-    return `Cliente ${parameters.telefoneCliente} precisa de atendimento manual (${parameters.motivo}).`;
+    if (parameters.tipo === 'atendimento_humano') {
+        return `Cliente ${parameters.telefoneCliente} precisa de atendimento manual (${parameters.motivo}).`;
+    }
+
+    return `Novo agendamento de última hora: ${parameters.nomeCliente} (${parameters.servicos}) às ${parameters.horario}, daqui a ${parameters.minutos} minutos. Confira na agenda do painel!`;
 }
 
 function buildTemplateParameters(
@@ -107,7 +141,14 @@ function buildTemplateParameters(
                     parameters.servico,
                     parameters.contatoBarbeiro,
                 ]
-              : [parameters.telefoneCliente, parameters.motivo];
+              : parameters.tipo === 'atendimento_humano'
+                ? [parameters.telefoneCliente, parameters.motivo]
+                : [
+                      parameters.nomeCliente,
+                      parameters.servicos,
+                      parameters.horario,
+                      parameters.minutos,
+                  ];
 
     return values.map((value) => ({
         type: 'text',
@@ -131,17 +172,38 @@ export async function enviarNotificacaoWhatsApp(
     parametros: HumanSupportParameters,
 ): Promise<string | null>;
 export async function enviarNotificacaoWhatsApp(
+    tipo: 'agendamento_ultima_hora',
+    destinatario: string,
+    parametros: LastMinuteBookingParameters,
+): Promise<string | null>;
+export async function enviarNotificacaoWhatsApp(
     tipo: WhatsAppNotificationType,
     destinatario: string,
     parametros:
         | RebookingParameters
         | CancellationParameters
-        | HumanSupportParameters,
+        | HumanSupportParameters
+        | LastMinuteBookingParameters,
 ): Promise<string | null> {
-    const notification = { ...parametros, tipo } as WhatsAppNotificationParameters;
+    const notification = {
+        ...parametros,
+        tipo,
+    } as WhatsAppNotificationParameters;
+    const sanitizedNotification =
+        notification.tipo === 'agendamento_ultima_hora'
+            ? {
+                  ...notification,
+                  nomeCliente: sanitizeRequiredParameter(
+                      notification.nomeCliente,
+                  ),
+                  servicos: sanitizeRequiredParameter(notification.servicos),
+                  horario: sanitizeRequiredParameter(notification.horario),
+                  minutos: sanitizeRequiredParameter(notification.minutos),
+              }
+            : notification;
 
     if (getWhatsAppProvider() === 'evolution') {
-        const text = buildLegacyText(notification);
+        const text = buildLegacyText(sanitizedNotification);
         await sendWhatsAppText(destinatario, text);
         return tipo === 'atendimento_humano' ? null : text;
     }
@@ -161,7 +223,7 @@ export async function enviarNotificacaoWhatsApp(
     await sendYCloudTemplate(
         phone,
         TEMPLATE_NAMES[tipo],
-        buildTemplateParameters(notification),
+        buildTemplateParameters(sanitizedNotification),
     );
     return null;
 }

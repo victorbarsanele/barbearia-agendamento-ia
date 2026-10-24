@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
     criar: vi.fn(),
@@ -46,7 +46,6 @@ vi.mock('../repositories/escalation-state.repository', () => ({
 }));
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
-    MIN_ANTECEDENCIA_MS: 60 * 60 * 1000,
     criar: mocks.criar,
     validarDisponibilidade: mocks.validarDisponibilidade,
     atualizar: vi.fn(),
@@ -75,6 +74,8 @@ const booking = {
 };
 
 beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-20T12:00:00.000Z'));
     vi.resetAllMocks();
     mocks.buscarPorTelefone.mockResolvedValue({
         id: 'cliente-1',
@@ -103,6 +104,11 @@ beforeEach(() => {
     );
 });
 
+afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+});
+
 async function prepare(messageId: string, values = draft) {
     return __testables.prepararAgendamentoTool(phone, messageId, values, [
         'João Silva',
@@ -129,6 +135,20 @@ describe('confirmação de agendamento', () => {
         expect(mocks.criar).toHaveBeenCalledOnce();
         expect(mocks.criar.mock.calls[0][0]).toMatchObject({
             clienteId: 'cliente-1',
+        });
+    });
+
+    it('aplica tolerância configurada somente ao confirmar o rascunho', async () => {
+        vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
+        vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', '50');
+        await prepare('m1');
+
+        await expect(
+            __testables.confirmarAgendamentoTool(phone, 'm2'),
+        ).resolves.toMatchObject({ sucesso: true });
+
+        expect(mocks.criar.mock.calls[0][1]).toEqual({
+            minAntecedenciaMinutos: 10,
         });
     });
 
@@ -184,6 +204,7 @@ describe('confirmação de agendamento', () => {
         ).resolves.toMatchObject({ sucesso: false });
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.not.objectContaining({ permitirForaDoExpediente: true }),
+            { minAntecedenciaMinutos: 60 },
         );
     });
 
