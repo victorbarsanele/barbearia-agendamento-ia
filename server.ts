@@ -109,6 +109,7 @@ const start = async (): Promise<void> => {
         validarAgendamentoConfig();
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
+        app.log.info({ nodeVersion: process.version }, 'node.runtime');
         stopPendingBookingReminder = iniciarJobLembretesRascunho();
 
         const shutdown = (): void => {
