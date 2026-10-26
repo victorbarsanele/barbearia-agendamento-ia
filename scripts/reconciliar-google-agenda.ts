@@ -15,10 +15,17 @@ async function main(): Promise<void> {
 
     try {
         const adapter = new GoogleCalendarAdapter(config);
-        const ids = await reconciliarGoogleAgenda(adapter);
-        console.info(
-            `Reconciliação concluída. Itens enfileirados: ${ids.length}.`,
-        );
+        const resumo = await reconciliarGoogleAgenda(adapter);
+        console.info('Reconciliação concluída.', {
+            sucesso: resumo.sucesso,
+            agendamentosConsiderados: resumo.agendamentosConsiderados,
+            eventosListados: resumo.eventosListados,
+            divergentes: resumo.divergentes,
+            enfileirados: resumo.enfileirados,
+            falhas: resumo.falhas,
+            duracaoMs: resumo.duracaoMs,
+        });
+        if (!resumo.sucesso) process.exitCode = 1;
     } finally {
         await prisma.$disconnect();
     }

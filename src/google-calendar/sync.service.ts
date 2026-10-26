@@ -6,16 +6,51 @@ import {
 } from './google-calendar.adapter';
 import { montarEvento, type AgendamentoParaEvento } from './event';
 import * as syncRepository from './sync.repository';
+import { TAMANHO_LOTE_ENFILEIRAMENTO } from './sync.repository';
+import { descreverErroSeguro } from './safe-error';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 
-export async function enfileirarSincronizacao(ids: string[]): Promise<void> {
-    if (!getGoogleCalendarConfig().enabled || ids.length === 0) return;
+export interface ResultadoEnfileiramentoSincronizacao {
+    total: number;
+    falhas: number;
+}
+
+export async function enfileirarSincronizacao(
+    ids: string[],
+): Promise<ResultadoEnfileiramentoSincronizacao> {
+    const idsUnicos = [...new Set(ids)];
+    if (!getGoogleCalendarConfig().enabled || idsUnicos.length === 0) {
+        return { total: 0, falhas: 0 };
+    }
 
     try {
-        await syncRepository.enfileirar([...new Set(ids)]);
-    } catch {
-        console.error('[GOOGLE CALENDAR] Falha ao enfileirar sincronização.');
+        const resultado = await syncRepository.enfileirar(idsUnicos);
+        for (const falha of resultado.lotesFalhos) {
+            console.error(
+                '[GOOGLE CALENDAR] Falha ao enfileirar sincronização.',
+                {
+                    ...descreverErroSeguro(falha.erro),
+                    quantidadeIds: falha.quantidadeIds,
+                    indiceLote: falha.indiceLote,
+                    totalLotes: falha.totalLotes,
+                    duracaoMs: falha.duracaoMs,
+                },
+            );
+        }
+        return { total: resultado.total, falhas: resultado.falhas };
+    } catch (erro) {
+        const totalLotes = Math.ceil(
+            idsUnicos.length / TAMANHO_LOTE_ENFILEIRAMENTO,
+        );
+        console.error('[GOOGLE CALENDAR] Falha ao enfileirar sincronização.', {
+            ...descreverErroSeguro(erro),
+            quantidadeIds: idsUnicos.length,
+            indiceLote: 0,
+            totalLotes,
+            duracaoMs: 0,
+        });
+        return { total: idsUnicos.length, falhas: idsUnicos.length };
     }
 }
 
@@ -25,6 +60,16 @@ export function criarGoogleCalendarAdapter(): GoogleCalendarAdapter | null {
 }
 
 export interface AgendamentoReconciliação extends AgendamentoParaEvento {}
+
+export interface ResultadoReconciliação {
+    sucesso: boolean;
+    agendamentosConsiderados: number;
+    eventosListados: number;
+    divergentes: number;
+    enfileirados: number;
+    falhas: number;
+    duracaoMs: number;
+}
 
 export function calcularIdsDivergentes(
     agendamentos: AgendamentoReconciliação[],
@@ -93,17 +138,53 @@ export function obterInicioJanelaReconciliacao(agora = new Date()): Date {
 export async function reconciliarGoogleAgenda(
     adapter: GoogleCalendarAdapter,
     agora = new Date(),
-): Promise<string[]> {
-    if (!getGoogleCalendarConfig().enabled) return [];
+): Promise<ResultadoReconciliação> {
+    const inicio = Date.now();
+    const resumo: ResultadoReconciliação = {
+        sucesso: false,
+        agendamentosConsiderados: 0,
+        eventosListados: 0,
+        divergentes: 0,
+        enfileirados: 0,
+        falhas: 0,
+        duracaoMs: 0,
+    };
 
-    const janela = obterInicioJanelaReconciliacao(agora);
-    const [agendamentos, eventos] = await Promise.all([
-        syncRepository.listarAgendamentosDesde(janela),
-        adapter.listarEventos(janela),
-    ]);
-    const ids = calcularIdsDivergentes(agendamentos, eventos);
-    await enfileirarSincronizacao(ids);
-    return ids;
+    try {
+        if (!getGoogleCalendarConfig().enabled) {
+            resumo.sucesso = true;
+            return resumo;
+        }
+
+        const janela = obterInicioJanelaReconciliacao(agora);
+        const [agendamentos, eventos] = await Promise.all([
+            syncRepository.listarAgendamentosDesde(janela),
+            adapter.listarEventos(janela),
+        ]);
+        resumo.agendamentosConsiderados = agendamentos.length;
+        resumo.eventosListados = eventos.length;
+        const ids = calcularIdsDivergentes(agendamentos, eventos);
+        resumo.divergentes = ids.length;
+
+        const resultadoFila = await enfileirarSincronizacao(ids);
+        resumo.enfileirados = resultadoFila.total - resultadoFila.falhas;
+        resumo.falhas = resultadoFila.falhas;
+        resumo.sucesso = resultadoFila.falhas === 0;
+        return resumo;
+    } catch (erro) {
+        resumo.falhas = Math.max(resumo.falhas, 1);
+        throw erro;
+    } finally {
+        resumo.duracaoMs = Date.now() - inicio;
+        console.log('[GOOGLE CALENDAR] Resumo da reconciliação.', {
+            agendamentosConsiderados: resumo.agendamentosConsiderados,
+            eventosListados: resumo.eventosListados,
+            divergentes: resumo.divergentes,
+            enfileirados: resumo.enfileirados,
+            falhas: resumo.falhas,
+            duracaoMs: resumo.duracaoMs,
+        });
+    }
 }
 
 export const INTERVALO_RECONCILIACAO_MS = 6 * 60 * 60 * 1000;
