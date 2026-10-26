@@ -1,8 +1,21 @@
 import { Cliente } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { getGoogleCalendarConfig } from '../google-calendar/config';
 import { AppError } from '../lib/app-error';
+import * as syncRepository from '../google-calendar/sync.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import { enfileirarSincronizacao } from '../google-calendar/sync.service';
 import { normalizarTelefone } from '../utils/telefone';
+
+async function enfileirarSemFalhar(ids: string[]): Promise<void> {
+    try {
+        await enfileirarSincronizacao(ids);
+    } catch {
+        console.error(
+            '[GOOGLE CALENDAR] Falha ao enfileirar agendamentos do cliente.',
+        );
+    }
+}
 
 function isForeignKeyConflict(error: unknown): boolean {
     if (
@@ -84,10 +97,21 @@ export async function atualizar(
         throw new AppError('Telefone já cadastrado.', 409);
     }
 
-    return clienteRepository.atualizar(id, {
+    const cliente = await clienteRepository.atualizar(id, {
         ...data,
         telefone,
     });
+    if (getGoogleCalendarConfig().enabled) {
+        try {
+            const ids = await syncRepository.listarIdsFuturosPorCliente(id);
+            await enfileirarSemFalhar(ids);
+        } catch {
+            console.error(
+                '[GOOGLE CALENDAR] Falha ao localizar agendamentos do cliente.',
+            );
+        }
+    }
+    return cliente;
 }
 
 export async function obterResumoExclusao(
@@ -121,6 +145,17 @@ export async function excluirPorId(
         );
     }
 
+    let agendamentoIds: string[] = [];
+    if (getGoogleCalendarConfig().enabled) {
+        try {
+            agendamentoIds = await syncRepository.listarIdsPorCliente(id);
+        } catch {
+            console.error(
+                '[GOOGLE CALENDAR] Falha ao localizar agendamentos do cliente.',
+            );
+        }
+    }
+
     try {
         await clienteRepository.excluirComHistorico(id);
     } catch (error) {
@@ -133,6 +168,7 @@ export async function excluirPorId(
 
         throw error;
     }
+    await enfileirarSemFalhar(agendamentoIds);
 }
 
 export async function listarTodos(): Promise<Cliente[]> {

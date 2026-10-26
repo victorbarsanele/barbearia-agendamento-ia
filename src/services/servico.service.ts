@@ -1,8 +1,11 @@
 import { Servico } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { getGoogleCalendarConfig } from '../google-calendar/config';
 import { AppError } from '../lib/app-error';
+import * as syncRepository from '../google-calendar/sync.repository';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import { enfileirarSincronizacao } from '../google-calendar/sync.service';
 
 function isForeignKeyConflict(error: unknown): boolean {
     if (
@@ -93,7 +96,7 @@ export async function atualizar(
         throw new AppError('O preço do serviço não pode ser negativo.', 400);
     }
 
-    return servicoRepository.atualizar(id, {
+    const servico = await servicoRepository.atualizar(id, {
         nome: data.nome,
         duracaoMinutos: data.duracaoMinutos,
         preco:
@@ -104,6 +107,21 @@ export async function atualizar(
             data.permiteExtensaoFechamento ??
             servicoExistente.permiteExtensaoFechamento,
     });
+    if (
+        getGoogleCalendarConfig().enabled &&
+        (servicoExistente.nome !== servico.nome ||
+            servicoExistente.duracaoMinutos !== servico.duracaoMinutos)
+    ) {
+        try {
+            const ids = await syncRepository.listarIdsFuturosPorServico(id);
+            await enfileirarSincronizacao(ids);
+        } catch {
+            console.error(
+                '[GOOGLE CALENDAR] Falha ao localizar agendamentos do serviço.',
+            );
+        }
+    }
+    return servico;
 }
 
 export async function excluirPorId(id: string): Promise<void> {

@@ -8,12 +8,21 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import { enfileirarSincronizacao } from '../google-calendar/sync.service';
 import { isAgendamentoConcluido } from '../utils/agendamento';
 import { TIME_ZONE as HORARIO_TIME_ZONE } from './horario-funcionamento.service';
 import { estaDentroDoHorarioDeAlmoco } from './horario-funcionamento';
 import * as horarioFuncionamentoService from './horario-funcionamento.service';
 
 export const TIME_ZONE = HORARIO_TIME_ZONE;
+
+async function enfileirarSemFalhar(ids: string[]): Promise<void> {
+    try {
+        await enfileirarSincronizacao(ids);
+    } catch {
+        console.error('[GOOGLE CALENDAR] Falha ao enfileirar agendamentos.');
+    }
+}
 
 export function formatarAntecedenciaMinima(minutos: number): string {
     if (minutos % 60 === 0) {
@@ -737,17 +746,17 @@ export async function criar(
             status: StatusAgendamento.AGENDADO,
         };
 
-        if (data.pacoteId) {
-            return await criarComPacoteDoCatalogo(dados, data.pacoteId);
-        }
-
-        return data.pacoteClienteId
-            ? await agendamentoRepository.criarComNumeroNoPacote(
-                  dados,
-                  data.pacoteClienteId,
-                  data.servicoId,
-              )
-            : await agendamentoRepository.criar(dados);
+        const agendamento = data.pacoteId
+            ? await criarComPacoteDoCatalogo(dados, data.pacoteId)
+            : data.pacoteClienteId
+              ? await agendamentoRepository.criarComNumeroNoPacote(
+                    dados,
+                    data.pacoteClienteId,
+                    data.servicoId,
+                )
+              : await agendamentoRepository.criar(dados);
+        await enfileirarSemFalhar([agendamento.id]);
+        return agendamento;
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -842,7 +851,11 @@ export async function criarLote(data: LoteAgendamentoData) {
     try {
         validarContratoLote(data);
         if (data.pacoteId) {
-            return await criarLoteComPacoteDoCatalogo(data);
+            const resultado = await criarLoteComPacoteDoCatalogo(data);
+            await enfileirarSemFalhar(
+                resultado.criados.map(({ agendamentoId }) => agendamentoId),
+            );
+            return resultado;
         }
 
         const { servico } = await carregarDependencias(
@@ -908,6 +921,9 @@ export async function criarLote(data: LoteAgendamentoData) {
             }
         }
 
+        await enfileirarSemFalhar(
+            criados.map(({ agendamentoId }) => agendamentoId),
+        );
         return { loteId: lote.id, criados, falhados };
     } catch (error) {
         if (error instanceof AppError) {
@@ -1273,6 +1289,8 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
               )
             : await agendamentoRepository.atualizar(id, dados);
 
+        await enfileirarSemFalhar([agendamentoAtualizado.id]);
+
         if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
             try {
                 await enviarMensagemRemarcacao(
@@ -1342,6 +1360,11 @@ export async function cancelar(
                   (siblingId) => agendamentoRepository.cancelar(siblingId),
               )
             : [];
+
+        await enfileirarSemFalhar([
+            agendamentoCancelado.id,
+            ...agendamentosAfetados,
+        ]);
 
         return { ...agendamentoCancelado, agendamentosAfetados };
     } catch (error) {
@@ -1440,6 +1463,11 @@ export async function concluir(id: string, aplicarParaLote = false) {
                   },
               )
             : [];
+
+        await enfileirarSemFalhar([
+            resultado.agendamento.id,
+            ...agendamentosAfetados,
+        ]);
 
         return { ...resultado.agendamento, agendamentosAfetados };
     } catch (error) {

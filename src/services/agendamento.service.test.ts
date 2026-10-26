@@ -4,6 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const notificationMock = vi.hoisted(() => ({
     enviarNotificacaoWhatsApp: vi.fn(),
 }));
+const googleSyncMock = vi.hoisted(() => {
+    const state = { idsEnfileirados: [] as string[] };
+    return {
+        state,
+        enfileirarSincronizacao: vi.fn(async (ids: string[]) => {
+            if (process.env.GOOGLE_CALENDAR_SYNC_ENABLED === 'true') {
+                state.idsEnfileirados.push(...ids);
+            }
+        }),
+    };
+});
+
+vi.mock('../google-calendar/sync.service', () => googleSyncMock);
 
 vi.mock('../repositories/agendamento.repository', () => ({
     criar: vi.fn(),
@@ -70,6 +83,7 @@ import * as clienteRepository from '../repositories/cliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
+import { enfileirarSincronizacao } from '../google-calendar/sync.service';
 import * as geminiService from './gemini.service';
 import * as agendamentoService from './agendamento.service';
 
@@ -158,9 +172,15 @@ beforeEach(() => {
     vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
     vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
     vi.clearAllMocks();
+    googleSyncMock.state.idsEnfileirados.length = 0;
     notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
         'Mensagem de notificação',
     );
+    vi.mocked(enfileirarSincronizacao).mockImplementation(async (ids) => {
+        if (process.env.GOOGLE_CALENDAR_SYNC_ENABLED === 'true') {
+            googleSyncMock.state.idsEnfileirados.push(...ids);
+        }
+    });
     vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
         true,
     );
@@ -272,6 +292,23 @@ describe('agendamento.service.criar', () => {
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
         });
+    });
+
+    it('mantém criação persistida quando enfileiramento falha', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+        vi.mocked(enfileirarSincronizacao).mockRejectedValueOnce(
+            new Error('outbox unavailable'),
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            }),
+        ).resolves.toEqual(agendamentoAtual);
     });
 
     it('aceita criação retroativa no passado quando horário está livre', async () => {
@@ -1829,6 +1866,132 @@ describe('agendamento.service.concluir', () => {
             servicoBase.id,
         );
         expect(resultado).toMatchObject({ concluido: true });
+    });
+
+    it('enfileira id após repository concluir com sucesso', async () => {
+        vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'true');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        });
+
+        await agendamentoService.concluir('agendamento-1');
+
+        expect(googleSyncMock.state.idsEnfileirados).toEqual(['agendamento-1']);
+        expect(enfileirarSincronizacao).toHaveBeenCalledWith(['agendamento-1']);
+        expect(
+            googleSyncMock.enfileirarSincronizacao.mock.invocationCallOrder[0],
+        ).toBeGreaterThan(
+            vi.mocked(agendamentoRepository.concluirComPacote).mock
+                .invocationCallOrder[0],
+        );
+    });
+
+    it('enfileira somente conclusão principal e irmãos concluídos', async () => {
+        vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'true');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            loteId: 'lote-1',
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
+        ).mockResolvedValue([
+            { id: 'irmao-concluido' },
+            { id: 'irmao-falhou' },
+        ] as never);
+        const resultadoRepository = (id: string) => ({
+            agendamento: {
+                ...agendamentoAtual,
+                id,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        });
+        vi.mocked(agendamentoRepository.concluirComPacote)
+            .mockResolvedValueOnce(resultadoRepository('agendamento-1'))
+            .mockResolvedValueOnce(resultadoRepository('irmao-concluido'))
+            .mockRejectedValueOnce(new Error('repository failure'));
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await agendamentoService.concluir('agendamento-1', true);
+
+        expect(googleSyncMock.state.idsEnfileirados).toEqual([
+            'agendamento-1',
+            'irmao-concluido',
+        ]);
+        expect(enfileirarSincronizacao).toHaveBeenCalledWith([
+            'agendamento-1',
+            'irmao-concluido',
+        ]);
+    });
+
+    it('não falha conclusão quando enfileiramento rejeita', async () => {
+        vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'true');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        });
+        vi.mocked(enfileirarSincronizacao).mockRejectedValueOnce(
+            new Error('outbox unavailable'),
+        );
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).resolves.toMatchObject({ concluido: true });
+    });
+
+    it('não enfileira conclusão com flag desligada', async () => {
+        vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'false');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        });
+
+        await agendamentoService.concluir('agendamento-1');
+
+        expect(googleSyncMock.state.idsEnfileirados).toEqual([]);
     });
 
     it('permite reparar status CONCLUIDO ainda não marcado como concluído', async () => {
