@@ -1,4 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const googleSyncMocks = vi.hoisted(() => ({
+    listarIdsFuturosPorCliente: vi.fn(),
+    listarIdsPorCliente: vi.fn(),
+    enfileirarSincronizacao: vi.fn(),
+}));
+
+vi.mock('../google-calendar/sync.repository', () => ({
+    listarIdsFuturosPorCliente: googleSyncMocks.listarIdsFuturosPorCliente,
+    listarIdsPorCliente: googleSyncMocks.listarIdsPorCliente,
+}));
+vi.mock('../google-calendar/sync.service', () => ({
+    enfileirarSincronizacao: googleSyncMocks.enfileirarSincronizacao,
+}));
+
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as clienteService from './cliente.service';
 
@@ -35,10 +50,33 @@ const resumoSemHistorico = {
     impedimentos: [],
 };
 
+function habilitarGoogleSync(): void {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'true');
+    vi.stubEnv(
+        'GOOGLE_SERVICE_ACCOUNT_JSON_BASE64',
+        Buffer.from(
+            JSON.stringify({
+                client_email: 'calendar@example.test',
+                private_key: privateKey.export({
+                    type: 'pkcs8',
+                    format: 'pem',
+                }),
+            }),
+        ).toString('base64'),
+    );
+    vi.stubEnv('GOOGLE_CALENDAR_ID', 'calendar-id');
+}
+
 describe('cliente.service telefones', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        googleSyncMocks.listarIdsFuturosPorCliente.mockResolvedValue([]);
+        googleSyncMocks.listarIdsPorCliente.mockResolvedValue([]);
+        googleSyncMocks.enfileirarSincronizacao.mockResolvedValue(undefined);
     });
+
+    afterEach(() => vi.unstubAllEnvs());
 
     it('salva telefone sem 55 já normalizado', async () => {
         vi.mocked(clienteRepository.buscarPorTelefone).mockResolvedValue(null);
@@ -104,6 +142,27 @@ describe('cliente.service telefones', () => {
         });
     });
 
+    it('mantém atualização quando enfileiramento falha', async () => {
+        habilitarGoogleSync();
+        vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(
+            clienteExistente as never,
+        );
+        vi.mocked(clienteRepository.buscarPorTelefone).mockResolvedValue(null);
+        vi.mocked(clienteRepository.atualizar).mockResolvedValue(
+            clienteExistente as never,
+        );
+        googleSyncMocks.enfileirarSincronizacao.mockRejectedValueOnce(
+            new Error('outbox unavailable'),
+        );
+
+        await expect(
+            clienteService.atualizar('cliente-1', {
+                nome: 'Maria Nova',
+                telefone: '19974191311',
+            }),
+        ).resolves.toEqual(clienteExistente);
+    });
+
     it('retorna 404 ao buscar resumo de cliente inexistente', async () => {
         vi.mocked(clienteRepository.obterResumoExclusao).mockResolvedValue(
             null,
@@ -156,6 +215,55 @@ describe('cliente.service telefones', () => {
         expect(clienteRepository.excluirComHistorico).toHaveBeenCalledWith(
             'cliente-1',
         );
+    });
+
+    it('captura IDs antes da exclusão e tolera falha ao enfileirar', async () => {
+        habilitarGoogleSync();
+        vi.mocked(clienteRepository.obterResumoExclusao).mockResolvedValue({
+            ...resumoSemHistorico,
+            temHistorico: true,
+        });
+        googleSyncMocks.listarIdsPorCliente.mockResolvedValue([
+            'agendamento-1',
+        ]);
+        googleSyncMocks.enfileirarSincronizacao.mockRejectedValueOnce(
+            new Error('outbox unavailable'),
+        );
+
+        await expect(
+            clienteService.excluirPorId('cliente-1', true),
+        ).resolves.toBeUndefined();
+
+        expect(
+            googleSyncMocks.listarIdsPorCliente.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            vi.mocked(clienteRepository.excluirComHistorico).mock
+                .invocationCallOrder[0],
+        );
+        expect(googleSyncMocks.enfileirarSincronizacao).toHaveBeenCalledWith([
+            'agendamento-1',
+        ]);
+    });
+
+    it('não consulta agendamentos quando flag está desligada', async () => {
+        vi.stubEnv('GOOGLE_CALENDAR_SYNC_ENABLED', 'false');
+        vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(
+            clienteExistente as never,
+        );
+        vi.mocked(clienteRepository.buscarPorTelefone).mockResolvedValue(null);
+        vi.mocked(clienteRepository.atualizar).mockResolvedValue(
+            clienteExistente as never,
+        );
+
+        await clienteService.atualizar('cliente-1', {
+            nome: 'Maria',
+            telefone: '19974191311',
+        });
+
+        expect(
+            googleSyncMocks.listarIdsFuturosPorCliente,
+        ).not.toHaveBeenCalled();
+        expect(googleSyncMocks.enfileirarSincronizacao).not.toHaveBeenCalled();
     });
 
     it.each(['pacote ativo', 'agendamento futuro em aberto'])(

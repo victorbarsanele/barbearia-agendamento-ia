@@ -35,6 +35,12 @@ enum EstadoEscalonamento {
   HUMANO_ATIVO
 }
 
+enum StatusSincronizacaoGoogleAgenda {
+  PENDENTE
+  SINCRONIZADO
+  ERRO
+}
+
 model Cliente {
   id           String        @id @default(cuid())
   nome         String
@@ -241,4 +247,17 @@ model RascunhoAgendamento {
   @@index([expiraEm])
   @@index([servicoId])
   @@map("rascunhos_agendamento")
+}
+
+model SincronizacaoGoogleAgenda {
+  agendamentoId      String                         @id
+  status             StatusSincronizacaoGoogleAgenda @default(PENDENTE)
+  tentativas         Int                            @default(0)
+  proximaTentativaEm DateTime                       @db.Timestamptz(3)
+  ultimoErro         String?
+  versao             Int                            @default(1)
+  atualizadoEm       DateTime                       @updatedAt @db.Timestamptz(3)
+
+  @@index([status, proximaTentativaEm])
+  @@map("sincronizacoes_google_agenda")
 }

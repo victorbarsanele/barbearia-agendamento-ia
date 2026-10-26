@@ -28,14 +28,24 @@ import { configuracaoAgendamentoRoutes } from './src/routes/configuracao-agendam
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 import { validateWhatsAppConfiguration } from './src/whatsapp/config';
 import { iniciarJobLembretesRascunho } from './src/services/pending-agendamento-reminder.service';
+import { getGoogleCalendarConfig } from './src/google-calendar/config';
+import { GoogleCalendarAdapter } from './src/google-calendar/google-calendar.adapter';
+import { iniciarReconciliacaoGoogleAgenda } from './src/google-calendar/sync.scheduler';
+import { iniciarWorkerGoogleAgenda } from './src/google-calendar/sync.worker';
 
 const app = Fastify({
     logger: true,
 });
 let stopPendingBookingReminder: (() => void) | undefined;
+let stopGoogleCalendarWorker: (() => Promise<void>) | undefined;
+let stopGoogleCalendarReconciliation: (() => Promise<void>) | undefined;
 
 app.addHook('onClose', async () => {
     stopPendingBookingReminder?.();
+    await Promise.all([
+        stopGoogleCalendarWorker?.(),
+        stopGoogleCalendarReconciliation?.(),
+    ]);
 });
 
 const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
@@ -111,6 +121,22 @@ const start = async (): Promise<void> => {
         await app.listen({ port, host: '0.0.0.0' });
         app.log.info({ nodeVersion: process.version }, 'node.runtime');
         stopPendingBookingReminder = iniciarJobLembretesRascunho();
+
+        const googleCalendarConfig = getGoogleCalendarConfig((message) =>
+            app.log.error(message),
+        );
+        if (googleCalendarConfig.enabled) {
+            try {
+                const adapter = new GoogleCalendarAdapter(googleCalendarConfig);
+                stopGoogleCalendarWorker = iniciarWorkerGoogleAgenda(adapter);
+                stopGoogleCalendarReconciliation =
+                    iniciarReconciliacaoGoogleAgenda(adapter);
+            } catch {
+                app.log.error(
+                    'Sincronização Google Agenda desabilitada: falha ao inicializar integração.',
+                );
+            }
+        }
 
         const shutdown = (): void => {
             void app.close().catch((error: unknown) => app.log.error(error));
