@@ -180,6 +180,7 @@ beforeEach(() => {
         if (process.env.GOOGLE_CALENDAR_SYNC_ENABLED === 'true') {
             googleSyncMock.state.idsEnfileirados.push(...ids);
         }
+        return { total: ids.length, falhas: 0 };
     });
     vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
         true,

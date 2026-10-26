@@ -1,5 +1,23 @@
 import prisma from '../lib/prisma';
 
+export const TAMANHO_LOTE_ENFILEIRAMENTO = 20;
+export const TIMEOUT_TRANSACAO_MS = 20_000;
+export const MAXWAIT_TRANSACAO_MS = 10_000;
+
+export interface FalhaLoteEnfileiramento {
+    erro: unknown;
+    quantidadeIds: number;
+    indiceLote: number;
+    totalLotes: number;
+    duracaoMs: number;
+}
+
+export interface ResultadoEnfileiramento {
+    total: number;
+    falhas: number;
+    lotesFalhos: FalhaLoteEnfileiramento[];
+}
+
 export type ItemSincronizacao = {
     agendamentoId: string;
     tentativas: number;
@@ -13,27 +31,65 @@ export type ResultadoFinalizacao = {
     ultimoErro: string | null;
 };
 
-export async function enfileirar(ids: string[]): Promise<void> {
+export async function enfileirar(
+    ids: string[],
+): Promise<ResultadoEnfileiramento> {
     const agora = new Date();
-    await prisma.$transaction(
-        ids.map((agendamentoId) =>
-            prisma.sincronizacaoGoogleAgenda.upsert({
-                where: { agendamentoId },
-                create: {
-                    agendamentoId,
-                    status: 'PENDENTE',
-                    proximaTentativaEm: agora,
+    const lotes: string[][] = [];
+    for (
+        let inicio = 0;
+        inicio < ids.length;
+        inicio += TAMANHO_LOTE_ENFILEIRAMENTO
+    ) {
+        lotes.push(ids.slice(inicio, inicio + TAMANHO_LOTE_ENFILEIRAMENTO));
+    }
+
+    const lotesFalhos: FalhaLoteEnfileiramento[] = [];
+    for (const [indice, lote] of lotes.entries()) {
+        const iniciadoEm = Date.now();
+        try {
+            await prisma.$transaction(
+                lote.map((agendamentoId) =>
+                    prisma.sincronizacaoGoogleAgenda.upsert({
+                        where: { agendamentoId },
+                        create: {
+                            agendamentoId,
+                            status: 'PENDENTE',
+                            proximaTentativaEm: agora,
+                        },
+                        update: {
+                            status: 'PENDENTE',
+                            tentativas: 0,
+                            proximaTentativaEm: agora,
+                            ultimoErro: null,
+                            versao: { increment: 1 },
+                        },
+                    }),
+                ),
+                {
+                    timeout: TIMEOUT_TRANSACAO_MS,
+                    maxWait: MAXWAIT_TRANSACAO_MS,
                 },
-                update: {
-                    status: 'PENDENTE',
-                    tentativas: 0,
-                    proximaTentativaEm: agora,
-                    ultimoErro: null,
-                    versao: { increment: 1 },
-                },
-            }),
+            );
+        } catch (erro) {
+            lotesFalhos.push({
+                erro,
+                quantidadeIds: lote.length,
+                indiceLote: indice + 1,
+                totalLotes: lotes.length,
+                duracaoMs: Date.now() - iniciadoEm,
+            });
+        }
+    }
+
+    return {
+        total: ids.length,
+        falhas: lotesFalhos.reduce(
+            (total, falha) => total + falha.quantidadeIds,
+            0,
         ),
-    );
+        lotesFalhos,
+    };
 }
 
 export async function reivindicar(
