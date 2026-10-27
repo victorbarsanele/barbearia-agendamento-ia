@@ -183,7 +183,7 @@ export class GoogleCalendarAdapter {
             const params = new URLSearchParams({
                 timeMin: timeMin.toISOString(),
                 singleEvents: 'true',
-                showDeleted: 'true',
+                showDeleted: 'false',
                 maxResults: '2500',
                 privateExtendedProperty: 'origem=painel-barbearia',
             });

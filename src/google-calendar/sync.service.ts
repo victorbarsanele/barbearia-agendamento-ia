@@ -77,6 +77,7 @@ export function calcularIdsDivergentes(
 ): string[] {
     const porAgendamento = new Map<string, GoogleCalendarListedEvent[]>();
     for (const evento of eventos) {
+        if (evento.status === 'cancelled') continue;
         const id = evento.extendedProperties?.private?.agendamentoId;
         if (!id) continue;
         const lista = porAgendamento.get(id) ?? [];

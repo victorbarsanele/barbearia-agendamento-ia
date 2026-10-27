@@ -144,12 +144,22 @@ describe('GoogleCalendarAdapter', () => {
     });
 
     it('lista eventos por todas as páginas e filtra pela origem privada', async () => {
+        const lápide = {
+            id: 'deleted-event',
+            status: 'cancelled',
+            extendedProperties: {
+                private: {
+                    agendamentoId: 'agendamento-deleted',
+                    origem: 'painel-barbearia',
+                },
+            },
+        };
         const fetchImpl = vi
             .fn<typeof fetch>()
             .mockResolvedValueOnce(
                 new Response(
                     JSON.stringify({
-                        items: [{ id: 'event-1' }],
+                        items: [{ id: 'event-1' }, lápide],
                         nextPageToken: 'next-page',
                     }),
                     { status: 200 },
@@ -165,14 +175,25 @@ describe('GoogleCalendarAdapter', () => {
             obterAccessToken,
         });
 
-        await expect(
-            adapter.listarEventos(new Date('2026-10-25T03:00:00.000Z')),
-        ).resolves.toHaveLength(2);
-        expect(String(fetchImpl.mock.calls[0][0])).toContain(
-            'privateExtendedProperty=origem%3Dpainel-barbearia',
+        const timeMin = new Date('2026-10-25T03:00:00.000Z');
+        const eventos = await adapter.listarEventos(timeMin);
+
+        expect(eventos).toHaveLength(3);
+        expect(eventos).toContainEqual(lápide);
+
+        const primeiraUrl = new URL(String(fetchImpl.mock.calls[0][0]));
+        expect(primeiraUrl.searchParams.get('showDeleted')).toBe('false');
+        expect(primeiraUrl.searchParams.get('singleEvents')).toBe('true');
+        expect(primeiraUrl.searchParams.get('maxResults')).toBe('2500');
+        expect(primeiraUrl.searchParams.get('timeMin')).toBe(
+            timeMin.toISOString(),
         );
-        expect(String(fetchImpl.mock.calls[1][0])).toContain(
-            'pageToken=next-page',
+        expect(primeiraUrl.searchParams.get('privateExtendedProperty')).toBe(
+            'origem=painel-barbearia',
         );
+
+        const segundaUrl = new URL(String(fetchImpl.mock.calls[1][0]));
+        expect(segundaUrl.searchParams.get('pageToken')).toBe('next-page');
+        expect(segundaUrl.searchParams.get('showDeleted')).toBe('false');
     });
 });
