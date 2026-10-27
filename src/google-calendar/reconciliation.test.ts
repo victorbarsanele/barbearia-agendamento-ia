@@ -17,8 +17,14 @@ const agendamento = {
 };
 
 describe('reconciliação Google Agenda', () => {
+    const eventoAtivo = montarEvento(agendamento);
+    const lapide = {
+        ...eventoAtivo,
+        status: 'cancelled',
+    };
+
     it('enfileira agendamento sem evento, evento divergente e evento órfão', () => {
-        const correspondente = montarEvento(agendamento);
+        const correspondente = eventoAtivo;
         const divergente = {
             ...correspondente,
             summary: 'Nome antigo — Corte',
@@ -46,14 +52,65 @@ describe('reconciliação Google Agenda', () => {
         ).toEqual(['sem-evento', 'nome-antigo', 'apagado-1']);
     });
 
-    it('enfileira evento de agendamento cancelado', () => {
-        const evento = montarEvento(agendamento);
+    it('ignora lápide para agendamento cancelado', () => {
         expect(
             calcularIdsDivergentes(
                 [{ ...agendamento, status: StatusAgendamento.CANCELADO }],
-                [evento],
+                [lapide],
+            ),
+        ).toEqual([]);
+    });
+
+    it('trata lápide como evento ausente para agendamento ativo', () => {
+        expect(calcularIdsDivergentes([agendamento], [lapide])).toEqual([
+            agendamento.id,
+        ]);
+    });
+
+    it('ignora lápide órfã', () => {
+        const lápideÓrfã = {
+            ...lapide,
+            extendedProperties: {
+                private: {
+                    agendamentoId: 'apagado-1',
+                    origem: 'painel-barbearia' as const,
+                },
+            },
+        };
+
+        expect(calcularIdsDivergentes([], [lápideÓrfã])).toEqual([]);
+    });
+
+    it('enfileira agendamento cancelado que ainda tem evento ativo', () => {
+        expect(
+            calcularIdsDivergentes(
+                [{ ...agendamento, status: StatusAgendamento.CANCELADO }],
+                [eventoAtivo],
             ),
         ).toEqual([agendamento.id]);
+    });
+
+    it('enfileira evento ativo órfão', () => {
+        const eventoÓrfão = {
+            ...eventoAtivo,
+            id: 'event-orphan',
+            extendedProperties: {
+                private: {
+                    agendamentoId: 'apagado-1',
+                    origem: 'painel-barbearia' as const,
+                },
+            },
+        };
+
+        expect(calcularIdsDivergentes([], [eventoÓrfão])).toEqual([
+            'apagado-1',
+        ]);
+    });
+
+    it('evento ativo prevalece sobre lápide do mesmo agendamento', () => {
+        expect(
+            calcularIdsDivergentes([agendamento], [lapide, eventoAtivo]),
+        ).toEqual([]);
     });
 
     it('inicia janela no começo do dia anterior em São Paulo', () => {
