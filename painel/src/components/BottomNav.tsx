@@ -8,6 +8,7 @@ import {
     Package,
     CircleMinus,
     Clock3,
+    PhoneOff,
     X,
     ChevronRight,
     LogOut,
@@ -26,6 +27,7 @@ const maisItems: SubNavItem[] = [
     { label: 'Pacotes', to: '/pacotes', icon: Package },
     { label: 'Bloqueios', to: '/bloqueios', icon: CircleMinus },
     { label: 'Horários', to: '/horarios', icon: Clock3 },
+    { label: 'Números ignorados', to: '/numeros-ignorados', icon: PhoneOff },
 ];
 
 export function BottomNav() {
@@ -107,6 +109,7 @@ export function BottomNav() {
                                 'bg-amber-500/10 text-amber-400',
                                 'bg-sky-500/10 text-sky-400',
                                 'bg-emerald-500/10 text-emerald-400',
+                                'bg-[var(--color-danger-muted)] text-[var(--color-danger-text)]',
                             ];
                             return (
                                 <button

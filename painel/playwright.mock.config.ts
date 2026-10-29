@@ -6,6 +6,8 @@ export default defineConfig({
         '**/novoAgendamentoPacote.spec.ts',
         '**/overrideExpediente.spec.ts',
         '**/loteAgendamentoPacote.spec.ts',
+        '**/numerosIgnorados.spec.ts',
+        '**/bottom-sheet.spec.ts',
     ],
     fullyParallel: true,
     workers: process.env.CI ? 1 : 2,
