@@ -16,6 +16,11 @@ vi.mock('@google/genai', () => ({
     },
 }));
 
+vi.mock('../repositories/configuracaoAgenda.repository', () => ({
+    obter: async () => ({ horizonteDias: null, limiteAte: null }),
+    definir: async (configuracao: unknown) => configuracao,
+}));
+
 vi.mock('../repositories/agendamento.repository', () => ({
     listarTodos: vi.fn().mockResolvedValue([]),
     isViolacaoDeSobreposicao: (error: unknown) =>

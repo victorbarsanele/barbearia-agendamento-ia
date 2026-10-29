@@ -295,6 +295,27 @@ describe('agendamento.service.criar', () => {
         });
     });
 
+    it('permite agendamento manual além do horizonte do Gemini', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-08-21T13:00:00Z'),
+            dataHoraFim: new Date('2026-08-21T13:30:00Z'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-08-21T10:00:00-03:00',
+                origem: 'PAINEL',
+            }),
+        ).resolves.toMatchObject({
+            dataHoraInicio: new Date('2026-08-21T13:00:00Z'),
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledOnce();
+    });
+
     it('mantém criação persistida quando enfileiramento falha', async () => {
         vi.mocked(agendamentoRepository.criar).mockResolvedValue(
             agendamentoAtual,
