@@ -126,9 +126,12 @@ async function criarPacoteCatalogo(quantidadeTotal = 3): Promise<string> {
 }
 
 function horarioUnico(indice = 0): Date {
+    const deslocamento = Date.now() % 1_000_000_000;
+    const dia = Math.floor(deslocamento / 86_400_000);
+    const milissegundosUnicos = deslocamento % 60_000;
     return new Date(
-        Date.UTC(2035, 0, 1) +
-            (Date.now() % 1_000_000_000) +
+        Date.UTC(2035, 0, 1 + dia, 15) +
+            milissegundosUnicos +
             indice * 60 * 60 * 1000,
     );
 }
