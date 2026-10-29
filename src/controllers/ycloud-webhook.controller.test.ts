@@ -4,6 +4,7 @@ import { registrarMensagemProcessada } from '../services/processed-whatsapp-mess
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
 import { registrarRespostaHumanaIdempotente } from '../services/gemini.service';
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
+import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 import { receberYCloudWebhook } from './ycloud-webhook.controller';
 import { createYCloudSignature } from '../whatsapp/ycloud-signature';
 
@@ -19,11 +20,15 @@ vi.mock('../services/gemini.service', () => ({
 vi.mock('../services/ycloud-username-notification.service', () => ({
     avisarBarbeiroUsuarioSemTelefone: vi.fn(),
 }));
+vi.mock('../services/numero-ignorado-whatsapp.service', () => ({
+    numeroEstaIgnorado: vi.fn(),
+}));
 
 const registerMock = vi.mocked(registrarMensagemProcessada);
 const processMock = vi.mocked(processarMensagemRecebida);
 const takeoverMock = vi.mocked(registrarRespostaHumanaIdempotente);
 const usernameMock = vi.mocked(avisarBarbeiroUsuarioSemTelefone);
+const ignoredMock = vi.mocked(numeroEstaIgnorado);
 const webhookSecret = 'ycloud-test-secret';
 
 function makeReply() {
@@ -42,7 +47,8 @@ function makeRequest(body: unknown, signature?: string | null) {
                 ? {}
                 : {
                       'ycloud-signature':
-                          signature ?? createYCloudSignature(rawBody, webhookSecret),
+                          signature ??
+                          createYCloudSignature(rawBody, webhookSecret),
                   }),
         },
     } as unknown as FastifyRequest;
@@ -70,12 +76,16 @@ beforeEach(() => {
     processMock.mockResolvedValue();
     takeoverMock.mockResolvedValue(true);
     usernameMock.mockResolvedValue();
+    ignoredMock.mockResolvedValue(false);
 });
 
 describe('YCloud webhook controller', () => {
     it('retorna 401 para assinatura ausente, malformada, inválida, expirada ou segredo ausente', async () => {
         const absentHeader = makeReply();
-        await receberYCloudWebhook(makeRequest(inboundBody(), null), absentHeader);
+        await receberYCloudWebhook(
+            makeRequest(inboundBody(), null),
+            absentHeader,
+        );
         expect(absentHeader.status).toHaveBeenCalledWith(401);
 
         const malformedHeader = makeReply();
@@ -88,7 +98,10 @@ describe('YCloud webhook controller', () => {
         const invalidHeader = makeReply();
         const validRawBody = inboundBody();
         await receberYCloudWebhook(
-            makeRequest(validRawBody, createYCloudSignature('different body', webhookSecret)),
+            makeRequest(
+                validRawBody,
+                createYCloudSignature('different body', webhookSecret),
+            ),
             invalidHeader,
         );
         expect(invalidHeader.status).toHaveBeenCalledWith(401);
@@ -151,7 +164,30 @@ describe('YCloud webhook controller', () => {
 
         expect(reply.status).toHaveBeenCalledWith(200);
         expect(registerMock).toHaveBeenCalledWith('ycloud', 'wamid-1');
+        expect(ignoredMock).toHaveBeenCalledWith('5511999999999');
         expect(processMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores disallowed inbound before claim and processing', async () => {
+        ignoredMock.mockResolvedValueOnce(true);
+        const reply = makeReply();
+
+        await receberYCloudWebhook(makeRequest(inboundBody()), reply);
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when disallow lookup fails before ACK', async () => {
+        ignoredMock.mockRejectedValueOnce(new Error('database unavailable'));
+        const reply = makeReply();
+
+        await receberYCloudWebhook(makeRequest(inboundBody()), reply);
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
     });
 
     it('registra mídia não textual e despacha após ACK', async () => {
@@ -234,11 +270,23 @@ describe('YCloud webhook controller', () => {
         );
 
         expect(reply.status).toHaveBeenCalledWith(200);
+        expect(ignoredMock).not.toHaveBeenCalled();
         expect(log).not.toHaveBeenCalledWith(
             '[YCLOUD WEBHOOK] Tipo de mensagem ignorado',
             expect.anything(),
         );
         log.mockRestore();
+    });
+
+    it('does not query disallow list for inbound outside active allowlist', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const reply = makeReply();
+
+        await receberYCloudWebhook(makeRequest(inboundBody()), reply);
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(ignoredMock).not.toHaveBeenCalled();
+        expect(registerMock).not.toHaveBeenCalled();
     });
 
     it('ACKs before processing promise finishes', async () => {
@@ -370,6 +418,7 @@ describe('YCloud webhook controller', () => {
         );
         expect(registerMock).not.toHaveBeenCalled();
         expect(takeoverMock).not.toHaveBeenCalled();
+        expect(ignoredMock).not.toHaveBeenCalled();
         expect(outsideReply.status).toHaveBeenCalledWith(200);
 
         vi.stubEnv('WHATSAPP_ALLOWLIST', '');
@@ -383,6 +432,47 @@ describe('YCloud webhook controller', () => {
         );
         expect(takeoverMock).not.toHaveBeenCalled();
         expect(noToReply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('ignores disallowed echo before takeover transaction', async () => {
+        ignoredMock.mockResolvedValueOnce(true);
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: {
+                    wamid: 'ignored-echo',
+                    to: '+5511999999999',
+                    type: 'text',
+                },
+            }),
+            reply,
+        );
+
+        expect(ignoredMock).toHaveBeenCalledWith('5511999999999');
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(takeoverMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when disallow lookup for echo fails', async () => {
+        ignoredMock.mockRejectedValueOnce(new Error('database unavailable'));
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.smb.message.echoes',
+                whatsappMessage: {
+                    wamid: 'failed-lookup-echo',
+                    to: '+5511999999999',
+                    type: 'text',
+                },
+            }),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(takeoverMock).not.toHaveBeenCalled();
     });
 
     it('responde 500 quando takeover transacional falha', async () => {
@@ -426,10 +516,7 @@ describe('YCloud webhook controller', () => {
     });
 
     it('allows listed phone and ignores unlisted phone before idempotency', async () => {
-        vi.stubEnv(
-            'WHATSAPP_ALLOWLIST',
-            '+55 (11) 99999-9999, 5511888888888',
-        );
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '+55 (11) 99999-9999, 5511888888888');
         const listedReply = makeReply();
         await receberYCloudWebhook(makeRequest(inboundBody()), listedReply);
 
@@ -534,7 +621,9 @@ describe('YCloud webhook controller', () => {
     });
 
     it('returns 500 and skips processing when idempotency registration fails', async () => {
-        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
         const reply = makeReply();
         registerMock.mockRejectedValue(new Error('database error'));
 

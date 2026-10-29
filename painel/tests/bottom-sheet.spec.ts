@@ -3,6 +3,18 @@ import { test, expect } from '@playwright/test';
 test('menu Mais abre bottom sheet e fecha por todas as interações', async ({
     page,
 }) => {
+    await page.route('**/api/**', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/auth/me') {
+            await route.fulfill({
+                status: 200,
+                json: { username: 'e2e', role: 'admin' },
+            });
+            return;
+        }
+        await route.fulfill({ status: 200, json: [] });
+    });
+
     await page.goto('/');
 
     const sheet = page.getByRole('dialog', { name: 'Mais opções' });
@@ -25,6 +37,15 @@ test('menu Mais abre bottom sheet e fecha por todas as interações', async ({
     await expect(
         sheet.getByRole('button', { name: 'Horários', exact: true }),
     ).toBeVisible();
+    await expect(
+        sheet.getByRole('button', {
+            name: 'Números ignorados',
+            exact: true,
+        }),
+    ).toBeVisible();
+    const itensMenu = sheet.locator('div.space-y-2 > button');
+    await expect(itensMenu).toHaveCount(5);
+    await expect(itensMenu.nth(4)).toContainText('Números ignorados');
     await expect(
         sheet.getByRole('button', { name: 'Sair', exact: true }),
     ).toBeVisible();
@@ -54,9 +75,27 @@ test('menu Mais abre bottom sheet e fecha por todas as interações', async ({
     await abrirMais.click();
     await sheet.getByRole('button', { name: 'Horários', exact: true }).click();
     await expect(page).toHaveURL(/horarios/);
+
+    await abrirMais.click();
+    await sheet
+        .getByRole('button', { name: 'Números ignorados', exact: true })
+        .click();
+    await expect(page).toHaveURL(/numeros-ignorados/);
 });
 
 test('BottomNav aparece em Bloqueios e Horários', async ({ page }) => {
+    await page.route('**/api/**', async (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname === '/api/auth/me') {
+            await route.fulfill({
+                status: 200,
+                json: { username: 'e2e', role: 'admin' },
+            });
+            return;
+        }
+        await route.fulfill({ status: 200, json: [] });
+    });
+
     for (const rota of ['/bloqueios', '/horarios']) {
         await page.goto(rota);
         await expect(

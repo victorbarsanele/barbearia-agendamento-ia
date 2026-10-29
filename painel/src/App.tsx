@@ -6,6 +6,7 @@ import { AgendamentosPage } from './pages/AgendamentosPage';
 import { LoginPage } from './pages/LoginPage';
 import { BloqueiosPage } from './pages/BloqueiosPage';
 import { HorariosFuncionamentoPage } from './pages/HorariosFuncionamentoPage';
+import { NumerosIgnoradosPage } from './pages/NumerosIgnoradosPage';
 
 const NovoAgendamentoPage = lazy(() =>
     import('./pages/NovoAgendamentoPage').then((module) => ({
@@ -137,6 +138,16 @@ function App() {
                         <ProtectedRoute>
                             <MainRouteLayout>
                                 <HorariosFuncionamentoPage />
+                            </MainRouteLayout>
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/numeros-ignorados"
+                    element={
+                        <ProtectedRoute>
+                            <MainRouteLayout>
+                                <NumerosIgnoradosPage />
                             </MainRouteLayout>
                         </ProtectedRoute>
                     }

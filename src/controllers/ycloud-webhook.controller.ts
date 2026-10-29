@@ -8,6 +8,7 @@ import { parseYCloudWebhookEvent } from '../whatsapp/ycloud-inbound.adapter';
 import { verifyYCloudSignature } from '../whatsapp/ycloud-signature';
 import { getWhatsAppProvider } from '../whatsapp/config';
 import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
+import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 
 function mascararTelefone(phone: string): string {
     return `${'*'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
@@ -80,10 +81,29 @@ export async function receberYCloudWebhook(
 
         const allowlist = getWhatsAppAllowlist();
         if (allowlist.active && !allowlist.phones.has(event.phone)) {
-            console.log(
-                '[YCLOUD WEBHOOK] Eco ignorado pela lista de teste.',
-            );
+            console.log('[YCLOUD WEBHOOK] Eco ignorado pela lista de teste.');
             void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        try {
+            if (await numeroEstaIgnorado(event.phone)) {
+                console.info('[WHATSAPP] Mensagem ignorada', {
+                    provider: 'ycloud',
+                    origem: 'eco',
+                    motivo: 'numero_na_lista_ignorada',
+                    telefone: mascararTelefone(event.phone),
+                });
+                void reply.status(200).send({ ok: true });
+                return;
+            }
+        } catch {
+            console.error('[WHATSAPP] Falha ao consultar lista ignorada', {
+                provider: 'ycloud',
+                origem: 'eco',
+                motivo: 'falha_consulta_banco',
+            });
+            void reply.status(500).send({ ok: false });
             return;
         }
 
@@ -142,13 +162,8 @@ export async function receberYCloudWebhook(
         return;
     }
 
-    if (
-        (!event.message.phone && !event.message.alternateUserId)
-    ) {
-        if (
-            !event.message.phone &&
-            !event.message.alternateUserId
-        ) {
+    if (!event.message.phone && !event.message.alternateUserId) {
+        if (!event.message.phone && !event.message.alternateUserId) {
             console.warn(
                 '[YCLOUD WEBHOOK] Mensagem ignorada: remetente sem telefone e identificador alternativo.',
             );
@@ -175,6 +190,29 @@ export async function receberYCloudWebhook(
     if (event.message.kind !== 'non_text' && !event.message.text) {
         void reply.status(200).send({ ok: true });
         return;
+    }
+
+    if (event.message.phone) {
+        try {
+            if (await numeroEstaIgnorado(event.message.phone)) {
+                console.info('[WHATSAPP] Mensagem ignorada', {
+                    provider: 'ycloud',
+                    origem: 'inbound',
+                    motivo: 'numero_na_lista_ignorada',
+                    telefone: mascararTelefone(event.message.phone),
+                });
+                void reply.status(200).send({ ok: true });
+                return;
+            }
+        } catch {
+            console.error('[WHATSAPP] Falha ao consultar lista ignorada', {
+                provider: 'ycloud',
+                origem: 'inbound',
+                motivo: 'falha_consulta_banco',
+            });
+            void reply.status(500).send({ ok: false });
+            return;
+        }
     }
 
     if (!event.message.messageId) {

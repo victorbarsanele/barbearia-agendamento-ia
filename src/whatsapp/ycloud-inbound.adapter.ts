@@ -1,4 +1,7 @@
-import { normalizarTelefone } from '../utils/telefone';
+import {
+    inserirNonoDigitoTelefoneWhatsApp,
+    normalizarTelefone,
+} from '../utils/telefone';
 import { IncomingWhatsAppMessage } from './types';
 
 type AnyRecord = Record<string, unknown>;
@@ -84,8 +87,7 @@ function getEchoStructure(
             typeof value === 'string' &&
             /(phone|telefone|from|to|recipient|destinat)/i.test(key)
         ) {
-            maskedPhoneValues[`whatsappMessage.${key}`] =
-                maskPhone(value);
+            maskedPhoneValues[`whatsappMessage.${key}`] = maskPhone(value);
         }
     }
 
@@ -116,15 +118,7 @@ export function canonicalizeYCloudPhone(value: string): string | null {
         return normalizarTelefone(digits);
     }
 
-    if (
-        digits.length === 12 &&
-        digits.startsWith('55') &&
-        /^[6-9]/.test(digits[4] ?? '')
-    ) {
-        return `${digits.slice(0, 4)}9${digits.slice(4)}`;
-    }
-
-    return digits || null;
+    return inserirNonoDigitoTelefoneWhatsApp(digits) || null;
 }
 
 export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
@@ -181,7 +175,8 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             ? stringField(unsupportedRecord, 'type')
             : null;
     const from = stringField(payload, 'from');
-    const audioRecord = messageType === 'audio' ? asRecord(payload.audio) : null;
+    const audioRecord =
+        messageType === 'audio' ? asRecord(payload.audio) : null;
     const media =
         messageType === 'audio'
             ? {
