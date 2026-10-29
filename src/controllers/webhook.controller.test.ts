@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { receberWhatsappWebhook } from './webhook.controller';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 
 vi.mock('../services/processed-whatsapp-message.service', () => ({
     registrarMensagemProcessada: vi.fn(),
@@ -10,6 +11,10 @@ vi.mock('../services/processed-whatsapp-message.service', () => ({
 
 vi.mock('../services/whatsapp-incoming-message.service', () => ({
     processarMensagemRecebida: vi.fn(),
+}));
+
+vi.mock('../services/numero-ignorado-whatsapp.service', () => ({
+    numeroEstaIgnorado: vi.fn(),
 }));
 
 const TEST_WEBHOOK_SECRET = vi.hoisted(() => {
@@ -20,6 +25,7 @@ const TEST_WEBHOOK_SECRET = vi.hoisted(() => {
 
 const registrarMensagemProcessadaMock = vi.mocked(registrarMensagemProcessada);
 const processarMensagemRecebidaMock = vi.mocked(processarMensagemRecebida);
+const numeroEstaIgnoradoMock = vi.mocked(numeroEstaIgnorado);
 
 function criarReplyMock() {
     const reply = {
@@ -30,10 +36,7 @@ function criarReplyMock() {
     return reply;
 }
 
-function criarRequestMock(
-    body: unknown,
-    secret = TEST_WEBHOOK_SECRET,
-) {
+function criarRequestMock(body: unknown, secret = TEST_WEBHOOK_SECRET) {
     return {
         body,
         headers: {
@@ -42,15 +45,17 @@ function criarRequestMock(
     } as unknown as FastifyRequest;
 }
 
-function criarPayload(overrides: {
-    id?: string;
-    remoteJid?: string;
-    remoteJidAlt?: string;
-    addressingMode?: string;
-    fromMe?: boolean;
-    text?: string;
-    mediaKey?: string;
-} = {}) {
+function criarPayload(
+    overrides: {
+        id?: string;
+        remoteJid?: string;
+        remoteJidAlt?: string;
+        addressingMode?: string;
+        fromMe?: boolean;
+        text?: string;
+        mediaKey?: string;
+    } = {},
+) {
     const key: Record<string, unknown> = {
         remoteJid: overrides.remoteJid ?? '5511999999999@s.whatsapp.net',
         fromMe: overrides.fromMe ?? false,
@@ -81,6 +86,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     registrarMensagemProcessadaMock.mockResolvedValue(true);
     processarMensagemRecebidaMock.mockResolvedValue();
+    numeroEstaIgnoradoMock.mockResolvedValue(false);
 });
 
 describe('webhook.controller.receberWhatsappWebhook', () => {
@@ -109,6 +115,37 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
         expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
         expect(reply.status).toHaveBeenCalledWith(200);
         expect(reply.send).toHaveBeenCalledWith({ ok: true });
+    });
+
+    it('ignora número da lista antes do claim e do processamento', async () => {
+        const reply = criarReplyMock();
+        numeroEstaIgnoradoMock.mockResolvedValueOnce(true);
+
+        await receberWhatsappWebhook(
+            criarRequestMock(criarPayload({ id: 'ignored-1' })),
+            reply,
+        );
+
+        expect(numeroEstaIgnoradoMock).toHaveBeenCalledWith('5511999999999');
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
+    });
+
+    it('retorna 500 se consulta da lista falhar', async () => {
+        const reply = criarReplyMock();
+        numeroEstaIgnoradoMock.mockRejectedValueOnce(
+            new Error('database unavailable'),
+        );
+
+        await receberWhatsappWebhook(
+            criarRequestMock(criarPayload({ id: 'lookup-failed-1' })),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
     });
 
     it('registra mídia não textual e despacha após ACK', async () => {
@@ -198,7 +235,9 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
 
     it('responde 500 se registro falhar e não processa', async () => {
         const reply = criarReplyMock();
-        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
         const request = criarRequestMock(criarPayload({ id: 'message-1' }));
         registrarMensagemProcessadaMock.mockRejectedValue(
             new Error('database unavailable'),
@@ -221,14 +260,17 @@ describe('webhook.controller.receberWhatsappWebhook', () => {
         }),
         criarPayload({ id: 'self-1', fromMe: true }),
         criarPayload({ id: 'empty-1', text: '' }),
-    ])('ignora grupo, eco próprio ou texto vazio antes do registro', async (body) => {
-        const reply = criarReplyMock();
-        const request = criarRequestMock(body);
+    ])(
+        'ignora grupo, eco próprio ou texto vazio antes do registro',
+        async (body) => {
+            const reply = criarReplyMock();
+            const request = criarRequestMock(body);
 
-        await receberWhatsappWebhook(request, reply);
+            await receberWhatsappWebhook(request, reply);
 
-        expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
-        expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
-        expect(reply.status).toHaveBeenCalledWith(200);
-    });
+            expect(registrarMensagemProcessadaMock).not.toHaveBeenCalled();
+            expect(processarMensagemRecebidaMock).not.toHaveBeenCalled();
+            expect(reply.status).toHaveBeenCalledWith(200);
+        },
+    );
 });

@@ -1,9 +1,14 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 import { parseEvolutionIncomingMessage } from '../whatsapp/evolution-inbound.adapter';
 
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+function mascararTelefone(phone: string): string {
+    return `${'*'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
+}
 
 export async function receberWhatsappWebhook(
     request: FastifyRequest,
@@ -52,6 +57,27 @@ export async function receberWhatsappWebhook(
         return;
     }
 
+    try {
+        if (await numeroEstaIgnorado(message.phone)) {
+            console.info('[WHATSAPP] Mensagem ignorada', {
+                provider: 'evolution',
+                origem: 'inbound',
+                motivo: 'numero_na_lista_ignorada',
+                telefone: mascararTelefone(message.phone),
+            });
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+    } catch {
+        console.error('[WHATSAPP] Falha ao consultar lista ignorada', {
+            provider: 'evolution',
+            origem: 'inbound',
+            motivo: 'falha_consulta_banco',
+        });
+        void reply.status(500).send({ ok: false });
+        return;
+    }
+
     if (!message.messageId) {
         console.warn(
             '[WEBHOOK] ID da mensagem ausente; processamento sem deduplicação.',
@@ -79,6 +105,8 @@ export async function receberWhatsappWebhook(
 
     void reply.status(200).send({ ok: true });
     void processarMensagemRecebida(message).catch(() => {
-        console.error('[WEBHOOK] Falha inesperada no processamento assíncrono.');
+        console.error(
+            '[WEBHOOK] Falha inesperada no processamento assíncrono.',
+        );
     });
 }

@@ -230,6 +230,15 @@ model EscalonamentoWhatsApp {
   @@map("escalonamentos_whatsapp")
 }
 
+model NumeroIgnoradoWhatsApp {
+  id       String   @id @default(cuid())
+  telefone String   @unique
+  rotulo   String
+  criadoEm DateTime @default(now()) @db.Timestamptz(3)
+
+  @@map("numeros_ignorados_whatsapp")
+}
+
 model RascunhoAgendamento {
   telefoneSessao    String   @id
   nomeCliente       String
