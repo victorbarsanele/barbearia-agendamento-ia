@@ -6,12 +6,16 @@ interface DateKeyPickerProps {
     value: string;
     onChange: (value: string) => void;
     placeholder?: string;
+    minDateKey?: string | null;
+    maxDateKey?: string | null;
 }
 
 export function DateKeyPicker({
     value,
     onChange,
     placeholder = 'Selecione uma data',
+    minDateKey,
+    maxDateKey,
 }: DateKeyPickerProps) {
     const [aberto, setAberto] = useState(false);
 
@@ -39,6 +43,8 @@ export function DateKeyPicker({
                             onChange(dateKey);
                             setAberto(false);
                         }}
+                        minDateKey={minDateKey}
+                        maxDateKey={maxDateKey}
                         labels={{ title: 'Selecione uma data' }}
                         className="border-0 shadow-none"
                     />

@@ -8,6 +8,7 @@ import {
     Package,
     CircleMinus,
     Clock3,
+    CalendarRange,
     PhoneOff,
     X,
     ChevronRight,
@@ -27,6 +28,11 @@ const maisItems: SubNavItem[] = [
     { label: 'Pacotes', to: '/pacotes', icon: Package },
     { label: 'Bloqueios', to: '/bloqueios', icon: CircleMinus },
     { label: 'Horários', to: '/horarios', icon: Clock3 },
+    {
+        label: 'Horizonte da agenda',
+        to: '/horizonte-agenda',
+        icon: CalendarRange,
+    },
     { label: 'Números ignorados', to: '/numeros-ignorados', icon: PhoneOff },
 ];
 
@@ -109,6 +115,7 @@ export function BottomNav() {
                                 'bg-amber-500/10 text-amber-400',
                                 'bg-sky-500/10 text-sky-400',
                                 'bg-emerald-500/10 text-emerald-400',
+                                'bg-cyan-500/10 text-cyan-400',
                                 'bg-[var(--color-danger-muted)] text-[var(--color-danger-text)]',
                             ];
                             return (

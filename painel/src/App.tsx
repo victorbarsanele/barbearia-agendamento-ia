@@ -6,6 +6,7 @@ import { AgendamentosPage } from './pages/AgendamentosPage';
 import { LoginPage } from './pages/LoginPage';
 import { BloqueiosPage } from './pages/BloqueiosPage';
 import { HorariosFuncionamentoPage } from './pages/HorariosFuncionamentoPage';
+import { HorizonteAgendaPage } from './pages/HorizonteAgendaPage';
 import { NumerosIgnoradosPage } from './pages/NumerosIgnoradosPage';
 
 const NovoAgendamentoPage = lazy(() =>
@@ -138,6 +139,16 @@ function App() {
                         <ProtectedRoute>
                             <MainRouteLayout>
                                 <HorariosFuncionamentoPage />
+                            </MainRouteLayout>
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/horizonte-agenda"
+                    element={
+                        <ProtectedRoute>
+                            <MainRouteLayout>
+                                <HorizonteAgendaPage />
                             </MainRouteLayout>
                         </ProtectedRoute>
                     }
