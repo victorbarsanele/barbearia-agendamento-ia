@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const geminiMocks = vi.hoisted(() => ({
     generateContent: vi.fn(),
 }));
+const configuracaoAgendaMocks = vi.hoisted(() => ({
+    obter: vi.fn(),
+}));
 
 vi.mock('@google/genai', () => ({
     GoogleGenAI: class MockGoogleGenAI {
@@ -39,6 +42,11 @@ vi.mock('../repositories/horarioFuncionamento.repository', () => ({
 
 vi.mock('../repositories/pacote.repository', () => ({
     listarLiberadosParaGemini: vi.fn(),
+}));
+
+vi.mock('../repositories/configuracaoAgenda.repository', () => ({
+    obter: configuracaoAgendaMocks.obter,
+    definir: vi.fn(),
 }));
 
 vi.mock('./agendamento.service', () => ({
@@ -144,6 +152,7 @@ const servicoSessentaMinutos = {
     nome: 'Corte e Barba',
     duracaoMinutos: 60,
 };
+let pendingRepository: InMemoryPendingAgendamentoRepository;
 
 beforeEach(() => {
     vi.useFakeTimers();
@@ -159,9 +168,12 @@ beforeEach(() => {
     vi.mocked(horarioFuncionamentoRepository.listarTodos).mockResolvedValue(
         criarConfiguracoesHorario(),
     );
-    __testables.setPendingAgendamentoRepository(
-        new InMemoryPendingAgendamentoRepository(),
-    );
+    configuracaoAgendaMocks.obter.mockResolvedValue({
+        horizonteDias: null,
+        limiteAte: null,
+    });
+    pendingRepository = new InMemoryPendingAgendamentoRepository();
+    __testables.setPendingAgendamentoRepository(pendingRepository);
 });
 
 afterEach(() => {
@@ -205,6 +217,55 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
 
         expect(confirmed.sucesso).toBe(false);
         expect(agendamentoService.criar).not.toHaveBeenCalled();
+    });
+
+    it('prepararAgendamento rejeita data além do horizonte antes da disponibilidade', async () => {
+        const resultado = await __testables.prepararAgendamentoTool(
+            phone,
+            'message-outside-horizon',
+            { ...messageBase, dataHoraInicio: '2026-08-12T11:00:00-03:00' },
+            ['João Silva'],
+            '2026-08-10',
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            foraDoHorizonte: true,
+            horizonteAte: '2026-08-10',
+        });
+        expect(
+            agendamentoService.validarDisponibilidade,
+        ).not.toHaveBeenCalled();
+        await expect(
+            pendingRepository.obterValido(phone, new Date()),
+        ).resolves.toBeNull();
+    });
+
+    it('confirmação revalida horizonte e descarta rascunho como falha de regra', async () => {
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'message-draft-outside-horizon',
+            messageBase,
+            ['João Silva'],
+            '2026-07-30',
+        );
+
+        const resultado = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-confirm-outside-horizon',
+            'gemini',
+            '2026-07-21',
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            foraDoHorizonte: true,
+            rascunhoRestaurado: false,
+        });
+        expect(agendamentoService.criar).not.toHaveBeenCalled();
+        await expect(
+            pendingRepository.obterValido(phone, new Date()),
+        ).resolves.toBeNull();
     });
 
     it('confirma em mensagem posterior uma única vez', async () => {
@@ -386,6 +447,43 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('11:30');
         expect(resultado.horarios).not.toContain('12:00');
         expect(resultado.horarios).toContain('13:00');
+    });
+
+    it('busca além do horizonte retorna terminal sem consultar dados', async () => {
+        const resultado = await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-07-23', servicoId: 'servico-1' },
+            { horizonteAte: '2026-07-22' },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            foraDoHorizonte: true,
+            data: '2026-07-23',
+            horizonteAte: '2026-07-22',
+            instrucao: expect.stringContaining('Não busque de novo'),
+        });
+        expect(servicoRepository.listarTodos).not.toHaveBeenCalled();
+        expect(agendamentoRepository.listarTodos).not.toHaveBeenCalled();
+        expect(bloqueioRepository.listarTodos).not.toHaveBeenCalled();
+    });
+
+    it('busca no último dia inclusivo do horizonte segue normal', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-07-22', servicoId: 'servico-1' },
+            {
+                horizonteAte: '2026-07-22',
+                configuracaoFuncionamento: criarConfiguracoesHorario(),
+                bloqueios: [],
+            },
+        );
+
+        expect(resultado).toHaveProperty('horarios');
+        expect(resultado).not.toHaveProperty('foraDoHorizonte');
     });
 
     it('aplica antecedência mínima mais folga somente ao ofertar horários', async () => {
@@ -668,10 +766,13 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             },
         ]);
 
-        const resultado = await __testables.buscarHorariosDisponiveisTool({
-            data: '2026-11-03',
-            servicoId: 'servico-1',
-        });
+        const resultado = await __testables.buscarHorariosDisponiveisTool(
+            {
+                data: '2026-11-03',
+                servicoId: 'servico-1',
+            },
+            { horizonteAte: '2026-11-03' },
+        );
 
         expect(resultado).toMatchObject({
             diaTotalmenteBloqueado: true,
@@ -1307,6 +1408,7 @@ describe('gemini.service tools de pacotes', () => {
         bloqueios: Awaited<ReturnType<typeof bloqueioRepository.listarTodos>>,
     ) {
         return {
+            horizonteAte: '2026-12-31',
             configuracaoFuncionamento: criarConfiguracoesHorario(),
             bloqueios,
         };
@@ -1471,6 +1573,7 @@ describe('gemini.service tools de pacotes', () => {
         const resultado = await __testables.buscarHorariosDisponiveisTool(
             { data: '2026-11-04', servicoId: 'servico-1' },
             {
+                horizonteAte: '2026-11-04',
                 configuracaoFuncionamento: criarConfiguracoesHorario(),
                 bloqueios: {} as never,
             },
@@ -1540,6 +1643,71 @@ describe('gemini.service tools de pacotes', () => {
             'Não chame buscarServicos nem buscarHorariosDisponiveis',
         );
         expect(prompt).toContain('Se cliente insistir em outra data');
+    });
+
+    it('deriva calendário e janela de bloqueios do horizonte capturado no turno', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-10-29T15:00:00Z'));
+        configuracaoAgendaMocks.obter.mockResolvedValue({
+            horizonteDias: 60,
+            limiteAte: '2026-12-15',
+        });
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValueOnce([
+            criarBloqueioPontual(
+                '2026-12-10T00:00:00-03:00',
+                '2026-12-13T00:00:00-03:00',
+                'Recesso',
+            ),
+        ]);
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: 'Resposta final.',
+        });
+
+        await processarMensagemWhatsapp(remoteJid, 'Quero agendar.');
+
+        expect(configuracaoAgendaMocks.obter).toHaveBeenCalledOnce();
+        const prompt = (
+            geminiMocks.generateContent.mock.calls[0][0] as {
+                config: { systemInstruction: string };
+            }
+        ).config.systemInstruction;
+        expect(prompt).toContain('Calendário (hoje até 2026-12-15)');
+        expect(prompt).toContain(
+            'Não ofereça nem consulte datas após o último dia do calendário.',
+        );
+        expect(prompt).toContain(
+            'quinta-feira, 10/12/2026 até sábado, 12/12/2026; retorno: a partir de segunda-feira, 14/12/2026',
+        );
+        expect(prompt).toContain('terça-feira 15/12/2026');
+    });
+
+    it('calendário default e janela de 180 dias têm último dia inclusivo', () => {
+        const promptPadrao = __testables.buildSystemPrompt(
+            undefined,
+            null,
+            undefined,
+            [],
+            '2026-10-29',
+            '2026-11-18',
+        );
+        const promptLongo = __testables.buildSystemPrompt(
+            undefined,
+            null,
+            undefined,
+            [],
+            '2026-10-29',
+            '2027-04-27',
+        );
+        const calendarioPadrao = promptPadrao
+            .split('Calendário (hoje até 2026-11-18):\n')[1]
+            .split('\nNão ofereça')[0];
+        const calendarioLongo = promptLongo
+            .split('Calendário (hoje até 2027-04-27):\n')[1]
+            .split('\nNão ofereça')[0];
+
+        expect(calendarioPadrao.split('\n')).toHaveLength(21);
+        expect(calendarioLongo.split('\n')).toHaveLength(181);
+        expect(calendarioLongo).toContain('terça-feira 27/04/2027');
     });
 
     it('mantém prompt idêntico quando cálculo não encontra períodos', () => {

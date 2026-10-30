@@ -207,6 +207,15 @@ model HorarioFuncionamento {
   @@map("horarios_funcionamento")
 }
 
+model ConfiguracaoAgenda {
+  id            Int      @id
+  horizonteDias Int?
+  limiteAte     DateTime? @db.Date
+  atualizadoEm  DateTime @updatedAt
+
+  @@map("configuracoes_agenda")
+}
+
 model MensagemWhatsAppProcessada {
   provedor    String
   idMensagem  String

@@ -22,7 +22,7 @@ const NOMES_DIAS_SEMANA: Record<DiaDaSemana, string> = {
 
 const TIME_ZONE = 'America/Sao_Paulo';
 
-function chaveDataEmBrasilia(instante: Date): string {
+export function chaveDataEmBrasilia(instante: Date): string {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: TIME_ZONE,
         year: 'numeric',
@@ -71,7 +71,9 @@ export function nomeDiaDaSemana(dia: DiaDaSemana): string {
     return NOMES_DIAS_SEMANA[dia];
 }
 
-export function diaDaSemanaEmBrasilia(instanteOuChave: Date | string): DiaDaSemana {
+export function diaDaSemanaEmBrasilia(
+    instanteOuChave: Date | string,
+): DiaDaSemana {
     if (instanteOuChave instanceof Date) {
         if (Number.isNaN(instanteOuChave.getTime())) {
             throw new RangeError('Instante inválido.');

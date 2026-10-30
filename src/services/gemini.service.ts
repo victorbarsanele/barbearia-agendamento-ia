@@ -14,6 +14,7 @@ import {
     DIAS_SEMANA,
     dataMaisProximaComDiaDaSemana,
     diaDaSemanaEmBrasilia,
+    chaveDataEmBrasilia,
     nomeDiaDaSemana,
     somarDiasAChaveData,
     type DiaDaSemana,
@@ -32,6 +33,7 @@ import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as pacoteRepository from '../repositories/pacote.repository';
 import * as servicoRepository from '../repositories/servico.repository';
+import * as configuracaoAgendaRepository from '../repositories/configuracaoAgenda.repository';
 import * as agendamentoService from './agendamento.service';
 import {
     getPendingAgendamentoRepository,
@@ -84,6 +86,11 @@ import {
     nomeClienteInformadoPeloCliente,
     validarNomeCliente,
 } from '../utils/nome-cliente';
+import {
+    calcularDiasNoCalendario,
+    calcularHorizonteAgenda,
+    type ConfiguracaoHorizonteAgenda,
+} from '../utils/horizonte-agenda';
 import {
     carregarIdentidadeBarbeiro,
     type IdentidadeBarbeiro,
@@ -148,6 +155,12 @@ interface ContextoGuardaBloqueio {
     configuracaoFuncionamento?: HorarioFuncionamentoConfig[];
     bloqueios?: Awaited<ReturnType<typeof bloqueioRepository.listarTodos>>;
     indisponivel?: boolean;
+    horizonteAte?: string;
+}
+
+interface ContextoHorizonteTurno {
+    hojeIsoTurno: string;
+    horizonteAte: string;
 }
 
 interface ServicoParaDisponibilidade {
@@ -336,6 +349,10 @@ function buildSystemPrompt(
     configuracaoFuncionamento?: HorarioFuncionamentoConfig[],
     periodosBloqueados: readonly PeriodoBloqueado[] = [],
     hojeIso = getDateKeyInBrasilia(new Date()),
+    horizonteAte = calcularHorizonteAgenda(hojeIso, {
+        horizonteDias: null,
+        limiteAte: null,
+    }),
 ): string {
     let regraIdentidade = NEUTRAL_BARBER_IDENTITY_RULE;
     if (identidadeBarbeiro) {
@@ -351,28 +368,77 @@ function buildSystemPrompt(
         NEUTRAL_BARBER_IDENTITY_RULE,
         regraIdentidade,
     );
-    const calendario = Array.from({ length: 21 }, (_, index) => {
-        const dataIso = somarDiasAChaveData(hojeIso, index);
-        const instante = new Date(`${dataIso}T12:00:00-03:00`);
-        const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
-            timeZone: TIME_ZONE,
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-        }).format(instante);
-        const marcador =
-            index === 0 ? ' — hoje' : index === 1 ? ' — amanhã' : '';
-        const fechado =
-            configuracaoFuncionamento !== undefined &&
-            !ehDiaDeFuncionamento(configuracaoFuncionamento, instante);
-        return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${dataFormatada}${fechado ? ' (FECHADO)' : ''}${marcador}`;
-    }).join('\n');
+    const calendario = Array.from(
+        { length: calcularDiasNoCalendario(hojeIso, horizonteAte) },
+        (_, index) => {
+            const dataIso = somarDiasAChaveData(hojeIso, index);
+            const instante = new Date(`${dataIso}T12:00:00-03:00`);
+            const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
+                timeZone: TIME_ZONE,
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+            }).format(instante);
+            const marcador =
+                index === 0 ? ' — hoje' : index === 1 ? ' — amanhã' : '';
+            const fechado =
+                configuracaoFuncionamento !== undefined &&
+                !ehDiaDeFuncionamento(configuracaoFuncionamento, instante);
+            return `${nomeDiaDaSemana(diaDaSemanaEmBrasilia(dataIso))} ${dataFormatada}${fechado ? ' (FECHADO)' : ''}${marcador}`;
+        },
+    ).join('\n');
 
     const textoPeriodosBloqueados = periodosBloqueados.length
         ? construirBlocoPeriodosBloqueados(periodosBloqueados)
         : '';
-    const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje e próximos 20 dias):\n${calendario}${textoPeriodosBloqueados}`;
+    const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje até ${horizonteAte}):\n${calendario}${textoPeriodosBloqueados}\nNão ofereça nem consulte datas após o último dia do calendário.`;
     return contextoRascunho ? `${prompt}\n${contextoRascunho}` : prompt;
+}
+
+async function carregarContextoHorizonteTurno(): Promise<ContextoHorizonteTurno> {
+    const hojeIsoTurno = getDateKeyInBrasilia(new Date());
+    let configuracao: ConfiguracaoHorizonteAgenda = {
+        horizonteDias: null,
+        limiteAte: null,
+    };
+
+    try {
+        configuracao = await configuracaoAgendaRepository.obter();
+    } catch {
+        console.warn(
+            '[GEMINI SERVICE] Falha ao carregar configuração do horizonte; usando padrão.',
+        );
+    }
+
+    return {
+        hojeIsoTurno,
+        horizonteAte: calcularHorizonteAgenda(hojeIsoTurno, configuracao),
+    };
+}
+
+function obterHorizonteAte(
+    horizonteAte?: string,
+    hojeIso = getDateKeyInBrasilia(new Date()),
+): string {
+    return (
+        horizonteAte ??
+        calcularHorizonteAgenda(hojeIso, {
+            horizonteDias: null,
+            limiteAte: null,
+        })
+    );
+}
+
+function resultadoForaDoHorizonte(data: string, horizonteAte: string) {
+    const instrucao = `A agenda dessa data ainda não está aberta. Não busque de novo para datas após ${horizonteAte}. Ofereça datas até ${horizonteAte} ou sugira que o cliente volte a perguntar mais perto da data. Não prometa abertura futura nem cite o barbeiro.`;
+    return {
+        sucesso: false as const,
+        foraDoHorizonte: true as const,
+        data,
+        horizonteAte,
+        mensagem: 'A agenda dessa data ainda não está aberta.',
+        instrucao,
+    };
 }
 
 function higienizarMotivoBloqueio(motivo: string): string {
@@ -1718,6 +1784,14 @@ async function buscarHorariosDisponiveisTool(
     contextoTurno?: ContextoGuardaBloqueio,
 ): Promise<
     | {
+          sucesso: false;
+          foraDoHorizonte: true;
+          data: string;
+          horizonteAte: string;
+          mensagem: string;
+          instrucao: string;
+      }
+    | {
           diaTotalmenteBloqueado: true;
           data: string;
           diaSemana: string;
@@ -1800,6 +1874,11 @@ async function buscarHorariosDisponiveisTool(
             duracaoMinutos: servico.duracaoMinutos,
             ...mensagemValidacaoDia(validacaoDia),
         };
+    }
+
+    const horizonteAte = obterHorizonteAte(contextoTurno?.horizonteAte);
+    if (args.data > horizonteAte) {
+        return resultadoForaDoHorizonte(args.data, horizonteAte);
     }
 
     let configuracao = contextoTurno?.configuracaoFuncionamento;
@@ -2144,10 +2223,13 @@ async function prepararAgendamentoTool(
     messageId: string | null,
     args: PrepararAgendamentoArgs,
     mensagensCliente: readonly string[],
+    horizonteAteConfigurado?: string,
 ): Promise<{
     sucesso: boolean;
     mensagem: string;
     instrucao?: string;
+    foraDoHorizonte?: true;
+    horizonteAte?: string;
     resumo?: string;
     opcoes?: [OpcaoDataDia, OpcaoDataDia];
     alternativas?: string[];
@@ -2168,10 +2250,12 @@ async function prepararAgendamentoTool(
     }
 
     const dataHoraInicio = normalizeDateTimeInput(args.dataHoraInicio);
-    const validacaoDia = validarDiaDaSemanaInformado(
-        chaveDataDeEntrada(dataHoraInicio),
-        args.diaDaSemana,
-    );
+    const data = chaveDataDeEntrada(dataHoraInicio);
+    const horizonteAte = obterHorizonteAte(horizonteAteConfigurado);
+    if (data && data > horizonteAte) {
+        return resultadoForaDoHorizonte(data, horizonteAte);
+    }
+    const validacaoDia = validarDiaDaSemanaInformado(data, args.diaDaSemana);
     if (validacaoDia.tipo === 'divergente') {
         logPrepararAgendamento('dia_semana_divergente');
         return { ...mensagemValidacaoDia(validacaoDia) };
@@ -2353,6 +2437,9 @@ type ResultadoConfirmacaoTool = {
     rascunhoRestaurado: boolean;
     jaConfirmado?: boolean;
     instrucao?: string;
+    foraDoHorizonte?: true;
+    data?: string;
+    horizonteAte?: string;
 };
 
 function logConfirmacao(
@@ -2455,6 +2542,7 @@ async function confirmarAgendamentoTool(
     phone: string,
     messageId: string | null,
     via: 'atalho' | 'gemini' = 'gemini',
+    horizonteAteConfigurado?: string,
 ): Promise<ResultadoConfirmacaoTool> {
     if (!messageId) {
         logFalhaConfirmacao('sem_message_id');
@@ -2496,6 +2584,18 @@ async function confirmarAgendamentoTool(
             mensagem: 'Não encontrei um resumo pendente para confirmar.',
             instrucao:
                 'Não diga que houve erro nem que vai refazer. Se a conversa já tem serviço, data/hora e nome, chame prepararAgendamento agora e envie o resumo retornado; caso contrário peça apenas os dados que faltam.',
+            rascunhoRestaurado: false,
+        };
+    }
+
+    const dataRascunho = chaveDataEmBrasilia(draft.dataHoraInicio);
+    const horizonteAte = obterHorizonteAte(horizonteAteConfigurado);
+    if (dataRascunho > horizonteAte) {
+        const resultado = resultadoForaDoHorizonte(dataRascunho, horizonteAte);
+        logFalhaConfirmacao('regra', undefined, resultado.mensagem, 422);
+        return {
+            ...resultado,
+            motivoRecusa: resultado.mensagem,
             rascunhoRestaurado: false,
         };
     }
@@ -2724,6 +2824,7 @@ async function tentarAtalhoConfirmacao(
     texto: string,
     messageId: string | null,
     rascunho: PendingAgendamento | null,
+    horizonteAte: string,
 ): Promise<boolean> {
     if (!ehConfirmacaoInequivoca(texto)) {
         return false;
@@ -2763,7 +2864,12 @@ async function tentarAtalhoConfirmacao(
     logAtalho('atalho_confirmacao');
     let resultado: ResultadoConfirmacaoTool;
     try {
-        resultado = await confirmarAgendamentoTool(phone, messageId, 'atalho');
+        resultado = await confirmarAgendamentoTool(
+            phone,
+            messageId,
+            'atalho',
+            horizonteAte,
+        );
     } catch (error) {
         console.error(
             '[GEMINI SERVICE] Falha inesperada no atalho de confirmação',
@@ -3129,9 +3235,15 @@ async function executeToolCall(
                 messageId,
                 (call.args ?? {}) as unknown as PrepararAgendamentoArgs,
                 mensagensCliente,
+                contextoGuardaBloqueio?.horizonteAte,
             );
         case 'confirmarAgendamento':
-            return confirmarAgendamentoTool(phone, messageId);
+            return confirmarAgendamentoTool(
+                phone,
+                messageId,
+                'gemini',
+                contextoGuardaBloqueio?.horizonteAte,
+            );
         case 'consultarAgendamento':
             return consultarAgendamentoPorTelefoneContexto(phone);
         case 'atualizarAgendamento':
@@ -3218,7 +3330,10 @@ async function runGeminiFunctionCalling(
     contextoRascunho?: string,
     confirmarDisponivel = false,
     rascunhoPendenteNoInicio = false,
+    contextoHorizonte?: ContextoHorizonteTurno,
 ): Promise<ResultadoTurnoGemini> {
+    const horizonteTurno =
+        contextoHorizonte ?? (await carregarContextoHorizonteTurno());
     const ai = getGeminiClient();
     const contents: Array<Record<string, unknown>> = buildConversationContents(
         phone,
@@ -3242,7 +3357,7 @@ async function runGeminiFunctionCalling(
               (declaration) => declaration.name !== 'confirmarAgendamento',
           );
     const preparacoesBemSucedidas: PreparacaoAgendamentoBemSucedida[] = [];
-    const hojeIsoTurno = getDateKeyInBrasilia(new Date());
+    const hojeIsoTurno = horizonteTurno.hojeIsoTurno;
 
     const toolResponseIndicaSucesso = (toolResponse: unknown): boolean => {
         if (!toolResponse || typeof toolResponse !== 'object') {
@@ -3255,7 +3370,9 @@ async function runGeminiFunctionCalling(
 
     try {
         let configuracaoFuncionamento: HorarioFuncionamentoConfig[] | undefined;
-        const contextoGuardaBloqueio: ContextoGuardaBloqueio = {};
+        const contextoGuardaBloqueio: ContextoGuardaBloqueio = {
+            horizonteAte: horizonteTurno.horizonteAte,
+        };
         try {
             configuracaoFuncionamento = await carregarConfiguracao();
             contextoGuardaBloqueio.configuracaoFuncionamento =
@@ -3274,7 +3391,10 @@ async function runGeminiFunctionCalling(
             try {
                 periodosBloqueados = listarPeriodosBloqueados(
                     hojeIsoTurno,
-                    21,
+                    calcularDiasNoCalendario(
+                        hojeIsoTurno,
+                        horizonteTurno.horizonteAte,
+                    ),
                     configuracaoFuncionamento ?? [],
                     bloqueios,
                 );
@@ -3306,6 +3426,7 @@ async function runGeminiFunctionCalling(
                                 configuracaoFuncionamento,
                                 periodosBloqueados,
                                 hojeIsoTurno,
+                                horizonteTurno.horizonteAte,
                             ),
                             tools: [
                                 {
@@ -3477,6 +3598,8 @@ export async function processarMensagemWhatsapp(
             return;
         }
 
+        const horizonteTurno = await carregarContextoHorizonteTurno();
+
         if (!estado || estado.estado === EstadoEscalonamento.BOT) {
             let rascunhoNoInicio: PendingAgendamento | null = null;
             try {
@@ -3536,6 +3659,7 @@ export async function processarMensagemWhatsapp(
                 texto,
                 messageId,
                 rascunhoNoInicio,
+                horizonteTurno.horizonteAte,
             );
             if (atalhoUsado) {
                 return;
@@ -3571,6 +3695,7 @@ export async function processarMensagemWhatsapp(
                 contextoRascunho,
                 confirmarDisponivel,
                 rascunhoNoInicio !== null,
+                horizonteTurno,
             );
             await responderMensagemGemini(remoteJid, phone, texto, resultado);
             return;
@@ -3581,6 +3706,10 @@ export async function processarMensagemWhatsapp(
             remoteJid,
             texto,
             messageId,
+            undefined,
+            false,
+            false,
+            horizonteTurno,
         );
         await responderMensagemGemini(remoteJid, phone, texto, resultado);
     } catch (error) {

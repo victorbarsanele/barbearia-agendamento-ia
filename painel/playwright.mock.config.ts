@@ -7,6 +7,7 @@ export default defineConfig({
         '**/overrideExpediente.spec.ts',
         '**/loteAgendamentoPacote.spec.ts',
         '**/numerosIgnorados.spec.ts',
+        '**/horizonteAgenda.spec.ts',
         '**/bottom-sheet.spec.ts',
     ],
     fullyParallel: true,
