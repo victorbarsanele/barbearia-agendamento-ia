@@ -10,6 +10,7 @@ import {
     Clock3,
     CalendarRange,
     PhoneOff,
+    ChartNoAxesColumnIncreasing,
     X,
     ChevronRight,
     LogOut,
@@ -34,6 +35,11 @@ const maisItems: SubNavItem[] = [
         icon: CalendarRange,
     },
     { label: 'Números ignorados', to: '/numeros-ignorados', icon: PhoneOff },
+    {
+        label: 'Relatórios',
+        to: '/relatorios',
+        icon: ChartNoAxesColumnIncreasing,
+    },
 ];
 
 export function BottomNav() {
@@ -117,6 +123,7 @@ export function BottomNav() {
                                 'bg-emerald-500/10 text-emerald-400',
                                 'bg-cyan-500/10 text-cyan-400',
                                 'bg-[var(--color-danger-muted)] text-[var(--color-danger-text)]',
+                                'bg-orange-500/10 text-orange-400',
                             ];
                             return (
                                 <button

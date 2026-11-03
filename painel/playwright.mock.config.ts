@@ -9,6 +9,7 @@ export default defineConfig({
         '**/numerosIgnorados.spec.ts',
         '**/horizonteAgenda.spec.ts',
         '**/bottom-sheet.spec.ts',
+        '**/relatorios.spec.ts',
     ],
     fullyParallel: true,
     workers: process.env.CI ? 1 : 2,
