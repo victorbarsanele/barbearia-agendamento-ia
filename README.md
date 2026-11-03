@@ -1,53 +1,72 @@
-## Language / Idioma
-
-- [Português](#barbearia-ia---sistema-de-agendamento-inteligente)
-- [English](#barbershop-ai---smart-scheduling-system)
-
-## CI Status
+# Barbearia IA - Sistema de Agendamento Inteligente
 
 ![CI](https://github.com/victorbarsanele/barbearia-agendamento-ia/actions/workflows/ci.yml/badge.svg)
 
-## Barbearia IA - Sistema de Agendamento Inteligente
+[English](README.en.md)
 
-Sistema de agendamento para barbearia com automação de conversas via WhatsApp e IA. Projeto monorepo com backend para regras de negócio e frontend para operação administrativa.
+Sistema de agendamento para barbearia com automação de conversas via WhatsApp e IA. Monorepo com backend de regras de negócio e painel administrativo.
+
+## O que este projeto demonstra
+
+- Sistema usado por uma barbearia real em produção.
+- Concorrência tratada no PostgreSQL com exclusion constraint `btree_gist` e lock `FOR UPDATE` na numeração de pacote.
+- Gemini complementado por guardrails determinísticos: validação de nome, filtro de IDs internos, guarda de bloqueio total e confirmação explícita antes de gravar.
+- CI executa backend contra PostgreSQL 16 efêmero.
 
 ### 1. Contexto do problema
 
 Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens de agendamento no WhatsApp. Isso gerava interrupções frequentes, atraso na confirmação de horários e risco maior de conflito entre reservas.
 
-### 2. Stack utilizada
+### 2. Stack e infraestrutura
 
 #### Backend
 
-- Node.js
-- TypeScript
-- Fastify
-- Prisma
-- PostgreSQL (Neon)
+- Node.js, TypeScript, Fastify e Prisma.
+- PostgreSQL (Neon).
 
 #### Frontend
 
-- React
-- Vite
-- TypeScript
-- Tailwind CSS v4
+- React, Vite, TypeScript e Tailwind CSS v4.
+- Playwright para testes do painel.
 
 #### Integrações
 
-- Evolution API (WhatsApp, transporte legado)
-- YCloud (WhatsApp Business Platform)
-- Google Gemini (Function Calling)
+- YCloud (WhatsApp Business Platform, produção; coexistência).
+- Evolution API (rollback).
+- Google Gemini (Function Calling).
+- Google Calendar API com service account.
+
+#### Infraestrutura
+
+- Railway: backend.
+- Vercel: painel.
+- Neon: PostgreSQL.
 
 ### 3. Funcionalidades principais
 
-- Agendamento via WhatsApp com IA.
-- Painel administrativo para operação de clientes, serviços e agenda.
-- Autenticação JWT no painel.
-- Prevenção de conflito de horário no agendamento.
-- Notificação em caso de reagendamento.
-- Escalonamento automático para atendimento humano em casos de confusão, limite de uso da API ou solicitações fora do escopo automatizado (ex.: pacotes de agendamento recorrente).
+#### WhatsApp e IA
 
-> **Nota sobre o piloto atual:** o cliente está usando o painel administrativo para cadastro manual de clientes/serviços/agendamentos. A automação via WhatsApp está pronta e coberta por testes, mas ainda não foi conectada ao número real da barbearia.
+- Agendamento com confirmação explícita: `prepararAgendamento` salva rascunho; `confirmarAgendamento` grava após nova mensagem confirmando o resumo. Rascunhos têm TTL e lembrete automático.
+- Takeover humano com estados `BOT`, `ESCALADO` e `HUMANO_ATIVO`; registro de eco depende do provedor YCloud.
+- Escalonamento para atendimento humano em caso de confusão, limite de uso da API, pedido de atendimento humano e solicitações fora do fluxo automatizado. Pedidos de cortes recorrentes (ex.: semanais por 1 ou 2 meses) não são agendados em série pelo bot: ele avisa o cliente e encaminha o pedido ao barbeiro.
+- Consulta informativa de pacotes apenas quando liberados com `liberadoParaGemini` (padrão `false`). Gemini não vincula pacote nem trata pagamento; interesse em pacote fixo e combinações personalizadas seguem para o barbeiro.
+- Mensagens de mídia não textual recebem aviso. Transcrição de áudio é opcional e desligada por padrão (`AUDIO_TRANSCRIPTION_ENABLED`).
+
+#### Painel
+
+- Operação de clientes, serviços, agenda e autenticação JWT.
+- Pacotes com múltiplos serviços, saldo por serviço, numeração “N de M” e `usosAnteriores`; venda de pacote na criação avulsa e em lote.
+- Agendamento recorrente em lote.
+- Bloqueios de horário e expediente configurável por dia, incluindo almoço e extensão de fechamento.
+- Encaixe fora do expediente disponível somente no painel.
+- Horizonte de agenda do Gemini com janela móvel e teto: padrão de 20 dias, máximo de 180.
+- Lista de números ignorados.
+
+#### Operação e integrações
+
+- Espelho unidirecional de agendamentos para Google Agenda (opcional; `GOOGLE_CALENDAR_SYNC_ENABLED`, desligado por padrão). Consulte [docs/google-agenda-backup.md](docs/google-agenda-backup.md).
+- YCloud atende clientes reais em coexistência: barbeiro responde aos clientes pelo app WhatsApp Business no celular, usando o número da barbearia (`YCLOUD_FROM_NUMBER`).
+- Notificações de reagendamento e cancelamento, além de alertas de atendimento humano.
 
 ### 4. Demonstração
 
@@ -66,50 +85,28 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 ### 5. Decisões de arquitetura relevantes
 
 - Organização em camadas: `routes` / `controllers` / `services` / `repositories`.
-- Datas armazenadas em UTC, com conversão de timezone na entrada/saída.
-- Cancelamento lógico de agendamento (status `CANCELADO`) em vez de exclusão física.
-- Exclusion constraint no PostgreSQL (`btree_gist`) para prevenir condição de corrida na criação de agendamentos simultâneos.
+- Datas armazenadas em UTC, com conversão de timezone na entrada e saída.
+- Cancelamento lógico (`CANCELADO`) e exclusion constraint PostgreSQL `btree_gist` para conflitos concorrentes.
 - Filtro anti-jailbreak no webhook do WhatsApp para bloquear entradas suspeitas.
-- Hardening de segurança da API: rate limiting (`@fastify/rate-limit`), CORS allowlist (`@fastify/cors`), cabeçalhos de segurança (`@fastify/helmet`) e JWT em cookie httpOnly.
-- Pipeline de CI via GitHub Actions executando a suíte Vitest contra um container real de PostgreSQL 16, garantindo que os testes rodem contra o mesmo motor de banco usado em produção.
+- Adapter de saída separado por provedor WhatsApp (Evolution/YCloud).
+- Estado de escalonamento persistido em PostgreSQL.
+- Idempotência por ID de mensagem com ACK antecipado; deduplicação só ocorre quando ID existe.
+- Lock `FOR UPDATE` na numeração de pacote.
+- Guardrails determinísticos: validação de nome, filtro de IDs internos na saída e guarda de bloqueio total. Se consulta da guarda falhar, sistema trata como indisponibilidade, não como bloqueio garantido.
+- Segurança: rate limiting, CORS allowlist, cabeçalhos Helmet e JWT em cookie httpOnly; revogação de tokens em `Set` em memória; segredo `x-webhook-secret` no webhook Evolution e HMAC-SHA256 no webhook YCloud.
+- CI via GitHub Actions executa Vitest contra PostgreSQL 16.
 
 ### 6. Como rodar localmente
 
 #### 6.1 Variáveis de ambiente
 
-Copie e preencha as variáveis do arquivo `.env.example` em um `.env` local (sem versionar valores):
+Use `.env.example` como base. Produção deve definir `WHATSAPP_PROVIDER=ycloud` explicitamente; detalhes de obrigatoriedade, defaults e validação estão em [docs/ENV.md](docs/ENV.md).
 
-- `DATABASE_URL`
-- `PORT`
-- `GEMINI_API_KEY`
-- `WHATSAPP_PROVIDER` (`evolution` por padrão; ou `ycloud`)
-- `EVOLUTION_API_KEY`
-- `JWT_SECRET`
-- `ADMIN_USER`
-- `ADMIN_PASSWORD_HASH`
-- `BARBER_USER`
-- `BARBER_PASSWORD_HASH`
-- `BARBER_PHONE`
-- `BARBER_NAME` (opcional; nome do barbeiro usado no prompt)
-- `BARBER_ALIASES` (opcional; apelidos separados por vírgula)
-- `COOKIE_SECURE`
-- `CORS_ORIGINS`
-- `ESCALATION_COOLDOWN_MS` (opcional, em milissegundos; padrão `900000` ou 15 minutos)
-- `MIN_ANTECEDENCIA_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; antecedência mínima para criação e alteração de agendamento)
-- `OFERTA_FOLGA_MINUTOS` (opcional, inteiro entre `0` e `120`; padrão `0`; folga adicional somente na oferta de horários pelo WhatsApp)
-- `CONFIRMACAO_TOLERANCIA_MINUTOS` (opcional, inteiro entre `0` e `60`; padrão `0`; tolerância aplicada somente na confirmação de rascunho, sem alterar criação pelo painel/API)
-- `AVISO_CURTO_PRAZO_MINUTOS` (opcional, inteiro entre `0` e `1440`; padrão `60`; inclui aviso no resumo quando o horário estiver mais próximo que esse limite)
-- `HUMAN_TAKEOVER_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos; TTL deslizante contado desde a última mensagem do barbeiro na conversa)
-- `PENDING_BOOKING_TTL_MS` (opcional, em milissegundos; padrão `1800000` ou 30 minutos)
-- `PENDING_BOOKING_REMINDER_DELAY_MS` (opcional, em milissegundos; padrão `600000` ou 10 minutos)
-- `YCLOUD_API_KEY` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
-- `YCLOUD_WEBHOOK_SECRET` (obrigatória com `WHATSAPP_PROVIDER=ycloud`)
-- `YCLOUD_FROM_NUMBER` (obrigatória com `WHATSAPP_PROVIDER=ycloud`, formato E.164 com `+`)
-- `WHATSAPP_ALLOWLIST` (opcional; lista temporária de números para testes YCloud)
+Variáveis essenciais: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, credenciais de painel e configurações YCloud (`YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER`, `BARBER_PHONE`).
 
-O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local de antecedência. A resposta contém somente esse valor; a validação do backend continua sendo a fonte da verdade.
+O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local. Backend continua como fonte da verdade.
 
-Quando o Gemini confirma agendamento com antecedência menor que `AVISO_CURTO_PRAZO_MINUTOS`, o barbeiro recebe o template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, 4 parâmetros: cliente, serviço(s), horário e minutos), enviado a `BARBER_PHONE`. O template precisa de aprovação da YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
+Quando Gemini confirma agendamento com antecedência menor que `AVISO_CURTO_PRAZO_MINUTOS`, barbeiro recebe template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, quatro parâmetros: cliente, serviço(s), horário e minutos), enviado a `BARBER_PHONE`. Template precisa de aprovação da YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
 
 #### 6.2 Backend (raiz)
 
@@ -118,7 +115,7 @@ npm install
 npm run dev
 ```
 
-Build e execução de produção local:
+Build e execução local:
 
 ```bash
 npm run build
@@ -133,226 +130,45 @@ npm install
 npm run dev
 ```
 
-Build do frontend:
+Build do painel:
 
 ```bash
 cd painel
 npm run build
 ```
 
-#### 6.4 Evolution API (legado)
+#### 6.4 YCloud (provedor de produção)
 
-Evolution continua como provedor padrão para manter a operação atual. Use `WHATSAPP_PROVIDER=evolution`; Evolution API deve estar disponível conforme configuração existente.
+Defina `WHATSAPP_PROVIDER=ycloud` e configure credenciais YCloud, `YCLOUD_FROM_NUMBER` em formato E.164 e `BARBER_PHONE`, número distinto que recebe avisos e escalonamentos. `YCLOUD_FROM_NUMBER` é o número da barbearia conectado à YCloud e deve ser diferente de `BARBER_PHONE`. A coexistência, que permite ao barbeiro responder pelo app WhatsApp Business usando o número da barbearia, é configurada na conta YCloud/Meta, não no repositório.
 
-#### 6.5 YCloud (WhatsApp Business Platform)
+Configure webhook como `https://<seu-backend>/webhook/ycloud`. Inscreva `whatsapp.inbound_message.received` e `whatsapp.smb.message.echoes`; endpoint valida assinatura HMAC do corpo bruto.
 
-Configure `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 com `+`) e `BARBER_PHONE`. O número do barbeiro não pode ser igual ao número conectado à YCloud.
+`WHATSAPP_ALLOWLIST` é recurso opcional para validação, não está ativa em produção. Lista vazia ou variável ausente desativa filtro.
 
-Durante validação, defina `WHATSAPP_ALLOWLIST` como números separados por vírgula. Só mensagens da lista passam pela rota YCloud; remetentes sem telefone também são ignorados. Remova a variável ou deixe-a vazia para desativar a lista. Inicialização registra apenas quantidade de números, nunca os números.
+Respostas dentro da janela usam texto; notificações proativas usam templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`.
 
-Configure endpoint de webhook na YCloud para:
+#### 6.5 Evolution (rollback)
 
-`https://barbearia-agendamento-ia.up.railway.app/webhook/ycloud`
-
-Inscreva eventos de mensagem recebida (`whatsapp.inbound_message.received`) e eco do app (`whatsapp.smb.message.echoes`). Copie o segredo gerado no endpoint para `YCLOUD_WEBHOOK_SECRET`. O endpoint valida assinatura HMAC do corpo bruto.
-
-Para rollback, defina `WHATSAPP_PROVIDER=evolution` e restaure a configuração Evolution. Faça redeploy e confirme `/webhook/whatsapp` e envio Evolution antes de desativar o endpoint YCloud.
-
-Em modo YCloud, respostas dentro da conversa usam texto; notificações proativas usam os templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`.
+Código assume `evolution` quando `WHATSAPP_PROVIDER` não está definida. Produção define `ycloud` explicitamente. Para rollback, configure `WHATSAPP_PROVIDER=evolution`, restaure configuração Evolution, faça redeploy e confirme `/webhook/whatsapp` e envio Evolution antes de desativar endpoint YCloud. Webhook Evolution: `https://<seu-backend>/webhook/whatsapp`.
 
 ### 7. Testes
 
-Executar testes do backend na raiz:
-
-```bash
-npm run test
-```
-
-Cobertura atual:
-
-- Regras de negócio de `agendamento.service` (conflitos, janela de atendimento, antecedência, cancelamento lógico, notificação de reagendamento).
-- Filtro anti-jailbreak no webhook (`webhook.controller`) para mensagens suspeitas, URLs, tamanho e origem de grupo.
+- Backend: mais de 850 casos, executados na raiz com `npm run test`.
+- Nove arquivos de integração: oito exigem PostgreSQL; `auth.cookie.integration.test.ts` roda em memória. Os testes usam `DATABASE_URL` explícita porque dotenv não é carregado sob `VITEST`.
+- Painel: unitários via Playwright com `cd painel && npm run test:unit`.
+- E2E via `cd painel && npx playwright test`; exige `E2E_USER`, `E2E_PASSWORD`, backend de desenvolvimento e painel rodando.
+- CI executa backend completo, incluindo integrações, contra PostgreSQL 16 efêmero após `prisma migrate deploy`. CI não executa testes do painel.
 
 ### 8. Status do projeto
 
-Sistema totalmente implantado em produção (backend, frontend, banco e WhatsApp). Piloto em andamento com um cliente real: o painel administrativo já está em uso ativo para cadastro de clientes, serviços e agendamentos. A automação via WhatsApp está implementada, testada e aguardando a conexão do número da barbearia para entrar em operação com o cliente.
+Sistema em produção, atendendo clientes da barbearia. Painel está em uso ativo; automação WhatsApp opera via YCloud em coexistência. Evolution permanece disponível somente como rollback.
 
-### 9. Autor
+### 9. Deploy
+
+Quando houver migration, publique backend antes do painel. Na Railway, `prisma migrate deploy && npm start` está configurado na plataforma (não versionado no repo). Painel é publicado na Vercel; rewrite de `/api` está definido em [painel/vercel.json](painel/vercel.json).
+
+### 10. Autor
 
 - Nome: Víctor Barsanele
-- LinkedIn: https://linkedin.com/in/victorbarsanele
-- GitHub: https://github.com/victorbarsanele
-
----
-
-## Barbershop AI - Smart Scheduling System
-
-Scheduling system for a barbershop with automated WhatsApp conversations powered by AI. Monorepo project with backend business rules and frontend administrative operations.
-
-### 1. Problem context
-
-During appointments, the barber was losing time by manually answering scheduling messages on WhatsApp. This caused frequent interruptions, slower time-slot confirmations, and higher risk of booking conflicts.
-
-### 2. Tech stack
-
-#### Backend
-
-- Node.js
-- TypeScript
-- Fastify
-- Prisma
-- PostgreSQL (Neon)
-
-#### Frontend
-
-- React
-- Vite
-- TypeScript
-- Tailwind CSS v4
-
-#### Integrations
-
-- Evolution API (WhatsApp, legacy transport)
-- YCloud (WhatsApp Business Platform)
-- Google Gemini (Function Calling)
-
-### 3. Core features
-
-- AI-assisted scheduling via WhatsApp.
-- Administrative dashboard for clients, services, and appointments.
-- JWT authentication in the dashboard.
-- Schedule conflict prevention during booking.
-- Rescheduling notification flow.
-- Automatic escalation to human support for confusion, API rate limits, or requests outside the automated scope (e.g., recurring booking packages).
-
-> **Note on the current pilot:** the client is currently using the admin dashboard for manual registration of clients, services, and appointments. The WhatsApp automation is fully built and tested, but not yet connected to the barbershop's real number.
-
-### 4. Demo
-
-**WhatsApp scheduling flow (AI)**
-
-![WhatsApp scheduling flow](docs/media/whatsapp-agendamento.gif)
-
-**Admin dashboard**
-
-![Admin dashboard](docs/media/painel-admin.gif)
-
-**Custom date/time picker**
-
-![Custom DateTimePicker](docs/media/datetime-picker.gif)
-
-### 5. Relevant architecture decisions
-
-- Layered architecture: `routes` / `controllers` / `services` / `repositories`.
-- Datetimes stored in UTC, with timezone conversion on input/output.
-- Logical cancellation for appointments (`CANCELADO` status) instead of physical deletion.
-- PostgreSQL exclusion constraint (`btree_gist`) to prevent race conditions on concurrent appointment creation.
-- Anti-jailbreak filter in WhatsApp webhook to block suspicious input.
-- API security hardening: rate limiting (`@fastify/rate-limit`), CORS allowlist (`@fastify/cors`), security headers (`@fastify/helmet`), and httpOnly cookie JWT.
-- CI pipeline via GitHub Actions running the Vitest suite against a real PostgreSQL 16 container, ensuring tests run against the same database engine used in production.
-
-### 6. Local setup
-
-#### 6.1 Environment variables
-
-Copy and fill variables from `.env.example` into a local `.env` file (do not commit values):
-
-- `DATABASE_URL`
-- `PORT`
-- `GEMINI_API_KEY`
-- `WHATSAPP_PROVIDER` (`evolution` by default, or `ycloud`)
-- `EVOLUTION_API_KEY`
-- `JWT_SECRET`
-- `ADMIN_USER`
-- `ADMIN_PASSWORD_HASH`
-- `BARBER_USER`
-- `BARBER_PASSWORD_HASH`
-- `BARBER_PHONE`
-- `BARBER_NAME` (optional; barber name used in the prompt)
-- `BARBER_ALIASES` (optional; comma-separated aliases)
-- `COOKIE_SECURE`
-- `CORS_ORIGINS`
-- `ESCALATION_COOLDOWN_MS` (optional, in milliseconds; default `900000` or 15 minutes)
-- `MIN_ANTECEDENCIA_MINUTOS` (optional integer from `0` to `1440`; default `60`; minimum lead time for creating or changing appointments)
-- `OFERTA_FOLGA_MINUTOS` (optional integer from `0` to `120`; default `0`; extra buffer only when offering WhatsApp time slots)
-- `HUMAN_TAKEOVER_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes; sliding TTL counted from the barber's last message in the conversation)
-- `PENDING_BOOKING_TTL_MS` (optional, in milliseconds; default `1800000` or 30 minutes)
-- `PENDING_BOOKING_REMINDER_DELAY_MS` (optional, in milliseconds; default `600000` or 10 minutes)
-- `YCLOUD_API_KEY` (required with `WHATSAPP_PROVIDER=ycloud`)
-- `YCLOUD_WEBHOOK_SECRET` (required with `WHATSAPP_PROVIDER=ycloud`)
-- `YCLOUD_FROM_NUMBER` (required with `WHATSAPP_PROVIDER=ycloud`, E.164 with `+`)
-- `WHATSAPP_ALLOWLIST` (optional temporary list of test numbers for YCloud)
-
-When Gemini confirms a booking with lead time below `AVISO_CURTO_PRAZO_MINUTOS`, the barber receives YCloud template `aviso_agendamento_ultima_hora` (`pt_BR`, four parameters: customer, service(s), time, and minutes) at `BARBER_PHONE`. The template must be approved by YCloud/Meta before lowering `MIN_ANTECEDENCIA_MINUTOS` to 15.
-
-#### 6.2 Backend (root)
-
-```bash
-npm install
-npm run dev
-```
-
-Build and local production run:
-
-```bash
-npm run build
-npm start
-```
-
-#### 6.3 Frontend (`painel/`)
-
-```bash
-cd painel
-npm install
-npm run dev
-```
-
-Frontend build:
-
-```bash
-cd painel
-npm run build
-```
-
-#### 6.4 Evolution API (legacy)
-
-Evolution remains the default provider to preserve current behavior. Set `WHATSAPP_PROVIDER=evolution`; keep Evolution API available as configured.
-
-#### 6.5 YCloud (WhatsApp Business Platform)
-
-Set `WHATSAPP_PROVIDER=ycloud`, `YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER` (E.164 with `+`) and `BARBER_PHONE`. Barber and connected YCloud numbers must differ.
-
-During validation, set `WHATSAPP_ALLOWLIST` to comma-separated numbers. Only listed senders pass through the YCloud route; senders without visible phone numbers are also ignored. Remove the variable or leave it empty to disable the list. Startup logs only the number of entries, never the numbers themselves.
-
-Configure YCloud webhook endpoint:
-
-`https://barbearia-agendamento-ia.up.railway.app/webhook/ycloud`
-
-Subscribe to inbound message (`whatsapp.inbound_message.received`) and app echo (`whatsapp.smb.message.echoes`) events. Copy the endpoint secret to `YCLOUD_WEBHOOK_SECRET`; the endpoint verifies the HMAC signature against the raw body.
-
-To roll back, set `WHATSAPP_PROVIDER=evolution`, restore Evolution configuration, redeploy, and confirm `/webhook/whatsapp` plus outbound sending before disabling the YCloud endpoint.
-
-YCloud mode sends in-window replies as text and proactive notifications using approved templates `aviso_reagendamento`, `aviso_cancelamento` and `aviso_atendimento_humano`.
-
-### 7. Tests
-
-Run backend tests from repository root:
-
-```bash
-npm run test
-```
-
-Current coverage:
-
-- `agendamento.service` business rules (conflicts, business hours, lead time, logical cancellation, rescheduling notification).
-- Anti-jailbreak webhook filter (`webhook.controller`) for suspicious content, URLs, message length, and group-origin filtering.
-
-### 8. Project status
-
-System fully deployed to production (backend, frontend, database, and WhatsApp integration). Pilot underway with a real client: the admin dashboard is already in active use for registering clients, services, and appointments. The WhatsApp automation is implemented and tested, pending connection of the barbershop's number to go live with the client.
-
-### 9. Author
-
-- Name: Víctor Barsanele
 - LinkedIn: https://linkedin.com/in/victorbarsanele
 - GitHub: https://github.com/victorbarsanele
