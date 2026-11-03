@@ -22,6 +22,25 @@ export interface RelatorioAtendimentos {
     };
 }
 
+export interface ItemClienteInativo {
+    clienteId: string;
+    nome: string;
+    telefone: string;
+    ultimaVisita: string;
+    diasSemVir: number;
+    ultimoServico: string | null;
+    totalVisitas: number;
+    pacoteAtivoComSaldo: boolean;
+}
+
+export interface RelatorioClientesInativos {
+    geradoEm: string;
+    filtro: { diasMin: number; diasMax: number };
+    total: number;
+    truncado: boolean;
+    itens: ItemClienteInativo[];
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
         const body = (await response
@@ -46,4 +65,18 @@ export async function buscarAtendimentos(
         `/api/relatorios/atendimentos?${parametros.toString()}`,
     );
     return handleResponse<RelatorioAtendimentos>(response);
+}
+
+export async function buscarClientesInativos(
+    diasMin: number,
+    diasMax: number,
+): Promise<RelatorioClientesInativos> {
+    const parametros = new URLSearchParams({
+        diasMin: String(diasMin),
+        diasMax: String(diasMax),
+    });
+    const response = await apiFetch(
+        `/api/relatorios/clientes-inativos?${parametros.toString()}`,
+    );
+    return handleResponse<RelatorioClientesInativos>(response);
 }
