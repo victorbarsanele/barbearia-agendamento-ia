@@ -72,6 +72,7 @@ model Agendamento {
   id              String            @id @default(cuid())
   clienteId       String
   servicoId       String
+  precoUnitario   Decimal?          @db.Decimal(10, 2)
   pacoteClienteId String?
   numeroNoPacote  Int?
   loteId          String?

@@ -740,6 +740,7 @@ export async function criar(
         const dados = {
             clienteId: data.clienteId,
             servicoId: data.servicoId,
+            precoUnitario: servico.preco,
             pacoteClienteId: data.pacoteClienteId ?? null,
             dataHoraInicio,
             dataHoraFim,
@@ -893,6 +894,7 @@ export async function criarLote(data: LoteAgendamentoData) {
                 const dados = {
                     clienteId: data.clienteId,
                     servicoId: data.servicoId,
+                    precoUnitario: servico.preco,
                     pacoteClienteId: data.pacoteClienteId ?? null,
                     loteId: lote.id,
                     dataHoraInicio,
@@ -1109,6 +1111,7 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                                 {
                                     clienteId: data.clienteId,
                                     servicoId: data.servicoId,
+                                    precoUnitario: servico.preco,
                                     pacoteClienteId: resolvido.pacoteClienteId,
                                     loteId: lote.id,
                                     dataHoraInicio,
@@ -1274,6 +1277,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
         const dados = {
             clienteId: data.clienteId,
             servicoId: data.servicoId,
+            ...(servicoMudou ? { precoUnitario: servico.preco } : {}),
             dataHoraInicio,
             dataHoraFim,
             status: data.status,
