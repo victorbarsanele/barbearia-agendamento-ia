@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const repositoryMock = vi.hoisted(() => ({
     agregarAtendimentos: vi.fn(),
     listarClientesInativos: vi.fn(),
+    listarSaldoPacotes: vi.fn(),
 }));
 
 const numeroIgnoradoMock = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ import * as numeroIgnoradoWhatsAppService from './numero-ignorado-whatsapp.servi
 import {
     buscarAtendimentos,
     buscarClientesInativos,
+    buscarSaldoPacotes,
 } from './relatorio.service';
 
 const agora = new Date('2026-10-11T02:45:00.000Z');
@@ -53,6 +55,12 @@ describe('relatorio.service.buscarAtendimentos', () => {
         vi.mocked(relatorioRepository.listarClientesInativos).mockResolvedValue(
             { total: 0, itens: [] },
         );
+        vi.mocked(relatorioRepository.listarSaldoPacotes).mockResolvedValue({
+            totalAtivos: 0,
+            totalParados: 0,
+            total: 0,
+            itens: [],
+        });
     });
 
     it.each([
@@ -183,5 +191,138 @@ describe('relatorio.service.buscarAtendimentos', () => {
 
         expect(resultado.filtro).toEqual({ diasMin: 20, diasMax: 60 });
         expect(resultado.truncado).toBe(false);
+    });
+});
+
+describe('relatorio.service.buscarSaldoPacotes', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(relatorioRepository.listarSaldoPacotes).mockResolvedValue({
+            totalAtivos: 0,
+            totalParados: 0,
+            total: 0,
+            itens: [],
+        });
+    });
+
+    it('usa filtros padrão e devolve contrato vazio', async () => {
+        const resultado = await buscarSaldoPacotes({}, agora);
+
+        expect(relatorioRepository.listarSaldoPacotes).toHaveBeenCalledWith(
+            agora,
+            '2026-10-10',
+            7,
+            false,
+        );
+        expect(resultado).toEqual({
+            geradoEm: agora.toISOString(),
+            filtro: { diasParado: 7, somenteParados: false },
+            totalAtivos: 0,
+            totalParados: 0,
+            total: 0,
+            truncado: false,
+            itens: [],
+        });
+    });
+
+    it.each([1, 365])('aceita limite diasParado=%i', async (diasParado) => {
+        await buscarSaldoPacotes({ diasParado }, agora);
+
+        expect(relatorioRepository.listarSaldoPacotes).toHaveBeenCalledWith(
+            agora,
+            '2026-10-10',
+            diasParado,
+            false,
+        );
+    });
+
+    it.each([0, 366, 1.5, null])(
+        'rejeita diasParado=%s',
+        async (diasParado) => {
+            await expect(
+                buscarSaldoPacotes(
+                    { diasParado: diasParado as unknown as number },
+                    agora,
+                ),
+            ).rejects.toMatchObject({
+                statusCode: 400,
+                message: expect.stringContaining('diasParado'),
+            });
+            expect(
+                relatorioRepository.listarSaldoPacotes,
+            ).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(['true', null])(
+        'rejeita somenteParados inválido: %s',
+        async (somenteParados) => {
+            await expect(
+                buscarSaldoPacotes(
+                    { somenteParados: somenteParados as unknown as boolean },
+                    agora,
+                ),
+            ).rejects.toMatchObject({
+                statusCode: 400,
+                message: expect.stringContaining('somenteParados'),
+            });
+            expect(
+                relatorioRepository.listarSaldoPacotes,
+            ).not.toHaveBeenCalled();
+        },
+    );
+
+    it('preserva totais pré-filtro e sinaliza lista truncada', async () => {
+        vi.mocked(relatorioRepository.listarSaldoPacotes).mockResolvedValue({
+            totalAtivos: 501,
+            totalParados: 250,
+            total: 501,
+            itens: [
+                {
+                    pacoteClienteId: 'pacote-cliente-1',
+                    clienteId: 'cliente-1',
+                    nome: 'Cliente',
+                    telefone: '5511999999999',
+                    pacoteNome: 'Pacote',
+                    dataInicio: '2026-10-01',
+                    ultimaVisita: null,
+                    semVisita: true,
+                    diasSemVir: 10,
+                    temHorarioMarcado: false,
+                    parado: true,
+                    totalRestante: 2,
+                    totalAgendados: 0,
+                    aConcluir: 0,
+                    servicos: [
+                        {
+                            servicoId: 'servico-1',
+                            nome: 'Corte',
+                            total: 3,
+                            restante: 2,
+                            agendados: 0,
+                        },
+                    ],
+                },
+            ],
+        });
+
+        const resultado = await buscarSaldoPacotes(
+            { diasParado: 10, somenteParados: true },
+            agora,
+        );
+
+        expect(resultado).toMatchObject({
+            filtro: { diasParado: 10, somenteParados: true },
+            totalAtivos: 501,
+            totalParados: 250,
+            total: 501,
+            truncado: true,
+            itens: [
+                {
+                    pacoteClienteId: 'pacote-cliente-1',
+                    servicos: [{ servicoId: 'servico-1', restante: 2 }],
+                },
+            ],
+        });
     });
 });

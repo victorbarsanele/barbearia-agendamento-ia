@@ -229,3 +229,308 @@ export async function listarClientesInativos(
 
     return { total, itens };
 }
+
+export interface ServicoSaldoPacote {
+    servicoId: string;
+    nome: string;
+    total: number;
+    restante: number;
+    agendados: number;
+}
+
+export interface ItemSaldoPacote {
+    pacoteClienteId: string;
+    clienteId: string;
+    nome: string;
+    telefone: string;
+    pacoteNome: string;
+    dataInicio: string;
+    ultimaVisita: string | null;
+    semVisita: boolean;
+    diasSemVir: number;
+    temHorarioMarcado: boolean;
+    parado: boolean;
+    totalRestante: number;
+    totalAgendados: number;
+    aConcluir: number;
+    servicos: ServicoSaldoPacote[];
+}
+
+export interface ResultadoSaldoPacotes {
+    totalAtivos: number;
+    totalParados: number;
+    total: number;
+    itens: ItemSaldoPacote[];
+}
+
+interface ServicoSaldoPacoteRaw {
+    servicoId: string;
+    nome: string;
+    total: number;
+    restante: number;
+    agendados: number | bigint;
+}
+
+interface SaldoPacoteRaw {
+    totalAtivos: bigint;
+    totalParados: bigint;
+    total: bigint;
+    pacoteClienteId: string | null;
+    clienteId: string | null;
+    nome: string | null;
+    telefone: string | null;
+    pacoteNome: string | null;
+    dataInicio: string | null;
+    ultimaVisita: string | null;
+    semVisita: boolean | null;
+    diasSemVir: number | null;
+    temHorarioMarcado: boolean | null;
+    parado: boolean | null;
+    totalRestante: bigint | null;
+    totalAgendados: bigint | null;
+    aConcluir: bigint | null;
+    servicos: ServicoSaldoPacoteRaw[] | null;
+}
+
+const LIMITE_SALDO_PACOTES = 500;
+
+export async function listarSaldoPacotes(
+    agora: Date,
+    hojeLocal: string,
+    diasParado: number,
+    somenteParados: boolean,
+    limite = LIMITE_SALDO_PACOTES,
+): Promise<ResultadoSaldoPacotes> {
+    // Critério de visita espelha listarClientesInativos, sem alterar sua consulta.
+    const rows = await prisma.$queryRaw<SaldoPacoteRaw[]>`
+        WITH "visitas" AS (
+            SELECT a."clienteId", a."dataHoraInicio"
+            FROM "agendamentos" AS a
+            INNER JOIN "servicos" AS s ON s."id" = a."servicoId"
+            WHERE a."status" <> ${StatusAgendamento.CANCELADO}::"StatusAgendamento"
+              AND a."dataHoraFim" <= ${agora}
+        ),
+        "ultima_visita" AS (
+            SELECT "clienteId", MAX("dataHoraInicio") AS "ultimaVisita"
+            FROM "visitas"
+            GROUP BY "clienteId"
+        ),
+        "horarios_cliente" AS (
+            SELECT a."clienteId", TRUE AS "temHorarioMarcado"
+            FROM "agendamentos" AS a
+            WHERE a."status" <> ${StatusAgendamento.CANCELADO}::"StatusAgendamento"
+              AND a."dataHoraFim" > ${agora}
+            GROUP BY a."clienteId"
+        ),
+        "agendamentos_pacote" AS (
+            SELECT
+                a."pacoteClienteId",
+                COUNT(*) FILTER (
+                    WHERE a."status" <> ${StatusAgendamento.CANCELADO}::"StatusAgendamento"
+                      AND a."concluido" = FALSE
+                      AND a."dataHoraFim" <= ${agora}
+                ) AS "aConcluir"
+            FROM "agendamentos" AS a
+            WHERE a."pacoteClienteId" IS NOT NULL
+            GROUP BY a."pacoteClienteId"
+        ),
+        "servicos_saldo" AS (
+            SELECT
+                pcs."pacoteClienteId",
+                pcs."servicoId",
+                s."nome",
+                pcs."quantidadeTotal" AS "total",
+                pcs."quantidadeRestante" AS "restante",
+                COUNT(a."id") AS "agendados"
+            FROM "pacotes_clientes_servicos" AS pcs
+            INNER JOIN "servicos" AS s ON s."id" = pcs."servicoId"
+            LEFT JOIN "agendamentos" AS a
+                ON a."pacoteClienteId" = pcs."pacoteClienteId"
+               AND a."servicoId" = pcs."servicoId"
+               AND a."status" <> ${StatusAgendamento.CANCELADO}::"StatusAgendamento"
+               AND a."concluido" = FALSE
+               AND a."dataHoraFim" > ${agora}
+            GROUP BY
+                pcs."pacoteClienteId",
+                pcs."servicoId",
+                s."nome",
+                pcs."quantidadeTotal",
+                pcs."quantidadeRestante"
+        ),
+        "pacotes_agregados" AS (
+            SELECT
+                pc."id" AS "pacoteClienteId",
+                c."id" AS "clienteId",
+                c."nome",
+                c."telefone",
+                p."nome" AS "pacoteNome",
+                pc."dataInicio",
+                uv."ultimaVisita",
+                COALESCE(hc."temHorarioMarcado", FALSE) AS "temHorarioMarcado",
+                COALESCE(ap."aConcluir", 0) AS "aConcluir",
+                SUM(ss."restante") AS "totalRestante",
+                SUM(ss."agendados") AS "totalAgendados",
+                JSONB_AGG(
+                    JSONB_BUILD_OBJECT(
+                        'servicoId', ss."servicoId",
+                        'nome', ss."nome",
+                        'total', ss."total",
+                        'restante', ss."restante",
+                        'agendados', ss."agendados"
+                    ) ORDER BY ss."nome", ss."servicoId"
+                ) AS "servicos"
+            FROM "pacotes_clientes" AS pc
+            INNER JOIN "clientes" AS c ON c."id" = pc."clienteId"
+            INNER JOIN "pacotes" AS p ON p."id" = pc."pacoteId"
+            INNER JOIN "servicos_saldo" AS ss
+                ON ss."pacoteClienteId" = pc."id"
+            LEFT JOIN "ultima_visita" AS uv ON uv."clienteId" = c."id"
+            LEFT JOIN "horarios_cliente" AS hc ON hc."clienteId" = c."id"
+            LEFT JOIN "agendamentos_pacote" AS ap
+                ON ap."pacoteClienteId" = pc."id"
+            WHERE pc."status" = ${StatusPacoteCliente.ATIVO}::"StatusPacoteCliente"
+            GROUP BY
+                pc."id",
+                c."id",
+                c."nome",
+                c."telefone",
+                p."nome",
+                pc."dataInicio",
+                uv."ultimaVisita",
+                hc."temHorarioMarcado",
+                ap."aConcluir"
+            HAVING SUM(ss."restante") > 0
+        ),
+        "calculados" AS (
+            SELECT
+                "pacoteClienteId",
+                "clienteId",
+                "nome",
+                "telefone",
+                "pacoteNome",
+                TO_CHAR("dataInicio" AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS "dataInicio",
+                CASE
+                    WHEN "ultimaVisita" IS NULL THEN NULL
+                    ELSE TO_CHAR("ultimaVisita" AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD')
+                END AS "ultimaVisita",
+                "ultimaVisita" IS NULL AS "semVisita",
+                (
+                    ${hojeLocal}::date
+                    - (COALESCE("ultimaVisita", "dataInicio") AT TIME ZONE ${TIME_ZONE})::date
+                )::int AS "diasSemVir",
+                "temHorarioMarcado",
+                NOT "temHorarioMarcado"
+                    AND (
+                        ${hojeLocal}::date
+                        - (COALESCE("ultimaVisita", "dataInicio") AT TIME ZONE ${TIME_ZONE})::date
+                    ) >= ${diasParado} AS "parado",
+                "totalRestante",
+                "totalAgendados",
+                "aConcluir",
+                "servicos"
+            FROM "pacotes_agregados"
+        ),
+        "filtrados" AS (
+            SELECT *
+            FROM "calculados"
+            WHERE NOT ${somenteParados} OR "parado"
+        ),
+        "resumo" AS (
+            SELECT
+                COUNT(*) AS "totalAtivos",
+                COUNT(*) FILTER (WHERE "parado") AS "totalParados",
+                (SELECT COUNT(*) FROM "filtrados") AS "total"
+            FROM "calculados"
+        ),
+        "limitados" AS (
+            SELECT *
+            FROM "filtrados"
+            ORDER BY
+                "parado" DESC,
+                "diasSemVir" DESC,
+                "nome" ASC,
+                "pacoteClienteId" ASC
+            LIMIT ${limite}
+        )
+        SELECT
+            "resumo"."totalAtivos",
+            "resumo"."totalParados",
+            "resumo"."total",
+            "limitados"."pacoteClienteId",
+            "limitados"."clienteId",
+            "limitados"."nome",
+            "limitados"."telefone",
+            "limitados"."pacoteNome",
+            "limitados"."dataInicio",
+            "limitados"."ultimaVisita",
+            "limitados"."semVisita",
+            "limitados"."diasSemVir",
+            "limitados"."temHorarioMarcado",
+            "limitados"."parado",
+            "limitados"."totalRestante",
+            "limitados"."totalAgendados",
+            "limitados"."aConcluir",
+            "limitados"."servicos"
+        FROM "resumo"
+        LEFT JOIN "limitados" ON TRUE
+        ORDER BY
+            "limitados"."parado" DESC NULLS LAST,
+            "limitados"."diasSemVir" DESC NULLS LAST,
+            "limitados"."nome" ASC NULLS LAST,
+            "limitados"."pacoteClienteId" ASC NULLS LAST
+    `;
+
+    const resumo = rows[0];
+    const itens = rows.flatMap((row): ItemSaldoPacote[] => {
+        if (
+            row.pacoteClienteId === null ||
+            row.clienteId === null ||
+            row.nome === null ||
+            row.telefone === null ||
+            row.pacoteNome === null ||
+            row.dataInicio === null ||
+            row.semVisita === null ||
+            row.diasSemVir === null ||
+            row.temHorarioMarcado === null ||
+            row.parado === null ||
+            row.totalRestante === null ||
+            row.totalAgendados === null ||
+            row.aConcluir === null
+        ) {
+            return [];
+        }
+
+        return [
+            {
+                pacoteClienteId: row.pacoteClienteId,
+                clienteId: row.clienteId,
+                nome: row.nome,
+                telefone: row.telefone,
+                pacoteNome: row.pacoteNome,
+                dataInicio: row.dataInicio,
+                ultimaVisita: row.ultimaVisita,
+                semVisita: row.semVisita,
+                diasSemVir: Number(row.diasSemVir),
+                temHorarioMarcado: row.temHorarioMarcado,
+                parado: row.parado,
+                totalRestante: Number(row.totalRestante),
+                totalAgendados: Number(row.totalAgendados),
+                aConcluir: Number(row.aConcluir),
+                servicos: (row.servicos ?? []).map((servico) => ({
+                    servicoId: servico.servicoId,
+                    nome: servico.nome,
+                    total: Number(servico.total),
+                    restante: Number(servico.restante),
+                    agendados: Number(servico.agendados),
+                })),
+            },
+        ];
+    });
+
+    return {
+        totalAtivos: Number(resumo?.totalAtivos ?? 0),
+        totalParados: Number(resumo?.totalParados ?? 0),
+        total: Number(resumo?.total ?? 0),
+        itens,
+    };
+}

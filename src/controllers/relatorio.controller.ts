@@ -12,6 +12,11 @@ interface ClientesInativosQuery {
     diasMax?: number;
 }
 
+interface SaldoPacotesQuery {
+    diasParado?: number;
+    somenteParados?: boolean;
+}
+
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
         void reply.status(error.statusCode).send({ message: error.message });
@@ -41,6 +46,20 @@ export async function listarClientesInativos(
 ): Promise<void> {
     try {
         const relatorio = await relatorioService.buscarClientesInativos(
+            request.query,
+        );
+        void reply.send(relatorio);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function listarSaldoPacotes(
+    request: FastifyRequest<{ Querystring: SaldoPacotesQuery }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const relatorio = await relatorioService.buscarSaldoPacotes(
             request.query,
         );
         void reply.send(relatorio);
