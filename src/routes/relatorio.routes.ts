@@ -58,6 +58,55 @@ const respostaAtendimentosSchema = {
     },
 };
 
+const respostaClientesInativosSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['geradoEm', 'filtro', 'total', 'truncado', 'itens'],
+    properties: {
+        geradoEm: { type: 'string', format: 'date-time' },
+        filtro: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['diasMin', 'diasMax'],
+            properties: {
+                diasMin: { type: 'integer', minimum: 1, maximum: 365 },
+                diasMax: { type: 'integer', minimum: 1, maximum: 730 },
+            },
+        },
+        total: { type: 'integer', minimum: 0 },
+        truncado: { type: 'boolean' },
+        itens: {
+            type: 'array',
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                    'clienteId',
+                    'nome',
+                    'telefone',
+                    'ultimaVisita',
+                    'diasSemVir',
+                    'ultimoServico',
+                    'totalVisitas',
+                    'pacoteAtivoComSaldo',
+                ],
+                properties: {
+                    clienteId: { type: 'string' },
+                    nome: { type: 'string' },
+                    telefone: { type: 'string' },
+                    ultimaVisita: { type: 'string', format: 'date' },
+                    diasSemVir: { type: 'integer', minimum: 0 },
+                    ultimoServico: {
+                        anyOf: [{ type: 'string' }, { type: 'null' }],
+                    },
+                    totalVisitas: { type: 'integer', minimum: 1 },
+                    pacoteAtivoComSaldo: { type: 'boolean' },
+                },
+            },
+        },
+    },
+};
+
 export async function relatorioRoutes(app: FastifyInstance): Promise<void> {
     app.get(
         '/relatorios/atendimentos',
@@ -78,5 +127,25 @@ export async function relatorioRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         relatorioController.listarAtendimentos,
+    );
+
+    app.get(
+        '/relatorios/clientes-inativos',
+        {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        diasMin: { type: 'integer', minimum: 1, maximum: 365 },
+                        diasMax: { type: 'integer', minimum: 1, maximum: 730 },
+                    },
+                },
+                response: {
+                    200: respostaClientesInativosSchema,
+                },
+            },
+        },
+        relatorioController.listarClientesInativos,
     );
 }
