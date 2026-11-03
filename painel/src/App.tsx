@@ -75,6 +75,12 @@ const EditarPacotePage = lazy(() =>
     })),
 );
 
+const RelatoriosPage = lazy(() =>
+    import('./pages/RelatoriosPage').then((module) => ({
+        default: module.RelatoriosPage,
+    })),
+);
+
 function MainRouteLayout({ children }: { children: React.ReactNode }) {
     return (
         <>
@@ -221,6 +227,16 @@ function App() {
                         <ProtectedRoute>
                             <MainRouteLayout>
                                 <PacotesPage />
+                            </MainRouteLayout>
+                        </ProtectedRoute>
+                    }
+                />
+                <Route
+                    path="/relatorios"
+                    element={
+                        <ProtectedRoute>
+                            <MainRouteLayout>
+                                <RelatoriosPage />
                             </MainRouteLayout>
                         </ProtectedRoute>
                     }
