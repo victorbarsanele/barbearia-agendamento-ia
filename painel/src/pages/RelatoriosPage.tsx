@@ -1,5 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Download, Search } from 'lucide-react';
+import { ClientesInativosTab } from '../components/ClientesInativosTab';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -45,7 +47,7 @@ function baixarCsv(relatorio: RelatorioAtendimentos): void {
     URL.revokeObjectURL(url);
 }
 
-export function RelatoriosPage() {
+function AtendimentosTab() {
     const [periodo, setPeriodo] = useState<PeriodoRelatorio>(periodoInicial);
     const [periodoAplicado, setPeriodoAplicado] =
         useState<PeriodoRelatorio>(periodoInicial);
@@ -117,13 +119,7 @@ export function RelatoriosPage() {
         relatorio?.itens.some((item) => item.semPreco > 0) ?? false;
 
     return (
-        <main className="mx-auto min-h-screen w-full max-w-[900px] bg-[var(--color-bg)] p-4 pb-24 sm:p-6 sm:pb-28">
-            <PageHeader
-                variant="list"
-                title="Relatórios"
-                subtitle="Atendimentos por serviço"
-            />
-
+        <div>
             <section aria-labelledby="filtros-relatorio" className="mb-6">
                 <h2
                     id="filtros-relatorio"
@@ -403,6 +399,101 @@ export function RelatoriosPage() {
                     </p>
                 </section>
             )}
+        </div>
+    );
+}
+
+type AbaRelatorio = 'servicos' | 'inativos';
+
+const abas: { id: AbaRelatorio; label: string }[] = [
+    { id: 'servicos', label: 'Atendimentos por serviço' },
+    { id: 'inativos', label: 'Clientes inativos' },
+];
+
+export function RelatoriosPage() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const botoesAbas = useRef<Array<HTMLButtonElement | null>>([]);
+    const abaAtiva: AbaRelatorio =
+        searchParams.get('relatorio') === 'inativos' ? 'inativos' : 'servicos';
+
+    const selecionarAba = (aba: AbaRelatorio, focar = false) => {
+        const parametros = new URLSearchParams(searchParams);
+        parametros.set('relatorio', aba);
+        setSearchParams(parametros);
+        if (focar) {
+            const indice = abas.findIndex((item) => item.id === aba);
+            requestAnimationFrame(() => botoesAbas.current[indice]?.focus());
+        }
+    };
+
+    const navegarAbas = (
+        event: React.KeyboardEvent<HTMLButtonElement>,
+        indiceAtual: number,
+    ) => {
+        let proximoIndice: number | null = null;
+        if (event.key === 'ArrowRight') {
+            proximoIndice = (indiceAtual + 1) % abas.length;
+        } else if (event.key === 'ArrowLeft') {
+            proximoIndice = (indiceAtual - 1 + abas.length) % abas.length;
+        } else if (event.key === 'Home') {
+            proximoIndice = 0;
+        } else if (event.key === 'End') {
+            proximoIndice = abas.length - 1;
+        }
+        if (proximoIndice !== null) {
+            event.preventDefault();
+            selecionarAba(abas[proximoIndice].id, true);
+        }
+    };
+
+    return (
+        <main className="mx-auto min-h-screen w-full max-w-[900px] bg-[var(--color-bg)] p-4 pb-24 sm:p-6 sm:pb-28">
+            <PageHeader
+                variant="list"
+                title="Relatórios"
+                subtitle={
+                    abaAtiva === 'inativos'
+                        ? 'Clientes inativos'
+                        : 'Atendimentos por serviço'
+                }
+            />
+            <div
+                role="tablist"
+                aria-label="Relatórios"
+                className="mb-6 flex overflow-x-auto border-b border-[var(--color-border)]"
+            >
+                {abas.map((aba, indice) => (
+                    <button
+                        key={aba.id}
+                        ref={(element) => {
+                            botoesAbas.current[indice] = element;
+                        }}
+                        id={`relatorio-tab-${aba.id}`}
+                        type="button"
+                        role="tab"
+                        aria-selected={abaAtiva === aba.id}
+                        aria-controls="relatorio-tabpanel"
+                        tabIndex={abaAtiva === aba.id ? 0 : -1}
+                        onClick={() => selecionarAba(aba.id)}
+                        onKeyDown={(event) => navegarAbas(event, indice)}
+                        className={`min-h-11 shrink-0 border-b-2 px-3 text-sm font-semibold transition sm:px-4 ${abaAtiva === aba.id ? 'border-[var(--color-gold)] text-[var(--color-gold)]' : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
+                    >
+                        {aba.label}
+                    </button>
+                ))}
+            </div>
+            <div
+                id="relatorio-tabpanel"
+                role="tabpanel"
+                aria-labelledby={`relatorio-tab-${abaAtiva}`}
+                tabIndex={0}
+            >
+                {abaAtiva === 'inativos' ? (
+                    <ClientesInativosTab />
+                ) : (
+                    <AtendimentosTab />
+                )}
+            </div>
         </main>
     );
 }

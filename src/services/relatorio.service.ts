@@ -1,6 +1,13 @@
 import { Prisma } from '@prisma/client';
 import * as relatorioRepository from '../repositories/relatorio.repository';
+import { AppError } from '../lib/app-error';
+import * as numeroIgnoradoWhatsAppService from './numero-ignorado-whatsapp.service';
 import { calcularIntervaloRelatorio } from '../utils/intervalo-relatorio';
+import { chaveDataEmBrasilia } from '../utils/dia-semana';
+import {
+    canonicalizarTelefoneWhatsApp,
+    variantesTelefoneWhatsApp,
+} from '../utils/telefone';
 
 export interface ItemRelatorioAtendimentos {
     servicoId: string;
@@ -20,6 +27,75 @@ export interface RelatorioAtendimentos {
         quantidade: number;
         valorEstimado: string | null;
         semPreco: number;
+    };
+}
+
+export interface FiltroClientesInativos {
+    diasMin?: number;
+    diasMax?: number;
+}
+
+export interface RelatorioClientesInativos {
+    geradoEm: string;
+    filtro: { diasMin: number; diasMax: number };
+    total: number;
+    truncado: boolean;
+    itens: relatorioRepository.ItemClienteInativo[];
+}
+
+function validarDiasInativos(diasMin: number, diasMax: number): void {
+    if (!Number.isInteger(diasMin) || diasMin < 1 || diasMin > 365) {
+        throw new AppError('diasMin deve ser um inteiro entre 1 e 365.', 400);
+    }
+    if (!Number.isInteger(diasMax) || diasMax < diasMin || diasMax > 730) {
+        throw new AppError(
+            'diasMax deve ser um inteiro entre diasMin e 730.',
+            400,
+        );
+    }
+}
+
+function montarVariantesIgnoradas(telefones: string[]): string[] {
+    const variantes = new Set<string>();
+
+    for (const telefone of telefones) {
+        const canonico = canonicalizarTelefoneWhatsApp(telefone);
+        if (!canonico) continue;
+
+        for (const variante of variantesTelefoneWhatsApp(canonico)) {
+            variantes.add(variante);
+        }
+    }
+
+    return [...variantes];
+}
+
+export async function buscarClientesInativos(
+    filtro: FiltroClientesInativos = {},
+    agora = new Date(),
+): Promise<RelatorioClientesInativos> {
+    const diasMin = filtro.diasMin ?? 30;
+    const diasMax = filtro.diasMax ?? 180;
+    validarDiasInativos(diasMin, diasMax);
+
+    const numerosIgnorados = await numeroIgnoradoWhatsAppService.listar();
+    const variantesIgnoradas = montarVariantesIgnoradas(
+        numerosIgnorados.map((numero) => numero.telefone),
+    );
+    const resultado = await relatorioRepository.listarClientesInativos(
+        agora,
+        chaveDataEmBrasilia(agora),
+        diasMin,
+        diasMax,
+        variantesIgnoradas,
+    );
+
+    return {
+        geradoEm: agora.toISOString(),
+        filtro: { diasMin, diasMax },
+        total: resultado.total,
+        truncado: resultado.total > resultado.itens.length,
+        itens: resultado.itens,
     };
 }
 

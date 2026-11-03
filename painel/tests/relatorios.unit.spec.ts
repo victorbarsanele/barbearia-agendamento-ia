@@ -6,6 +6,26 @@ import {
     montarCsvAtendimentos,
     validarIntervaloRelatorio,
 } from '../src/utils/relatorios.js';
+import {
+    formatarTelefoneCliente,
+    formatarTelefoneCsv,
+    montarCsvClientesInativos,
+    nomeArquivoCsvClientesInativos,
+    obterTelefoneWhatsApp,
+    validarIntervaloDiasInativos,
+} from '../src/utils/clientesInativos.js';
+import type { ItemClienteInativo } from '../src/services/relatorios.service.js';
+
+const clienteInativo: ItemClienteInativo = {
+    clienteId: 'cliente-1',
+    nome: '@Ana Silva',
+    telefone: '+55 (11) 99999-9999',
+    ultimaVisita: '2026-01-02',
+    diasSemVir: 45,
+    ultimoServico: '=Corte; clássico',
+    totalVisitas: 8,
+    pacoteAtivoComSaldo: true,
+};
 
 test.describe('helpers de relatórios', () => {
     test('formata data ISO sem alterar entrada inválida', () => {
@@ -130,5 +150,124 @@ test.describe('helpers de relatórios', () => {
     test('formata BRL só para exibição e null como traço', () => {
         expect(formatarValorEstimado('123.50')).toBe('R$ 123,50');
         expect(formatarValorEstimado(null)).toBe('—');
+    });
+
+    test('valida limites inteiros do intervalo de clientes inativos', () => {
+        expect(validarIntervaloDiasInativos(30, 180)).toBeNull();
+        expect(validarIntervaloDiasInativos(1, 180)).toBeNull();
+        expect(validarIntervaloDiasInativos(365, 730)).toBeNull();
+        expect(validarIntervaloDiasInativos(1, 730)).toBeNull();
+        expect(validarIntervaloDiasInativos(Number.NaN, 180)).toContain(
+            'inteiro',
+        );
+        expect(validarIntervaloDiasInativos(0, 180)).toContain('1 e 365');
+        expect(validarIntervaloDiasInativos(366, 730)).toContain('1 e 365');
+        expect(validarIntervaloDiasInativos(30.5, 180)).toContain('inteiro');
+        expect(validarIntervaloDiasInativos(60, 59)).toContain(
+            'igual ou maior',
+        );
+        expect(validarIntervaloDiasInativos(30, 731)).toContain('até 730');
+    });
+
+    test('normaliza WhatsApp apenas para quantidades de dígitos aceitas', () => {
+        expect(obterTelefoneWhatsApp('(11) 99999-9999')).toBe('5511999999999');
+        expect(obterTelefoneWhatsApp('11 3333-4444')).toBe('551133334444');
+        expect(obterTelefoneWhatsApp('+55 (11) 99999-9999')).toBe(
+            '5511999999999',
+        );
+        expect(obterTelefoneWhatsApp('551133334444')).toBe('551133334444');
+        expect(obterTelefoneWhatsApp('55123456789')).toBe('5555123456789');
+        expect(obterTelefoneWhatsApp('5511999999999')).toBe('5511999999999');
+        expect(obterTelefoneWhatsApp('')).toBeNull();
+        expect(obterTelefoneWhatsApp('telefone')).toBeNull();
+        expect(obterTelefoneWhatsApp('123456789')).toBeNull();
+        expect(obterTelefoneWhatsApp('441199999999')).toBeNull();
+        expect(obterTelefoneWhatsApp('4411999999999')).toBeNull();
+        expect(obterTelefoneWhatsApp('55119999999999')).toBeNull();
+    });
+
+    test('formata telefone CSV nacional e neutraliza valores inválidos', () => {
+        const telefonesValidos = [
+            ['1133334444', '(11) 3333-4444'],
+            ['(11) 3333-4444', '(11) 3333-4444'],
+            ['11999999999', '(11) 99999-9999'],
+            ['(11) 99999-9999', '(11) 99999-9999'],
+            ['551133334444', '(11) 3333-4444'],
+            ['+55 (11) 3333-4444', '(11) 3333-4444'],
+            ['5511999999999', '(11) 99999-9999'],
+            ['+55 (11) 99999-9999', '(11) 99999-9999'],
+        ];
+
+        for (const [entrada, esperado] of telefonesValidos) {
+            const resultado = formatarTelefoneCsv(entrada);
+            expect(resultado).toBe(esperado);
+            expect(/^[=+\-@]/.test(resultado)).toBe(false);
+        }
+
+        expect(formatarTelefoneCsv('+telefone')).toBe("'+telefone");
+        expect(formatarTelefoneCsv('=inválido')).toBe("'=inválido");
+        expect(formatarTelefoneCsv('-inválido')).toBe("'-inválido");
+        expect(formatarTelefoneCsv('@inválido')).toBe("'@inválido");
+        expect(formatarTelefoneCsv('')).toBe('');
+    });
+
+    test('monta CSV com BOM, CRLF, cabeçalho, escapes e valores protegidos', () => {
+        const csv = montarCsvClientesInativos([
+            clienteInativo,
+            {
+                ...clienteInativo,
+                clienteId: 'cliente-10-digitos',
+                nome: 'Carlos',
+                telefone: '11 3333-4444',
+                ultimoServico: 'Corte "social"; barba',
+                pacoteAtivoComSaldo: false,
+            },
+            {
+                ...clienteInativo,
+                clienteId: 'cliente-sem-nome',
+                nome: '  ',
+                telefone: '+telefone',
+                ultimoServico: null,
+                pacoteAtivoComSaldo: false,
+            },
+            {
+                ...clienteInativo,
+                clienteId: 'cliente-sem-telefone',
+                nome: 'Duda',
+                telefone: '',
+                pacoteAtivoComSaldo: false,
+            },
+        ]);
+
+        expect(csv.charCodeAt(0)).toBe(0xfeff);
+        expect(csv).toContain(
+            'Cliente;Telefone;Última visita;Dias sem vir;Último serviço;Visitas;Pacote ativo com saldo',
+        );
+        expect(csv).toContain(
+            '\'@Ana Silva;(11) 99999-9999;02/01/2026;45;"\'=Corte; clássico";8;Sim',
+        );
+        expect(csv).toContain(
+            'Carlos;(11) 3333-4444;02/01/2026;45;"Corte ""social""; barba";8;Não',
+        );
+        expect(csv).toContain("(sem nome);'+telefone;02/01/2026;45;;8;Não");
+        expect(csv).toContain('Duda;;02/01/2026;45;"\'=Corte; clássico";8;Não');
+        expect(csv).toBe(
+            [
+                '\uFEFFCliente;Telefone;Última visita;Dias sem vir;Último serviço;Visitas;Pacote ativo com saldo',
+                '\'@Ana Silva;(11) 99999-9999;02/01/2026;45;"\'=Corte; clássico";8;Sim',
+                'Carlos;(11) 3333-4444;02/01/2026;45;"Corte ""social""; barba";8;Não',
+                "(sem nome);'+telefone;02/01/2026;45;;8;Não",
+                'Duda;;02/01/2026;45;"\'=Corte; clássico";8;Não',
+            ].join('\r\n'),
+        );
+    });
+
+    test('usa data de São Paulo no nome do CSV e mostra telefone vazio com fallback', () => {
+        expect(
+            nomeArquivoCsvClientesInativos({
+                geradoEm: '2026-03-16T02:00:00.000Z',
+            }),
+        ).toBe('clientes_inativos_2026-03-15.csv');
+        expect(formatarTelefoneCliente('   ')).toBe('Não informado');
     });
 });

@@ -1,4 +1,5 @@
 import { getBrazilDateKey } from './dateTime.js';
+import { neutralizarFormulaCsv, serializarCsv } from './csv.js';
 
 export type AtalhoPeriodo = 'este-mes' | 'mes-passado' | 'ultimos-30-dias';
 
@@ -161,21 +162,6 @@ export function validarIntervaloRelatorio(
     return null;
 }
 
-function escaparCsv(valor: string): string {
-    if (/[;"\r\n]/.test(valor)) {
-        return `"${valor.replaceAll('"', '""')}"`;
-    }
-    return valor;
-}
-
-function formatarCelulaCsv(valor: string | number | null): string {
-    return escaparCsv(valor === null ? '' : String(valor));
-}
-
-function protegerNomeFormula(nome: string): string {
-    return /^[=+\-@]/.test(nome) ? `'${nome}` : nome;
-}
-
 export function montarCsvAtendimentos(dados: DadosCsvAtendimentos): string {
     const linhas: (string | number | null)[][] = [
         [
@@ -187,7 +173,7 @@ export function montarCsvAtendimentos(dados: DadosCsvAtendimentos): string {
             'Sem preço',
         ],
         ...dados.itens.map((item) => [
-            protegerNomeFormula(item.nome),
+            neutralizarFormulaCsv(item.nome),
             item.quantidade,
             item.quantidadeAvulso,
             item.quantidadePacote,
@@ -204,9 +190,7 @@ export function montarCsvAtendimentos(dados: DadosCsvAtendimentos): string {
         ],
     ];
 
-    return `\uFEFF${linhas
-        .map((linha) => linha.map(formatarCelulaCsv).join(';'))
-        .join('\r\n')}`;
+    return serializarCsv(linhas);
 }
 
 export function formatarValorEstimado(valor: string | null): string {

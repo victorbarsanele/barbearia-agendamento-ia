@@ -7,6 +7,11 @@ interface AtendimentosQuery {
     ate: string;
 }
 
+interface ClientesInativosQuery {
+    diasMin?: number;
+    diasMax?: number;
+}
+
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
         void reply.status(error.statusCode).send({ message: error.message });
@@ -23,6 +28,20 @@ export async function listarAtendimentos(
         const relatorio = await relatorioService.buscarAtendimentos(
             request.query.de,
             request.query.ate,
+        );
+        void reply.send(relatorio);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function listarClientesInativos(
+    request: FastifyRequest<{ Querystring: ClientesInativosQuery }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const relatorio = await relatorioService.buscarClientesInativos(
+            request.query,
         );
         void reply.send(relatorio);
     } catch (error) {
