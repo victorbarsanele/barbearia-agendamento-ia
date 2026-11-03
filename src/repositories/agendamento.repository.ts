@@ -21,6 +21,7 @@ export type AgendamentoComRelacoes = Omit<AgendamentoBase, 'numeroNoPacote'> & {
 interface SalvarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    precoUnitario?: Prisma.Decimal | null;
     pacoteClienteId?: string | null;
     loteId?: string | null;
     dataHoraInicio: Date;

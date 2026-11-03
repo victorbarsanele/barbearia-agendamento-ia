@@ -1,4 +1,4 @@
-import { StatusAgendamento } from '@prisma/client';
+import { Prisma, StatusAgendamento } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const notificationMock = vi.hoisted(() => ({
@@ -108,6 +108,7 @@ const agendamentoAtual = {
     servicoId: servicoBase.id,
     pacoteClienteId: null,
     loteId: null,
+    precoUnitario: null,
     dataHoraInicio: new Date('2026-07-20T09:00:00-03:00'),
     dataHoraFim: new Date('2026-07-20T09:30:00-03:00'),
     status: StatusAgendamento.AGENDADO,
@@ -267,7 +268,7 @@ describe('agendamento.service.criar', () => {
         expect(agendamentoRepository.criar).not.toHaveBeenCalled();
     });
 
-    it('aceita agendamento em horário livre sem conflito', async () => {
+    it('aceita horário livre e grava null sem preço', async () => {
         vi.mocked(agendamentoRepository.criar).mockResolvedValue({
             ...agendamentoAtual,
             dataHoraInicio: new Date('2026-07-20T10:00:00-03:00'),
@@ -283,6 +284,7 @@ describe('agendamento.service.criar', () => {
         expect(agendamentoRepository.criar).toHaveBeenCalledWith({
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
+            precoUnitario: null,
             pacoteClienteId: null,
             dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
             dataHoraFim: new Date('2026-07-20T13:30:00Z'),
@@ -293,6 +295,30 @@ describe('agendamento.service.criar', () => {
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
         });
+    });
+
+    it('grava snapshot do preço vigente na criação pelo painel', async () => {
+        const servicoComPreco = {
+            ...servicoBase,
+            preco: new Prisma.Decimal('42.50'),
+        };
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoComPreco as never,
+        );
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            origem: 'PAINEL',
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ precoUnitario: servicoComPreco.preco }),
+        );
     });
 
     it('permite agendamento manual além do horizonte do Gemini', async () => {
@@ -1040,6 +1066,66 @@ describe('agendamento.service.cancelar', () => {
 });
 
 describe('agendamento.service.atualizar', () => {
+    it('preserva snapshot existente ao remarcar serviço sem trocar', async () => {
+        const snapshotExistente = new Prisma.Decimal('35.00');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            precoUnitario: snapshotExistente,
+        } as never);
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue({
+            ...servicoBase,
+            preco: new Prisma.Decimal('50.00'),
+        } as never);
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+            ...agendamentoAtual,
+            precoUnitario: snapshotExistente,
+        } as never);
+
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T11:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+        });
+
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.not.objectContaining({ precoUnitario: expect.anything() }),
+        );
+    });
+
+    it('recalcula snapshot quando serviço do agendamento muda', async () => {
+        const novoServico = {
+            ...servicoBase,
+            id: 'servico-2',
+            preco: new Prisma.Decimal('60.00'),
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            precoUnitario: new Prisma.Decimal('35.00'),
+        } as never);
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            novoServico as never,
+        );
+        vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+            ...agendamentoAtual,
+            servicoId: novoServico.id,
+            precoUnitario: novoServico.preco,
+        } as never);
+
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: novoServico.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+        });
+
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ precoUnitario: novoServico.preco }),
+        );
+    });
+
     it('reagenda no limite configurado de 15 minutos', async () => {
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
@@ -1588,6 +1674,13 @@ describe('agendamento.service.criar com pacoteId', () => {
     });
 
     it('cria pacote, saldo e agendamento dentro da transação', async () => {
+        const servicoComPreco = {
+            ...servicoBase,
+            preco: new Prisma.Decimal('42.50'),
+        };
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoComPreco as never,
+        );
         transacaoMock.pacote.findUnique.mockResolvedValue({
             id: 'pacote-1',
             servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
@@ -1638,6 +1731,7 @@ describe('agendamento.service.criar com pacoteId', () => {
             transacaoMock,
             expect.objectContaining({
                 pacoteClienteId: 'pacote-cliente-1',
+                precoUnitario: servicoComPreco.preco,
             }),
             'pacote-cliente-1',
             servicoBase.id,
@@ -2356,6 +2450,13 @@ describe('agendamento.service.criarLote', () => {
     };
 
     it('usa o mínimo configurado ao criar lote comum', async () => {
+        const servicoComPreco = {
+            ...servicoBase,
+            preco: new Prisma.Decimal('45.00'),
+        };
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoComPreco as never,
+        );
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
         vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue(
             loteBase as never,
@@ -2374,6 +2475,9 @@ describe('agendamento.service.criarLote', () => {
 
         expect(resultado.criados).toHaveLength(1);
         expect(resultado.falhados).toEqual([]);
+        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ precoUnitario: servicoComPreco.preco }),
+        );
     });
 
     it('cria parcialmente quando há conflito no meio do lote', async () => {
@@ -2601,6 +2705,13 @@ describe('agendamento.service lote com pacoteId', () => {
     };
 
     it('aceita slot de pacote de catálogo no limite configurado de 15 minutos', async () => {
+        const servicoComPreco = {
+            ...servicoBase,
+            preco: new Prisma.Decimal('45.00'),
+        };
+        transacaoMock.servico.findUnique.mockResolvedValue(
+            servicoComPreco as never,
+        );
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
         transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo());
         vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
@@ -2620,6 +2731,14 @@ describe('agendamento.service lote com pacoteId', () => {
 
         expect(resultado.criados).toHaveLength(1);
         expect(resultado.falhados).toEqual([]);
+        expect(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).toHaveBeenCalledWith(
+            transacaoMock,
+            expect.objectContaining({ precoUnitario: servicoComPreco.preco }),
+            expect.any(String),
+            servicoBase.id,
+        );
     });
 
     it('rejeita pacoteId e pacoteClienteId no serviço', async () => {

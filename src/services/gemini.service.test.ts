@@ -127,6 +127,7 @@ const agendamentoAtivoProximo = {
     servicoId: servicoBase.id,
     pacoteClienteId: null,
     loteId: null,
+    precoUnitario: null,
     dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
     dataHoraFim: new Date('2026-07-22T10:30:00-03:00'),
     status: StatusAgendamento.AGENDADO,
