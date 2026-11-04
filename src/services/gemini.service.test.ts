@@ -147,6 +147,40 @@ function criarAgendamentoDas1430() {
     };
 }
 
+function criarAgendamentoOcupandoDia(data: string) {
+    return {
+        ...agendamentoAtivoProximo,
+        id: `agendamento-ocupado-${data}`,
+        dataHoraInicio: new Date(`${data}T00:00:00-03:00`),
+        dataHoraFim: new Date(`${data}T23:59:00-03:00`),
+    };
+}
+
+function buscarProximasDatasPuras(
+    dataPedida: string,
+    horizonteAte: string,
+    agendamentos: Awaited<
+        ReturnType<typeof agendamentoRepository.listarTodos>
+    > = [],
+    bloqueios: Awaited<ReturnType<typeof bloqueioRepository.listarTodos>> = [],
+) {
+    return __testables.buscarProximasDatasDisponiveisPuro(
+        dataPedida,
+        horizonteAte,
+        criarConfiguracoesHorario(),
+        servicoBase,
+        {
+            agendamentos,
+            bloqueios,
+            agora: new Date('2026-11-04T12:00:00-03:00'),
+            configuracaoAntecedencia: {
+                minAntecedenciaMinutos: 60,
+                ofertaFolgaMinutos: 0,
+            },
+        },
+    );
+}
+
 const servicoSessentaMinutos = {
     ...servicoBase,
     id: 'servico-60min',
@@ -781,6 +815,242 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             retornoEm: '2026-11-05',
             motivos: ['Viagem'],
         });
+    });
+
+    it('varredura pula dias lotados e domingo; horizonte final é inclusivo', () => {
+        const proximas = buscarProximasDatasPuras('2026-11-05', '2026-11-09', [
+            criarAgendamentoOcupandoDia('2026-11-06'),
+            criarAgendamentoOcupandoDia('2026-11-07'),
+        ]);
+
+        expect(proximas).toMatchObject([
+            { data: '2026-11-09', diaSemana: 'segunda-feira' },
+        ]);
+    });
+
+    it('varredura pula dia totalmente bloqueado, inclusive SO_PAINEL', () => {
+        const bloqueios = [
+            {
+                id: 'bloqueio-painel',
+                dataHoraInicio: new Date('2026-11-06T00:00:00-03:00'),
+                dataHoraFim: new Date('2026-11-07T00:00:00-03:00'),
+                motivo: 'Compromisso interno',
+                escopo: 'SO_PAINEL',
+                recorrencia: 'PONTUAL',
+                diaSemana: null,
+                horaInicioMinutos: null,
+                horaFimMinutos: null,
+                createdAt: new Date('2026-10-01T00:00:00Z'),
+            },
+        ] as never;
+
+        const proximas = buscarProximasDatasPuras(
+            '2026-11-05',
+            '2026-11-07',
+            [],
+            bloqueios,
+        );
+
+        expect(proximas.map(({ data }) => data)).toEqual(['2026-11-07']);
+    });
+
+    it('varredura aplica bloqueio semanal a cada data do intervalo', () => {
+        const bloqueios = [
+            {
+                id: 'bloqueio-semanal',
+                dataHoraInicio: null,
+                dataHoraFim: null,
+                motivo: 'Folga semanal',
+                escopo: 'TODOS',
+                recorrencia: 'SEMANAL',
+                diaSemana: 5,
+                horaInicioMinutos: 0,
+                horaFimMinutos: 1440,
+                createdAt: new Date('2026-10-01T00:00:00Z'),
+            },
+        ] as never;
+
+        const proximas = buscarProximasDatasPuras(
+            '2026-11-05',
+            '2026-11-07',
+            [],
+            bloqueios,
+        );
+
+        expect(proximas.map(({ data }) => data)).toEqual(['2026-11-07']);
+    });
+
+    it('limita varredura a três datas e quatro horários por data', () => {
+        const proximas = buscarProximasDatasPuras('2026-11-04', '2026-11-20');
+
+        expect(proximas).toHaveLength(__testables.LIMITE_PROXIMAS_DATAS);
+        expect(proximas.map(({ data }) => data)).toEqual([
+            '2026-11-05',
+            '2026-11-06',
+            '2026-11-07',
+        ]);
+        expect(proximas.map(({ horarios }) => horarios)).toEqual([
+            ['09:00', '09:30', '10:00', '10:30'],
+            ['09:00', '09:30', '10:00', '10:30'],
+            ['08:00', '08:30', '09:00', '09:30'],
+        ]);
+        expect(
+            proximas.every(
+                ({ horarios }) =>
+                    horarios.length <= __testables.LIMITE_HORARIOS_POR_DATA,
+            ),
+        ).toBe(true);
+    });
+
+    it('retorna lista pura vazia quando não há data livre até horizonte', () => {
+        const proximas = buscarProximasDatasPuras('2026-11-04', '2026-11-07', [
+            criarAgendamentoOcupandoDia('2026-11-05'),
+            criarAgendamentoOcupandoDia('2026-11-06'),
+            criarAgendamentoOcupandoDia('2026-11-07'),
+        ]);
+
+        expect(proximas).toEqual([]);
+    });
+
+    it('varre caso real 05-08/11 e lê agenda e bloqueios uma vez', async () => {
+        vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            criarAgendamentoOcupandoDia('2026-11-05'),
+            criarAgendamentoOcupandoDia('2026-11-06'),
+            criarAgendamentoOcupandoDia('2026-11-07'),
+        ]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = (await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-11-05', servicoId: servicoBase.id },
+            {
+                horizonteAte: '2026-11-12',
+                configuracaoFuncionamento: criarConfiguracoesHorario(),
+            },
+        )) as {
+            horarios: string[];
+            proximasDatas: Array<{
+                data: string;
+                diaSemana: string;
+                horarios: string[];
+            }>;
+        };
+
+        expect(resultado.horarios).toEqual([]);
+        expect(resultado.proximasDatas[0]).toEqual({
+            data: '2026-11-09',
+            diaSemana: 'segunda-feira',
+            horarios: ['09:00', '09:30', '10:00', '10:30'],
+        });
+        expect(agendamentoRepository.listarTodos).toHaveBeenCalledOnce();
+        expect(bloqueioRepository.listarTodos).toHaveBeenCalledOnce();
+    });
+
+    it('tool varre próximas datas quando data pedida não tem expediente', async () => {
+        vi.setSystemTime(new Date('2026-11-07T12:00:00Z'));
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValue([]);
+
+        const resultado = await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-11-08', servicoId: servicoBase.id },
+            {
+                horizonteAte: '2026-11-09',
+                configuracaoFuncionamento: criarConfiguracoesHorario(),
+            },
+        );
+
+        expect(resultado).toMatchObject({
+            data: '2026-11-08',
+            horarios: [],
+            proximasDatas: [{ data: '2026-11-09', diaSemana: 'segunda-feira' }],
+        });
+        expect(resultado).toHaveProperty('observacao');
+        expect(agendamentoRepository.listarTodos).toHaveBeenCalledOnce();
+        expect(bloqueioRepository.listarTodos).toHaveBeenCalledOnce();
+    });
+
+    it('tool sinaliza ausência até horizonte e omite campos quando há vagas', async () => {
+        vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
+            servicoBase,
+        ]);
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            criarAgendamentoOcupandoDia('2026-11-05'),
+        ]);
+
+        const semVagas = await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-11-05', servicoId: servicoBase.id },
+            {
+                horizonteAte: '2026-11-05',
+                configuracaoFuncionamento: criarConfiguracoesHorario(),
+                bloqueios: [],
+            },
+        );
+
+        expect(semVagas).toMatchObject({
+            horarios: [],
+            proximasDatas: [],
+            semDisponibilidadeAteHorizonte: true,
+            horizonteAte: '2026-11-05',
+        });
+
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([]);
+        const comVagas = await __testables.buscarHorariosDisponiveisTool(
+            { data: '2026-11-05', servicoId: servicoBase.id },
+            {
+                horizonteAte: '2026-11-05',
+                configuracaoFuncionamento: criarConfiguracoesHorario(),
+                bloqueios: [],
+            },
+        );
+
+        expect(comVagas).toHaveProperty('horarios');
+        expect(comVagas).not.toHaveProperty('proximasDatas');
+        expect(comVagas).not.toHaveProperty('semDisponibilidadeAteHorizonte');
+    });
+
+    it('avalia extensão de fechamento e limite de início na função pura', () => {
+        const configuracao = criarConfiguracoesHorario().map((item) =>
+            item.diaSemana === 5
+                ? {
+                      ...item,
+                      horaFechamentoMinutos: 1020,
+                      limiteExtensaoMinutos: 1080,
+                      ultimoInicioExtensaoMinutos: 1020,
+                  }
+                : item,
+        );
+        const resultado = __testables.calcularHorariosDisponiveisParaData(
+            '2026-11-06',
+            new Date('2026-11-06T00:00:00-03:00'),
+            configuracao,
+            { ...servicoBase, permiteExtensaoFechamento: true },
+            [],
+            [],
+            new Date('2026-11-04T12:00:00-03:00'),
+            { minAntecedenciaMinutos: 60, ofertaFolgaMinutos: 0 },
+        );
+
+        expect(resultado.horarios).toContain('17:00');
+        expect(resultado.horarios).not.toContain('17:30');
+    });
+
+    it('agendamento CANCELADO não ocupa data na varredura', () => {
+        const cancelado = {
+            ...criarAgendamentoOcupandoDia('2026-11-06'),
+            status: StatusAgendamento.CANCELADO,
+        };
+        const proximas = buscarProximasDatasPuras('2026-11-05', '2026-11-06', [
+            cancelado,
+        ]);
+
+        expect(proximas[0].data).toBe('2026-11-06');
+        expect(proximas[0].horarios).toContain('09:00');
     });
 
     it('mantém horário fora de bloqueio disponível', async () => {
@@ -1833,6 +2103,93 @@ describe('gemini.service tools de pacotes', () => {
         expect(JSON.stringify(aviso.mock.calls)).not.toContain(
             'falha simulada',
         );
+    });
+
+    it('prompt e descrição orientam uso de próximas datas e limite', () => {
+        const prompt = __testables.buildSystemPrompt(
+            undefined,
+            null,
+            criarConfiguracoesHorario(),
+            [],
+            '2026-11-04',
+            '2026-11-30',
+        );
+        const buscarHorarios = (
+            __testables.functionDeclarations as Array<{
+                name: string;
+                description?: string;
+            }>
+        ).find(({ name }) => name === 'buscarHorariosDisponiveis');
+
+        expect(prompt).toContain('proximasDatas');
+        expect(prompt).toContain(
+            'Não afirme se dias entre data pedida e primeira data sugerida estão lotados ou fechados.',
+        );
+        expect(prompt).toContain('semDisponibilidadeAteHorizonte=true');
+        expect(prompt).toContain('horizonteAte, formatado como DD/MM/AAAA');
+        expect(prompt).toContain(
+            'Não use essa pergunta como resposta padrão quando buscarHorariosDisponiveis retornar proximasDatas.',
+        );
+        expect(buscarHorarios?.description).toContain('proximasDatas');
+        expect(buscarHorarios?.description).toContain(
+            'semDisponibilidadeAteHorizonte=true',
+        );
+        expect(buscarHorarios?.description).toContain('horizonteAte');
+    });
+
+    it('envia proximasDatas ao Gemini sem nova busca de horários', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-07-21T12:00:00Z'));
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            criarAgendamentoOcupandoDia('2026-07-22'),
+        ]);
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarHorariosDisponiveis',
+                        args: { data: '2026-07-22', servicoId: servicoBase.id },
+                        id: 'call-buscar-sem-vagas',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({
+                functionCalls: [],
+                text: 'Amanhã não há horários; quinta-feira, 23/07/2026, tenho 09:00. Esse horário serve?',
+            });
+
+        await processarMensagemWhatsapp(
+            remoteJid,
+            'Tem horário para corte amanhã?',
+        );
+
+        expect(geminiMocks.generateContent).toHaveBeenCalledTimes(2);
+        const functionResponses =
+            geminiMocks.generateContent.mock.calls[1][0].contents
+                .flatMap(
+                    (content: { parts?: unknown[] }) => content.parts ?? [],
+                )
+                .map(
+                    (part: { functionResponse?: unknown }) =>
+                        part.functionResponse,
+                )
+                .filter(Boolean);
+        expect(functionResponses).toEqual([
+            expect.objectContaining({
+                name: 'buscarHorariosDisponiveis',
+                response: {
+                    result: expect.objectContaining({
+                        proximasDatas: expect.arrayContaining([
+                            expect.objectContaining({
+                                data: '2026-07-23',
+                                diaSemana: 'quinta-feira',
+                            }),
+                        ]),
+                    }),
+                },
+            }),
+        ]);
+        expect(agendamentoRepository.listarTodos).toHaveBeenCalledOnce();
     });
 
     it('carrega funcionamento uma vez por turno mesmo com várias iterações', async () => {
