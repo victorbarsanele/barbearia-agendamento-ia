@@ -102,6 +102,8 @@ const GEMINI_MODEL = 'gemini-3.1-flash-lite';
 const TIME_ZONE = agendamentoService.TIME_ZONE;
 const MAX_HISTORY_ITEMS = 20;
 const SLOT_MINUTOS = 30;
+export const LIMITE_PROXIMAS_DATAS = 3;
+export const LIMITE_HORARIOS_POR_DATA = 4;
 const GEMINI_RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 const GEMINI_RETRY_JITTER_FACTOR = 0.2;
 const GEMINI_RATE_LIMIT_FALLBACK_MESSAGE =
@@ -173,6 +175,31 @@ interface ServicoParaDisponibilidade {
 interface ResultadoCalculoDisponibilidade {
     horarios: string[];
     bloqueios: Array<{ inicio: string; fim: string; motivo: string }>;
+}
+
+type AgendamentosDisponibilidade = Awaited<
+    ReturnType<typeof agendamentoRepository.listarTodos>
+>;
+type BloqueiosDisponibilidade = Awaited<
+    ReturnType<typeof bloqueioRepository.listarTodos>
+>;
+type DadosDisponibilidade = {
+    agendamentos: AgendamentosDisponibilidade;
+    bloqueios: BloqueiosDisponibilidade;
+    agora: Date;
+    configuracaoAntecedencia: Pick<
+        ReturnType<typeof getAgendamentoConfig>,
+        'minAntecedenciaMinutos' | 'ofertaFolgaMinutos'
+    >;
+};
+type ResultadoCalculoDisponibilidadeComDados =
+    ResultadoCalculoDisponibilidade & {
+        dados: DadosDisponibilidade;
+    };
+interface ProximaDataDisponivel {
+    data: string;
+    diaSemana: string;
+    horarios: string[];
 }
 
 interface CriarAgendamentoArgs {
@@ -256,14 +283,21 @@ const NEUTRAL_BARBER_IDENTITY_RULE =
 const BASE_SYSTEM_PROMPT = [
     'Você é EXCLUSIVAMENTE a assistente virtual de agendamentos da Barbearia.',
     'Sempre que cliente mencionar agendamento, reagendamento ou cancelamento, chame consultarAgendamento novamente antes de decidir a próxima ação.',
-    'Sempre que cliente perguntar sobre disponibilidade de horário, chame buscarHorariosDisponiveis novamente, mesmo que já tenha consultado antes na mesma conversa.',
+    'Sempre que cliente perguntar sobre disponibilidade de horário, chame buscarHorariosDisponiveis novamente, mesmo que já tenha consultado antes na mesma conversa, exceto ao escolher data e horário já retornados em proximasDatas para o mesmo serviço.',
     'Nunca afirme, sugira ou insinue disponibilidade para data ou horário sem retorno de buscarHorariosDisponiveis no mesmo turno, inclusive "temos disponibilidade a partir de [data]".',
     'No agendamento, colete nesta ordem: serviço, disponibilidade com servicoId, horário e nome completo.',
     'Se cliente informar horário antes do serviço, pergunte qual serviço deseja; depois chame buscarHorariosDisponiveis com o servicoId e só então valide ou ofereça o horário.',
-    'Nunca liste horários sem chamar buscarHorariosDisponiveis com servicoId no mesmo turno. A lista vale apenas para serviço e data consultados.',
-    'Após mudança de serviço ou data, consulte disponibilidade novamente. Nunca reutilize nem edite lista antiga. Após conflito, use somente alternativas retornadas pela tool; se lista vier vazia, consulte outra data após cliente escolher.',
-    'Nunca ofereça, sugira ou consulte como opção dia identificado como fechado no calendário. Se cliente pedir esse dia, informe que a barbearia não abre nele e pergunte qual outro dia prefere; não cite disponibilidade sem consultar buscarHorariosDisponiveis.',
-    'Se cliente responder "sim", "pode" ou equivalente a uma oferta para verificar outra data, pergunte apenas qual data prefere, sem sugerir datas.',
+    'Nunca liste horários sem chamar buscarHorariosDisponiveis com servicoId no mesmo turno. A lista vale somente para serviço e datas presentes no retorno daquela consulta.',
+    'Se buscarHorariosDisponiveis retornar proximasDatas, informe que a data pedida não tem horários e ofereça, na mesma mensagem, a primeira data retornada com seus horários. Pode mencionar as demais datas retornadas de forma resumida, apenas com data e dia da semana. Pergunte se algum horário serve ou se prefere outra data; não pergunte "qual outra data você prefere?" como resposta padrão.',
+    'Use somente datas, dias da semana e horários presentes no retorno da tool; nas alternativas, formate datas como DD/MM/AAAA e use o campo diaSemana. Nunca invente horários nem afirme disponibilidade que o retorno não trouxe.',
+    'Não afirme se dias entre data pedida e primeira data sugerida estão lotados ou fechados. Diga apenas que data pedida não tem horários e informe próximo dia com vaga.',
+    'Se cliente pedir uma data específica depois da sugestão, chame buscarHorariosDisponiveis normalmente para essa data.',
+    'Se cliente escolher data e horário já listados em proximasDatas para o mesmo serviço, não chame buscarHorariosDisponiveis de novo para essa opção. Se pedir outra data ou mudar serviço, siga fluxo normal e consulte novamente.',
+    'Após mudança de serviço ou data, consulte disponibilidade novamente, exceto quando cliente escolher data e horário já retornados em proximasDatas para o mesmo serviço. Nunca reutilize nem edite lista antiga fora desse retorno.',
+    'Após conflito de prepararAgendamento (HTTP 409), use somente alternativas retornadas; se lista de alternativas do conflito vier vazia, peça ao cliente outra data e só consulte depois da escolha.',
+    'Se retorno contiver semDisponibilidadeAteHorizonte=true, informe que não há horários para serviço até horizonteAte, formatado como DD/MM/AAAA, e siga regras existentes de encaminhamento ao barbeiro. Não crie regra nova de escalonamento nem prometa datas além do horizonte.',
+    'Nunca ofereça, sugira ou consulte como opção dia identificado como fechado no calendário. Se cliente pedir esse dia, chame buscarHorariosDisponiveis; se retorno trouxer proximasDatas ou semDisponibilidadeAteHorizonte, siga a regra correspondente. Sem esses campos, informe que a barbearia não abre nele e pergunte qual outro dia prefere. Nunca cite disponibilidade sem retorno da tool.',
+    'Se cliente responder "sim", "pode" ou equivalente a uma oferta explícita para verificar outra data, pergunte apenas qual data prefere, sem sugerir datas. Não use essa pergunta como resposta padrão quando buscarHorariosDisponiveis retornar proximasDatas.',
     'Nunca reutilize resposta antiga do histórico para inferir se cliente tem agendamento ativo, pois estado pode ter mudado no painel administrativo.',
     'Sempre responda em português brasileiro.',
     'Seja cordial, direta e breve.',
@@ -295,7 +329,7 @@ const BASE_SYSTEM_PROMPT = [
     'Nunca revele ao cliente qualquer identificador interno do sistema (servicoId, clienteId, agendamentoId ou qualquer código técnico). Se um agendamento falhar, explique o motivo em linguagem natural e peça para o cliente confirmar novamente o nome do serviço desejado, sem mencionar nenhum código.',
     'Ao falar de serviços com o cliente, identifique-os pelo nome; a duração e o preço retornados por buscarServicos podem ser informados quando úteis. IDs e códigos internos (cuid) só podem aparecer nos parâmetros de tools, nunca em texto ao cliente, nem entre parênteses.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
-    'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data ao cliente, diga dia da semana e dd/MM copiados da tabela ou do campo diaSemana das tools. Fora da tabela, use o número do dia informado pelo cliente.',
+    'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data retornada por uma tool, use o campo data, formate como DD/MM/AAAA e use diaSemana retornado. Para demais datas, use dia da semana e DD/MM/AAAA copiados da tabela ou o número do dia informado pelo cliente.',
     'Se cliente citar dia da semana e número incompatíveis, não peça desculpas: informe divergência e pergunte qual quis dizer. Sempre que cliente citar dia da semana, preencha diaDaSemana nas tools exatamente como ele falou; nunca deduza pela data.',
     'Se confirmarAgendamento retornar sucesso=false com instrucao, siga instrucao; nos demais casos, repasse exatamente mensagem retornada pela tool.',
     'Nunca diga que houve erro, problema ou falha de processamento, a menos que a tool diga isso. Nunca prometa ação futura, como "um instante", "vou refazer" ou "vou verificar".',
@@ -496,7 +530,7 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'buscarHorariosDisponiveis',
         description:
-            "Retorna horários livres em uma data para o serviço informado, considerando duração, funcionamento, agenda e bloqueios administrativos. servicoId é obrigatório; a lista vale somente para duração desse serviço. O retorno inclui serviço e duracaoMinutos e pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
+            "Retorna horários livres para serviço e data informados, considerando duração, funcionamento, agenda e bloqueios administrativos. servicoId é obrigatório; horários valem somente para duração desse serviço. Se não houver vagas na data, retorna proximasDatas com próximas datas livres para o mesmo serviço, dia da semana e primeiros horários. semDisponibilidadeAteHorizonte=true indica que não há vagas até horizonteAte. O retorno inclui serviço e duracaoMinutos e pode incluir 'bloqueios', cada um com 'inicio', 'fim' e 'motivo'. Se o horário pedido pelo cliente estiver dentro de um desses intervalos, informe educadamente que não está disponível e mencione o motivo antes de sugerir outro horário.",
         parametersJsonSchema: {
             type: 'object',
             properties: {
@@ -1619,24 +1653,45 @@ async function resolverServicoId(
     return (await resolverServico(servicoIdOuNome)).servico?.id ?? null;
 }
 
-async function calcularHorariosDisponiveis(
+function filtrarBloqueiosDoDia(
+    data: string,
+    bloqueios: BloqueiosDisponibilidade,
+): BloqueiosDisponibilidade {
+    const inicioDia = dateAtMinutesInBrasilia(data, 0);
+    const fimDia = dateAtMinutesInBrasilia(data, 24 * 60);
+    const diaSemana = DIAS_SEMANA.indexOf(diaDaSemanaEmBrasilia(data));
+
+    return bloqueios.filter((bloqueio) => {
+        if (bloqueio.recorrencia === 'SEMANAL') {
+            return bloqueio.diaSemana === diaSemana;
+        }
+
+        return (
+            bloqueio.dataHoraInicio !== null &&
+            bloqueio.dataHoraFim !== null &&
+            bloqueio.dataHoraInicio < fimDia &&
+            bloqueio.dataHoraFim > inicioDia
+        );
+    });
+}
+
+function calcularHorariosDisponiveisParaData(
     data: string,
     date: Date,
     configuracao: HorarioFuncionamentoConfig[],
     servico: ServicoParaDisponibilidade,
-): Promise<ResultadoCalculoDisponibilidade> {
+    agendamentos: AgendamentosDisponibilidade,
+    bloqueios: BloqueiosDisponibilidade,
+    agora: Date,
+    configuracaoAntecedencia: DadosDisponibilidade['configuracaoAntecedencia'],
+): ResultadoCalculoDisponibilidade {
     const horario = obterHorarioFuncionamento(configuracao, date);
     if (!horario) {
         return { horarios: [], bloqueios: [] };
     }
 
-    const allAgendamentos = await agendamentoRepository.listarTodos();
-    const bloqueios = await bloqueioRepository.listarTodos({
-        dataHoraInicio: dateAtMinutesInBrasilia(data, 0),
-        dataHoraFim: dateAtMinutesInBrasilia(data, 24 * 60),
-    });
     const targetDateKey = getDateKeyInBrasilia(date);
-    const intervals = allAgendamentos
+    const intervals = agendamentos
         .filter(
             (agendamento) => agendamento.status !== StatusAgendamento.CANCELADO,
         )
@@ -1660,10 +1715,12 @@ async function calcularHorariosDisponiveis(
             ? horario.limiteExtensaoMinutos
             : horario.horaFechamentoMinutos;
     const freeSlots: string[] = [];
-    const { minAntecedenciaMinutos, ofertaFolgaMinutos } =
-        getAgendamentoConfig();
     const earliestAllowedStart = new Date(
-        Date.now() + (minAntecedenciaMinutos + ofertaFolgaMinutos) * 60 * 1000,
+        agora.getTime() +
+            (configuracaoAntecedencia.minAntecedenciaMinutos +
+                configuracaoAntecedencia.ofertaFolgaMinutos) *
+                60 *
+                1000,
     );
 
     for (
@@ -1704,9 +1761,11 @@ async function calcularHorariosDisponiveis(
         }
     }
 
+    const bloqueiosDoDia = filtrarBloqueiosDoDia(data, bloqueios);
+
     return {
         horarios: freeSlots,
-        bloqueios: bloqueios.flatMap((bloqueio) => {
+        bloqueios: bloqueiosDoDia.flatMap((bloqueio) => {
             if (
                 bloqueio.escopo === 'SO_PAINEL' ||
                 bloqueio.dataHoraInicio === null ||
@@ -1724,6 +1783,129 @@ async function calcularHorariosDisponiveis(
             ];
         }),
     };
+}
+
+async function carregarDadosDisponibilidade(
+    bloqueiosSnapshot?: BloqueiosDisponibilidade,
+): Promise<DadosDisponibilidade> {
+    const [agendamentos, bloqueios] = await Promise.all([
+        agendamentoRepository.listarTodos(),
+        bloqueiosSnapshot === undefined
+            ? bloqueioRepository.listarTodos()
+            : Promise.resolve(bloqueiosSnapshot),
+    ]);
+    const { minAntecedenciaMinutos, ofertaFolgaMinutos } =
+        getAgendamentoConfig();
+
+    return {
+        agendamentos,
+        bloqueios,
+        agora: new Date(),
+        configuracaoAntecedencia: {
+            minAntecedenciaMinutos,
+            ofertaFolgaMinutos,
+        },
+    };
+}
+
+async function calcularHorariosDisponiveis(
+    data: string,
+    date: Date,
+    configuracao: HorarioFuncionamentoConfig[],
+    servico: ServicoParaDisponibilidade,
+    options: {
+        dados?: DadosDisponibilidade;
+        bloqueiosSnapshot?: BloqueiosDisponibilidade;
+    } = {},
+): Promise<ResultadoCalculoDisponibilidadeComDados> {
+    const dados =
+        options.dados ??
+        (await carregarDadosDisponibilidade(options.bloqueiosSnapshot));
+    const resultado = await calcularHorariosDisponiveisParaData(
+        data,
+        date,
+        configuracao,
+        servico,
+        dados.agendamentos,
+        dados.bloqueios,
+        dados.agora,
+        dados.configuracaoAntecedencia,
+    );
+
+    return { ...resultado, dados };
+}
+
+function buscarProximasDatasDisponiveisPuro(
+    dataPedida: string,
+    horizonteAte: string,
+    configuracao: HorarioFuncionamentoConfig[],
+    servico: ServicoParaDisponibilidade,
+    dados: DadosDisponibilidade,
+): ProximaDataDisponivel[] {
+    const proximasDatas: ProximaDataDisponivel[] = [];
+
+    for (
+        let data = somarDiasAChaveData(dataPedida, 1);
+        data <= horizonteAte && proximasDatas.length < LIMITE_PROXIMAS_DATAS;
+        data = somarDiasAChaveData(data, 1)
+    ) {
+        const date = parseDateOnly(data);
+        if (!date || !isWorkingDay(configuracao, date)) {
+            continue;
+        }
+
+        if (
+            calcularPeriodoBloqueado(data, configuracao, dados.bloqueios)
+                .bloqueado
+        ) {
+            continue;
+        }
+
+        const resultado = calcularHorariosDisponiveisParaData(
+            data,
+            date,
+            configuracao,
+            servico,
+            dados.agendamentos,
+            dados.bloqueios,
+            dados.agora,
+            dados.configuracaoAntecedencia,
+        );
+        if (resultado.horarios.length === 0) {
+            continue;
+        }
+
+        proximasDatas.push({
+            data,
+            diaSemana: nomeDiaDaSemana(diaDaSemanaEmBrasilia(data)),
+            horarios: resultado.horarios.slice(0, LIMITE_HORARIOS_POR_DATA),
+        });
+    }
+
+    return proximasDatas;
+}
+
+async function buscarProximasDatasDisponiveis(
+    dataPedida: string,
+    horizonteAte: string,
+    configuracao: HorarioFuncionamentoConfig[],
+    servico: ServicoParaDisponibilidade,
+    options: {
+        dados?: DadosDisponibilidade;
+        bloqueiosSnapshot?: BloqueiosDisponibilidade;
+    } = {},
+): Promise<ProximaDataDisponivel[]> {
+    const dados =
+        options.dados ??
+        (await carregarDadosDisponibilidade(options.bloqueiosSnapshot));
+
+    return buscarProximasDatasDisponiveisPuro(
+        dataPedida,
+        horizonteAte,
+        configuracao,
+        servico,
+        dados,
+    );
 }
 
 function resultadoBuscaSemServico(
@@ -1813,6 +1995,9 @@ async function buscarHorariosDisponiveisTool(
           mensagem?: string;
           instrucao?: string;
           opcoes?: [OpcaoDataDia, OpcaoDataDia];
+          proximasDatas?: ProximaDataDisponivel[];
+          semDisponibilidadeAteHorizonte?: true;
+          horizonteAte?: string;
       }
 > {
     const servicoId = args.servicoId?.trim();
@@ -1945,6 +2130,10 @@ async function buscarHorariosDisponiveisTool(
         }
     }
 
+    const bloqueiosSnapshot = Array.isArray(bloqueios)
+        ? (bloqueios as BloqueiosDisponibilidade)
+        : undefined;
+
     const servico = (await servicoRepository.listarTodos()).find(
         (item) => item.id === servicoId,
     );
@@ -1957,32 +2146,56 @@ async function buscarHorariosDisponiveisTool(
 
     configuracao ??= await carregarConfiguracao();
 
-    if (!isWorkingDay(configuracao, date)) {
-        return {
-            data: args.data,
-            diaSemana: nomeDiaDaSemana(diaReal),
-            horarios: [],
-            bloqueios: [],
-            servico: servico.nome,
-            duracaoMinutos: servico.duracaoMinutos,
-            observacao:
-                'A barbearia funciona de segunda a sexta, das 09h às 20h, e sábado, das 08h às 17h.',
-        };
-    }
-    const resultado = await calcularHorariosDisponiveis(
-        args.data,
-        date,
-        configuracao,
-        servico,
-    );
+    let dadosCalculo: DadosDisponibilidade | undefined;
+    let resultado: ResultadoCalculoDisponibilidade = {
+        horarios: [],
+        bloqueios: [],
+    };
+    let observacao: string | undefined;
 
-    return {
+    if (isWorkingDay(configuracao, date)) {
+        const calculo = await calcularHorariosDisponiveis(
+            args.data,
+            date,
+            configuracao,
+            servico,
+            { bloqueiosSnapshot },
+        );
+        resultado = calculo;
+        dadosCalculo = calculo.dados;
+    } else {
+        observacao =
+            'A barbearia funciona de segunda a sexta, das 09h às 20h, e sábado, das 08h às 17h.';
+    }
+
+    const resposta = {
         data: args.data,
         diaSemana: nomeDiaDaSemana(diaReal),
         horarios: resultado.horarios,
         bloqueios: resultado.bloqueios,
         servico: servico.nome,
         duracaoMinutos: servico.duracaoMinutos,
+        ...(observacao ? { observacao } : {}),
+    };
+
+    if (resultado.horarios.length > 0) {
+        return resposta;
+    }
+
+    const proximasDatas = await buscarProximasDatasDisponiveis(
+        args.data,
+        horizonteAte,
+        configuracao,
+        servico,
+        { dados: dadosCalculo, bloqueiosSnapshot },
+    );
+
+    return {
+        ...resposta,
+        proximasDatas,
+        ...(proximasDatas.length === 0
+            ? { semDisponibilidadeAteHorizonte: true as const, horizonteAte }
+            : {}),
     };
 }
 
@@ -3815,6 +4028,11 @@ export const __testables = {
         repository: PendingAgendamentoRepository,
     ): void => setPendingAgendamentoRepository(repository),
     buscarHorariosDisponiveisTool,
+    calcularHorariosDisponiveisParaData,
+    buscarProximasDatasDisponiveis,
+    buscarProximasDatasDisponiveisPuro,
+    LIMITE_PROXIMAS_DATAS,
+    LIMITE_HORARIOS_POR_DATA,
     buildSystemPrompt,
     functionDeclarations,
     atualizarMarcadorResumoEnviado,
