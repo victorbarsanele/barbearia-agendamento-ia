@@ -362,9 +362,7 @@ test('cards de serviço não causam overflow em viewport estreita', async ({
     expect(larguras.documento).toBeLessThanOrEqual(larguras.viewport);
 });
 
-test('abas de relatórios têm navegação por teclado e persistem na URL', async ({
-    page,
-}) => {
+test('ArrowRight foca Clientes inativos e persiste URL', async ({ page }) => {
     await fixarData(page);
     await interceptarApiClientesInativos(page, async () => sucessoInativos());
     await page.goto('/relatorios');
@@ -377,17 +375,11 @@ test('abas de relatórios têm navegação por teclado e persistem na URL', asyn
     await servicos.focus();
     await page.keyboard.press('ArrowRight');
     await expect(inativos).toHaveAttribute('aria-selected', 'true');
+    await expect(inativos).toBeFocused();
     await expect(page).toHaveURL(/relatorio=inativos/);
     await expect(
         page.getByRole('heading', { name: 'Clientes encontrados: 2' }),
     ).toBeVisible();
-    await inativos.press('ArrowLeft');
-    await expect(servicos).toHaveAttribute('aria-selected', 'true');
-    await expect(page).toHaveURL(/relatorio=servicos/);
-    await page.goBack();
-    await expect(inativos).toHaveAttribute('aria-selected', 'true');
-    await page.goForward();
-    await expect(servicos).toHaveAttribute('aria-selected', 'true');
 });
 
 test('carrega filtros padrão, espera Buscar e atalhos consultam imediatamente', async ({

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Download, Search } from 'lucide-react';
 import { ClientesInativosTab } from '../components/ClientesInativosTab';
+import { SaldoPacotesTab } from '../components/SaldoPacotesTab';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -403,27 +404,31 @@ function AtendimentosTab() {
     );
 }
 
-type AbaRelatorio = 'servicos' | 'inativos';
+type AbaRelatorio = 'servicos' | 'inativos' | 'pacotes';
 
-const abas: { id: AbaRelatorio; label: string }[] = [
-    { id: 'servicos', label: 'Atendimentos por serviço' },
-    { id: 'inativos', label: 'Clientes inativos' },
+const abas: { id: AbaRelatorio; label: string; labelMobile: string }[] = [
+    {
+        id: 'servicos',
+        label: 'Atendimentos por serviço',
+        labelMobile: 'Atendimentos',
+    },
+    { id: 'inativos', label: 'Clientes inativos', labelMobile: 'Inativos' },
+    { id: 'pacotes', label: 'Pacotes', labelMobile: 'Pacotes' },
 ];
 
 export function RelatoriosPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const botoesAbas = useRef<Array<HTMLButtonElement | null>>([]);
+    const abaParam = searchParams.get('relatorio');
     const abaAtiva: AbaRelatorio =
-        searchParams.get('relatorio') === 'inativos' ? 'inativos' : 'servicos';
+        abaParam === 'inativos' || abaParam === 'pacotes'
+            ? abaParam
+            : 'servicos';
 
-    const selecionarAba = (aba: AbaRelatorio, focar = false) => {
+    const selecionarAba = (aba: AbaRelatorio) => {
         const parametros = new URLSearchParams(searchParams);
         parametros.set('relatorio', aba);
         setSearchParams(parametros);
-        if (focar) {
-            const indice = abas.findIndex((item) => item.id === aba);
-            requestAnimationFrame(() => botoesAbas.current[indice]?.focus());
-        }
     };
 
     const navegarAbas = (
@@ -442,7 +447,8 @@ export function RelatoriosPage() {
         }
         if (proximoIndice !== null) {
             event.preventDefault();
-            selecionarAba(abas[proximoIndice].id, true);
+            botoesAbas.current[proximoIndice]?.focus();
+            selecionarAba(abas[proximoIndice].id);
         }
     };
 
@@ -452,9 +458,8 @@ export function RelatoriosPage() {
                 variant="list"
                 title="Relatórios"
                 subtitle={
-                    abaAtiva === 'inativos'
-                        ? 'Clientes inativos'
-                        : 'Atendimentos por serviço'
+                    abas.find((aba) => aba.id === abaAtiva)?.label ??
+                    'Atendimentos por serviço'
                 }
             />
             <div
@@ -472,13 +477,15 @@ export function RelatoriosPage() {
                         type="button"
                         role="tab"
                         aria-selected={abaAtiva === aba.id}
+                        aria-label={aba.label}
                         aria-controls="relatorio-tabpanel"
                         tabIndex={abaAtiva === aba.id ? 0 : -1}
                         onClick={() => selecionarAba(aba.id)}
                         onKeyDown={(event) => navegarAbas(event, indice)}
                         className={`min-h-11 shrink-0 border-b-2 px-3 text-sm font-semibold transition sm:px-4 ${abaAtiva === aba.id ? 'border-[var(--color-gold)] text-[var(--color-gold)]' : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'}`}
                     >
-                        {aba.label}
+                        <span className="sm:hidden">{aba.labelMobile}</span>
+                        <span className="hidden sm:inline">{aba.label}</span>
                     </button>
                 ))}
             </div>
@@ -488,11 +495,9 @@ export function RelatoriosPage() {
                 aria-labelledby={`relatorio-tab-${abaAtiva}`}
                 tabIndex={0}
             >
-                {abaAtiva === 'inativos' ? (
-                    <ClientesInativosTab />
-                ) : (
-                    <AtendimentosTab />
-                )}
+                {abaAtiva === 'inativos' && <ClientesInativosTab />}
+                {abaAtiva === 'pacotes' && <SaldoPacotesTab />}
+                {abaAtiva === 'servicos' && <AtendimentosTab />}
             </div>
         </main>
     );
