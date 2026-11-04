@@ -10,6 +10,7 @@ export default defineConfig({
         '**/horizonteAgenda.spec.ts',
         '**/bottom-sheet.spec.ts',
         '**/relatorios.spec.ts',
+        '**/saldoPacotes.spec.ts',
     ],
     fullyParallel: true,
     workers: process.env.CI ? 1 : 2,

@@ -95,12 +95,108 @@ const respostaClientesInativosSchema = {
                     nome: { type: 'string' },
                     telefone: { type: 'string' },
                     ultimaVisita: { type: 'string', format: 'date' },
-                    diasSemVir: { type: 'integer', minimum: 0 },
+                    diasSemVir: { type: 'integer' },
                     ultimoServico: {
                         anyOf: [{ type: 'string' }, { type: 'null' }],
                     },
                     totalVisitas: { type: 'integer', minimum: 1 },
                     pacoteAtivoComSaldo: { type: 'boolean' },
+                },
+            },
+        },
+    },
+};
+
+const respostaSaldoPacotesSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+        'geradoEm',
+        'filtro',
+        'totalAtivos',
+        'totalParados',
+        'total',
+        'truncado',
+        'itens',
+    ],
+    properties: {
+        geradoEm: { type: 'string', format: 'date-time' },
+        filtro: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['diasParado', 'somenteParados'],
+            properties: {
+                diasParado: { type: 'integer', minimum: 1, maximum: 365 },
+                somenteParados: { type: 'boolean' },
+            },
+        },
+        totalAtivos: { type: 'integer', minimum: 0 },
+        totalParados: { type: 'integer', minimum: 0 },
+        total: { type: 'integer', minimum: 0 },
+        truncado: { type: 'boolean' },
+        itens: {
+            type: 'array',
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                    'pacoteClienteId',
+                    'clienteId',
+                    'nome',
+                    'telefone',
+                    'pacoteNome',
+                    'dataInicio',
+                    'ultimaVisita',
+                    'semVisita',
+                    'diasSemVir',
+                    'temHorarioMarcado',
+                    'parado',
+                    'totalRestante',
+                    'totalAgendados',
+                    'aConcluir',
+                    'servicos',
+                ],
+                properties: {
+                    pacoteClienteId: { type: 'string' },
+                    clienteId: { type: 'string' },
+                    nome: { type: 'string' },
+                    telefone: { type: 'string' },
+                    pacoteNome: { type: 'string' },
+                    dataInicio: { type: 'string', format: 'date' },
+                    ultimaVisita: {
+                        anyOf: [
+                            { type: 'string', format: 'date' },
+                            { type: 'null' },
+                        ],
+                    },
+                    semVisita: { type: 'boolean' },
+                    diasSemVir: { type: 'integer', minimum: 0 },
+                    temHorarioMarcado: { type: 'boolean' },
+                    parado: { type: 'boolean' },
+                    totalRestante: { type: 'integer' },
+                    totalAgendados: { type: 'integer', minimum: 0 },
+                    aConcluir: { type: 'integer', minimum: 0 },
+                    servicos: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            required: [
+                                'servicoId',
+                                'nome',
+                                'total',
+                                'restante',
+                                'agendados',
+                            ],
+                            properties: {
+                                servicoId: { type: 'string' },
+                                nome: { type: 'string' },
+                                total: { type: 'integer' },
+                                restante: { type: 'integer' },
+                                agendados: { type: 'integer', minimum: 0 },
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -147,5 +243,29 @@ export async function relatorioRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         relatorioController.listarClientesInativos,
+    );
+
+    app.get(
+        '/relatorios/saldo-pacotes',
+        {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        diasParado: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 365,
+                        },
+                        somenteParados: { type: 'boolean' },
+                    },
+                },
+                response: {
+                    200: respostaSaldoPacotesSchema,
+                },
+            },
+        },
+        relatorioController.listarSaldoPacotes,
     );
 }

@@ -41,6 +41,42 @@ export interface RelatorioClientesInativos {
     itens: ItemClienteInativo[];
 }
 
+export interface ServicoSaldoPacote {
+    servicoId: string;
+    nome: string;
+    total: number;
+    restante: number;
+    agendados: number;
+}
+
+export interface ItemSaldoPacote {
+    pacoteClienteId: string;
+    clienteId: string;
+    nome: string;
+    telefone: string;
+    pacoteNome: string;
+    dataInicio: string;
+    ultimaVisita: string | null;
+    semVisita: boolean;
+    diasSemVir: number;
+    temHorarioMarcado: boolean;
+    parado: boolean;
+    totalRestante: number;
+    totalAgendados: number;
+    aConcluir: number;
+    servicos: ServicoSaldoPacote[];
+}
+
+export interface RelatorioSaldoPacotes {
+    geradoEm: string;
+    filtro: { diasParado: number; somenteParados: boolean };
+    totalAtivos: number;
+    totalParados: number;
+    total: number;
+    truncado: boolean;
+    itens: ItemSaldoPacote[];
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
         const body = (await response
@@ -79,4 +115,18 @@ export async function buscarClientesInativos(
         `/api/relatorios/clientes-inativos?${parametros.toString()}`,
     );
     return handleResponse<RelatorioClientesInativos>(response);
+}
+
+export async function buscarSaldoPacotes(
+    diasParado: number,
+    somenteParados: boolean,
+): Promise<RelatorioSaldoPacotes> {
+    const parametros = new URLSearchParams({
+        diasParado: String(diasParado),
+        somenteParados: String(somenteParados),
+    });
+    const response = await apiFetch(
+        `/api/relatorios/saldo-pacotes?${parametros.toString()}`,
+    );
+    return handleResponse<RelatorioSaldoPacotes>(response);
 }

@@ -43,6 +43,21 @@ export interface RelatorioClientesInativos {
     itens: relatorioRepository.ItemClienteInativo[];
 }
 
+export interface FiltroSaldoPacotes {
+    diasParado?: number;
+    somenteParados?: boolean;
+}
+
+export interface RelatorioSaldoPacotes {
+    geradoEm: string;
+    filtro: { diasParado: number; somenteParados: boolean };
+    totalAtivos: number;
+    totalParados: number;
+    total: number;
+    truncado: boolean;
+    itens: relatorioRepository.ItemSaldoPacote[];
+}
+
 function validarDiasInativos(diasMin: number, diasMax: number): void {
     if (!Number.isInteger(diasMin) || diasMin < 1 || diasMin > 365) {
         throw new AppError('diasMin deve ser um inteiro entre 1 e 365.', 400);
@@ -52,6 +67,21 @@ function validarDiasInativos(diasMin: number, diasMax: number): void {
             'diasMax deve ser um inteiro entre diasMin e 730.',
             400,
         );
+    }
+}
+
+function validarFiltroSaldoPacotes(
+    diasParado: number,
+    somenteParados: unknown,
+): void {
+    if (!Number.isInteger(diasParado) || diasParado < 1 || diasParado > 365) {
+        throw new AppError(
+            'diasParado deve ser um inteiro entre 1 e 365.',
+            400,
+        );
+    }
+    if (typeof somenteParados !== 'boolean') {
+        throw new AppError('somenteParados deve ser booleano.', 400);
     }
 }
 
@@ -96,6 +126,30 @@ export async function buscarClientesInativos(
         total: resultado.total,
         truncado: resultado.total > resultado.itens.length,
         itens: resultado.itens,
+    };
+}
+
+export async function buscarSaldoPacotes(
+    filtro: FiltroSaldoPacotes = {},
+    agora = new Date(),
+): Promise<RelatorioSaldoPacotes> {
+    const diasParado = filtro.diasParado === undefined ? 7 : filtro.diasParado;
+    const somenteParados =
+        filtro.somenteParados === undefined ? false : filtro.somenteParados;
+    validarFiltroSaldoPacotes(diasParado, somenteParados);
+
+    const resultado = await relatorioRepository.listarSaldoPacotes(
+        agora,
+        chaveDataEmBrasilia(agora),
+        diasParado,
+        somenteParados,
+    );
+
+    return {
+        geradoEm: agora.toISOString(),
+        filtro: { diasParado, somenteParados },
+        ...resultado,
+        truncado: resultado.total > resultado.itens.length,
     };
 }
 

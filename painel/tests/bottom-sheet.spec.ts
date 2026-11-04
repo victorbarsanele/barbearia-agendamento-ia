@@ -50,10 +50,11 @@ test('menu Mais abre bottom sheet e fecha por todas as interações', async ({
         }),
     ).toBeVisible();
     const itensMenu = sheet.locator('div.space-y-2 > button');
-    await expect(itensMenu).toHaveCount(6);
+    await expect(itensMenu).toHaveCount(7);
     await expect(itensMenu.nth(3)).toContainText('Horários');
     await expect(itensMenu.nth(4)).toContainText('Horizonte da agenda');
     await expect(itensMenu.nth(5)).toContainText('Números ignorados');
+    await expect(itensMenu.nth(6)).toContainText('Relatórios');
     await expect(
         sheet.getByRole('button', { name: 'Sair', exact: true }),
     ).toBeVisible();
