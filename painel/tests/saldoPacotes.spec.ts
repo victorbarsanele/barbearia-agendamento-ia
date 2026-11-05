@@ -242,7 +242,7 @@ test('Home foca Atendimentos e atualiza URL', async ({ page }) => {
     await expect(page).toHaveURL(/relatorio=servicos/);
 });
 
-test('End foca Pacotes e atualiza URL', async ({ page }) => {
+test('End foca Origem e atualiza URL', async ({ page }) => {
     await interceptarApi(page, async () => ({
         status: 200,
         body: relatorioPadrao(),
@@ -251,13 +251,13 @@ test('End foca Pacotes e atualiza URL', async ({ page }) => {
     await page.getByRole('tab', { name: 'Atendimentos por serviço' }).focus();
     await page.keyboard.press('End');
 
-    const pacotes = page.getByRole('tab', { name: 'Pacotes' });
-    await expect(pacotes).toHaveAttribute('aria-selected', 'true');
-    await expect(pacotes).toBeFocused();
-    await expect(page).toHaveURL(/relatorio=pacotes/);
+    const origem = page.getByRole('tab', { name: 'Origem dos agendamentos' });
+    await expect(origem).toHaveAttribute('aria-selected', 'true');
+    await expect(origem).toBeFocused();
+    await expect(page).toHaveURL(/relatorio=origem/);
 });
 
-test('mostra três rótulos curtos no celular sem overflow horizontal da página', async ({
+test('mostra quatro rótulos curtos no celular sem overflow horizontal da página', async ({
     page,
 }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -276,6 +276,9 @@ test('mostra três rótulos curtos no celular sem overflow horizontal da página
     await expect(page.getByRole('tab', { name: 'Pacotes' })).toContainText(
         'Pacotes',
     );
+    await expect(
+        page.getByRole('tab', { name: 'Origem dos agendamentos' }),
+    ).toContainText('Origem');
     const larguras = await page.evaluate(() => ({
         viewport: document.documentElement.clientWidth,
         documento: document.documentElement.scrollWidth,

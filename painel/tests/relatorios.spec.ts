@@ -20,6 +20,26 @@ interface RelatorioMock {
     };
 }
 
+type OrigemRelatorioMock = 'WHATSAPP_IA' | 'PAINEL' | 'NAO_INFORMADO';
+
+interface RelatorioOrigemMock {
+    de: string;
+    ate: string;
+    total: number;
+    origens: {
+        origem: OrigemRelatorioMock;
+        total: number;
+        ativos: number;
+        cancelados: number;
+        percentual: number;
+    }[];
+}
+
+interface OpcoesInterceptacaoApi {
+    chamadasOrigem?: string[];
+    responderOrigem?: (chamada: number, route: Route) => Promise<RespostaMock>;
+}
+
 interface RespostaMock {
     status: number;
     body: unknown;
@@ -111,9 +131,39 @@ const relatorioComDados: RelatorioMock = {
     total: { quantidade: 3, valorEstimado: '135.00', semPreco: 1 },
 };
 
+const relatorioOrigemComDados: RelatorioOrigemMock = {
+    de: '2026-03-01',
+    ate: '2026-03-15',
+    total: 10,
+    origens: [
+        {
+            origem: 'WHATSAPP_IA',
+            total: 5,
+            ativos: 4,
+            cancelados: 1,
+            percentual: 50,
+        },
+        {
+            origem: 'PAINEL',
+            total: 3,
+            ativos: 2,
+            cancelados: 1,
+            percentual: 30,
+        },
+        {
+            origem: 'NAO_INFORMADO',
+            total: 2,
+            ativos: 2,
+            cancelados: 0,
+            percentual: 20,
+        },
+    ],
+};
+
 async function interceptarApi(
     page: Page,
     resposta: (chamada: number, route: Route) => Promise<RespostaMock>,
+    opcoes: OpcoesInterceptacaoApi = {},
 ): Promise<string[]> {
     const chamadas: string[] = [];
 
@@ -125,6 +175,23 @@ async function interceptarApi(
             await route.fulfill({
                 status: 200,
                 json: { username: 'e2e', role: 'admin' },
+            });
+            return;
+        }
+
+        if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/relatorios/origem-agendamentos' &&
+            opcoes.responderOrigem
+        ) {
+            opcoes.chamadasOrigem?.push(url.href);
+            const resultado = await opcoes.responderOrigem(
+                opcoes.chamadasOrigem?.length ?? 1,
+                route,
+            );
+            await route.fulfill({
+                status: resultado.status,
+                json: resultado.body,
             });
             return;
         }
@@ -230,6 +297,221 @@ function sucesso(relatorio: RelatorioMock = relatorioComDados): RespostaMock {
 async function fixarData(page: Page): Promise<void> {
     await page.clock.install({ time: new Date('2026-03-15T15:00:00.000Z') });
 }
+
+function sucessoOrigem(
+    relatorio: RelatorioOrigemMock = relatorioOrigemComDados,
+): RespostaMock {
+    return { status: 200, body: relatorio };
+}
+
+test('a quarta aba carrega sob demanda após clique com o período padrão', async ({
+    page,
+}) => {
+    await fixarData(page);
+    const chamadasOrigem: string[] = [];
+    await interceptarApi(page, async () => sucesso(), {
+        chamadasOrigem,
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios');
+
+    const abas = page.getByRole('tab');
+    await expect(abas).toHaveCount(4);
+    await expect(abas.nth(3)).toHaveAccessibleName('Origem dos agendamentos');
+    await expect(
+        page.getByRole('heading', { name: 'Resultado' }),
+    ).toBeVisible();
+    expect(chamadasOrigem).toHaveLength(0);
+
+    await page.getByRole('tab', { name: 'Origem dos agendamentos' }).click();
+    await expect(
+        page.getByText(
+            'Agendamentos criados no período, por canal de criação. Cada horário de lote ou pacote conta como um agendamento. Registros anteriores ao recurso aparecem como Não informado.',
+        ),
+    ).toBeVisible();
+    await expect.poll(() => chamadasOrigem.length).toBe(1);
+    const url = new URL(chamadasOrigem[0]);
+    expect(url.searchParams.get('de')).toBe(
+        await page.getByLabel('Data inicial').inputValue(),
+    );
+    expect(url.searchParams.get('ate')).toBe(
+        await page.getByLabel('Data final').inputValue(),
+    );
+});
+
+test('End seleciona a aba Origem dos agendamentos', async ({ page }) => {
+    await interceptarApi(page, async () => sucesso(), {
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios');
+    const atendimentos = page.getByRole('tab', {
+        name: 'Atendimentos por serviço',
+    });
+    await atendimentos.focus();
+    await page.keyboard.press('End');
+
+    const origem = page.getByRole('tab', { name: 'Origem dos agendamentos' });
+    await expect(origem).toHaveAttribute('aria-selected', 'true');
+    await expect(origem).toBeFocused();
+    await expect(page).toHaveURL(/relatorio=origem/);
+    await expect(
+        page.getByText('WhatsApp (IA)', { exact: true }).first(),
+    ).toBeVisible();
+});
+
+test('mostra origens, percentuais e total geral', async ({ page }) => {
+    await fixarData(page);
+    await interceptarApi(page, async () => sucesso(), {
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios?relatorio=origem');
+
+    const tabela = page.getByRole('table');
+    await expect(tabela.getByText('WhatsApp (IA)')).toBeVisible();
+    await expect(tabela.getByText('Painel')).toBeVisible();
+    await expect(tabela.getByText('Não informado')).toBeVisible();
+    await expect(tabela.getByText('50,0%')).toBeVisible();
+    await expect(tabela.getByText('30,0%')).toBeVisible();
+    await expect(tabela.getByText('20,0%')).toBeVisible();
+    const total = tabela.getByRole('row').filter({ hasText: 'Total geral' });
+    await expect(total).toContainText('10');
+    await expect(total).toContainText('8');
+    await expect(total).toContainText('2');
+    await expect(total).toContainText('100,0%');
+});
+
+test('mostra vazio e desabilita exportação sem agendamentos', async ({
+    page,
+}) => {
+    await interceptarApi(page, async () => sucesso(), {
+        responderOrigem: async () =>
+            sucessoOrigem({
+                ...relatorioOrigemComDados,
+                total: 0,
+                origens: relatorioOrigemComDados.origens.map((item) => ({
+                    ...item,
+                    total: 0,
+                    ativos: 0,
+                    cancelados: 0,
+                    percentual: 0,
+                })),
+            }),
+    });
+    await page.goto('/relatorios?relatorio=origem');
+
+    await expect(
+        page.getByText('Nenhum agendamento criado no período.'),
+    ).toBeVisible();
+    await expect(
+        page.getByRole('button', { name: 'Exportar CSV' }),
+    ).toBeDisabled();
+    await expect(page.getByRole('table')).toHaveCount(0);
+});
+
+for (const status of [500, 401]) {
+    test(`mostra erro ${status} e permite tentar novamente`, async ({
+        page,
+    }) => {
+        let chamadas = 0;
+        await interceptarApi(page, async () => sucesso(), {
+            responderOrigem: async () => {
+                chamadas += 1;
+                return chamadas === 1
+                    ? {
+                          status,
+                          body: { message: 'Relatório indisponível.' },
+                      }
+                    : sucessoOrigem();
+            },
+        });
+        await page.goto('/relatorios?relatorio=origem');
+
+        await expect(page.getByRole('alert')).toContainText(
+            'Relatório indisponível.',
+        );
+        await page.getByRole('button', { name: 'Tentar novamente' }).click();
+        await expect(
+            page.getByText(
+                'Agendamentos criados no período, por canal de criação. Cada horário de lote ou pacote conta como um agendamento. Registros anteriores ao recurso aparecem como Não informado.',
+            ),
+        ).toBeVisible();
+        expect(chamadas).toBe(2);
+    });
+}
+
+test('exporta CSV do relatório de origem com período e totais', async ({
+    page,
+}) => {
+    await fixarData(page);
+    await interceptarApi(page, async () => sucesso(), {
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios?relatorio=origem');
+    await expect(page.getByRole('table')).toBeVisible();
+
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Exportar CSV' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(
+        'origem_agendamentos_2026-03-01_a_2026-03-15.csv',
+    );
+    const caminho = await download.path();
+    if (!caminho) throw new Error('Arquivo CSV não foi disponibilizado.');
+    const conteudo = await readFile(caminho, 'utf8');
+    expect(conteudo.charCodeAt(0)).toBe(0xfeff);
+    expect(conteudo).toContain('Origem;Criados;Ativos;Cancelados;% do total');
+    expect(conteudo).toContain('WhatsApp (IA);5;4;1;50,0%');
+    expect(conteudo).toContain('TOTAL;10;8;2;100,0%');
+});
+
+test('valida período invertido e acima de 366 dias sem nova chamada', async ({
+    page,
+}) => {
+    const chamadasOrigem: string[] = [];
+    await interceptarApi(page, async () => sucesso(), {
+        chamadasOrigem,
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios?relatorio=origem');
+    await expect(page.getByRole('table')).toBeVisible();
+    expect(chamadasOrigem).toHaveLength(1);
+
+    await page.getByLabel('Data inicial').fill('2026-03-16');
+    await page.getByLabel('Data final').fill('2026-03-15');
+    await page.getByRole('button', { name: 'Buscar' }).click();
+    await expect(page.getByRole('alert')).toContainText(
+        'A data inicial deve ser anterior ou igual à data final.',
+    );
+    expect(chamadasOrigem).toHaveLength(1);
+
+    await page.getByLabel('Data inicial').fill('2025-01-01');
+    await page.getByLabel('Data final').fill('2026-01-02');
+    await page.getByRole('button', { name: 'Buscar' }).click();
+    await expect(page.getByRole('alert')).toContainText(
+        'O período não pode ultrapassar 366 dias.',
+    );
+    expect(chamadasOrigem).toHaveLength(1);
+});
+
+test('cartões da aba Origem não causam overflow a 390px', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await interceptarApi(page, async () => sucesso(), {
+        responderOrigem: async () => sucessoOrigem(),
+    });
+    await page.goto('/relatorios?relatorio=origem');
+
+    await expect(
+        page.getByRole('heading', { name: 'WhatsApp (IA)' }),
+    ).toBeVisible();
+    await expect(
+        page.getByRole('heading', { name: 'Total geral' }),
+    ).toBeVisible();
+    const larguras = await page.evaluate(() => ({
+        viewport: document.documentElement.clientWidth,
+        documento: document.documentElement.scrollWidth,
+    }));
+    expect(larguras.documento).toBeLessThanOrEqual(larguras.viewport);
+});
 
 test('carrega o mês atual em horário de São Paulo e mostra totais', async ({
     page,

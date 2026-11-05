@@ -2,8 +2,11 @@ import { expect, test } from '@playwright/test';
 import {
     calcularPeriodoAtalho,
     formatarDataRelatorio,
+    formatarPercentualOrigem,
     formatarValorEstimado,
     montarCsvAtendimentos,
+    montarCsvOrigemAgendamentos,
+    nomeArquivoCsvOrigemAgendamentos,
     validarIntervaloRelatorio,
 } from '../src/utils/relatorios.js';
 import {
@@ -17,6 +20,7 @@ import {
 import type { ItemClienteInativo } from '../src/services/relatorios.service.js';
 import type {
     ItemSaldoPacote,
+    RelatorioOrigemAgendamentos,
     RelatorioSaldoPacotes,
 } from '../src/services/relatorios.service.js';
 import {
@@ -353,6 +357,80 @@ test.describe('helpers de relatórios', () => {
     test('formata BRL só para exibição e null como traço', () => {
         expect(formatarValorEstimado('123.50')).toBe('R$ 123,50');
         expect(formatarValorEstimado(null)).toBe('—');
+    });
+
+    test('formata percentual de origem com vírgula e uma casa decimal', () => {
+        expect(formatarPercentualOrigem(37.5)).toBe('37,5%');
+        expect(formatarPercentualOrigem(25)).toBe('25,0%');
+    });
+
+    test('monta CSV de origem com colunas, ordem fixa, totais e BOM', () => {
+        const relatorio: RelatorioOrigemAgendamentos = {
+            de: '2026-03-01',
+            ate: '2026-03-15',
+            total: 8,
+            origens: [
+                {
+                    origem: 'WHATSAPP_IA',
+                    total: 3,
+                    ativos: 2,
+                    cancelados: 1,
+                    percentual: 37.5,
+                },
+                {
+                    origem: 'PAINEL',
+                    total: 2,
+                    ativos: 1,
+                    cancelados: 1,
+                    percentual: 25,
+                },
+                {
+                    origem: 'NAO_INFORMADO',
+                    total: 3,
+                    ativos: 3,
+                    cancelados: 0,
+                    percentual: 37.5,
+                },
+            ],
+        };
+        const csv = montarCsvOrigemAgendamentos(relatorio);
+
+        expect(csv.charCodeAt(0)).toBe(0xfeff);
+        expect(csv.split('\r\n')).toEqual([
+            '\uFEFFOrigem;Criados;Ativos;Cancelados;% do total',
+            'WhatsApp (IA);3;2;1;37,5%',
+            'Painel;2;1;1;25,0%',
+            'Não informado;3;3;0;37,5%',
+            'TOTAL;8;6;2;100,0%',
+        ]);
+        expect(nomeArquivoCsvOrigemAgendamentos(relatorio)).toBe(
+            'origem_agendamentos_2026-03-01_a_2026-03-15.csv',
+        );
+    });
+
+    test('monta CSV vazio com três origens e total percentual zero', () => {
+        const csv = montarCsvOrigemAgendamentos({
+            de: '2026-03-01',
+            ate: '2026-03-15',
+            total: 0,
+            origens: ['WHATSAPP_IA', 'PAINEL', 'NAO_INFORMADO'].map(
+                (origem) => ({
+                    origem: origem as RelatorioOrigemAgendamentos['origens'][number]['origem'],
+                    total: 0,
+                    ativos: 0,
+                    cancelados: 0,
+                    percentual: 0,
+                }),
+            ),
+        });
+
+        expect(csv.split('\r\n')).toEqual([
+            '\uFEFFOrigem;Criados;Ativos;Cancelados;% do total',
+            'WhatsApp (IA);0;0;0;0,0%',
+            'Painel;0;0;0;0,0%',
+            'Não informado;0;0;0;0,0%',
+            'TOTAL;0;0;0;0,0%',
+        ]);
     });
 
     test('valida limites inteiros do intervalo de clientes inativos', () => {
