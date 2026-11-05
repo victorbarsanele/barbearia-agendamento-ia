@@ -40,6 +40,21 @@ export async function listarAtendimentos(
     }
 }
 
+export async function listarAgendamentosPorOrigem(
+    request: FastifyRequest<{ Querystring: AtendimentosQuery }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const relatorio = await relatorioService.buscarAgendamentosPorOrigem(
+            request.query.de,
+            request.query.ate,
+        );
+        void reply.send(relatorio);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
 export async function listarClientesInativos(
     request: FastifyRequest<{ Querystring: ClientesInativosQuery }>,
     reply: FastifyReply,

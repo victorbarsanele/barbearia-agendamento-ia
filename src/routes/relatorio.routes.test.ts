@@ -1,8 +1,12 @@
+import cookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { registerAuthPlugin } from '../plugins/auth.plugin';
+import { calcularIntervaloRelatorio } from '../utils/intervalo-relatorio';
 
 const serviceMock = vi.hoisted(() => ({
     buscarAtendimentos: vi.fn(),
+    buscarAgendamentosPorOrigem: vi.fn(),
     buscarClientesInativos: vi.fn(),
     buscarSaldoPacotes: vi.fn(),
 }));
@@ -42,6 +46,36 @@ describe('GET /relatorios/atendimentos', () => {
                 },
             ],
             total: { quantidade: 2, valorEstimado: '0.00', semPreco: 1 },
+        });
+        vi.mocked(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).mockResolvedValue({
+            de: '2026-10-10',
+            ate: '2026-10-10',
+            total: 2,
+            origens: [
+                {
+                    origem: 'WHATSAPP_IA',
+                    total: 1,
+                    ativos: 1,
+                    cancelados: 0,
+                    percentual: 50,
+                },
+                {
+                    origem: 'PAINEL',
+                    total: 1,
+                    ativos: 0,
+                    cancelados: 1,
+                    percentual: 50,
+                },
+                {
+                    origem: 'NAO_INFORMADO',
+                    total: 0,
+                    ativos: 0,
+                    cancelados: 0,
+                    percentual: 0,
+                },
+            ],
         });
         vi.mocked(relatorioService.buscarClientesInativos).mockResolvedValue({
             geradoEm: '2026-10-11T02:45:00.000Z',
@@ -105,6 +139,144 @@ describe('GET /relatorios/atendimentos', () => {
 
     afterEach(async () => {
         await app.close();
+        vi.unstubAllEnvs();
+    });
+
+    it('valida contrato e remove campos extras da resposta', async () => {
+        vi.mocked(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).mockResolvedValue({
+            de: '2026-10-10',
+            ate: '2026-10-10',
+            total: 2,
+            extra: true,
+            origens: [
+                {
+                    origem: 'WHATSAPP_IA',
+                    total: 1,
+                    ativos: 1,
+                    cancelados: 0,
+                    percentual: 50,
+                    extra: true,
+                },
+                {
+                    origem: 'PAINEL',
+                    total: 1,
+                    ativos: 0,
+                    cancelados: 1,
+                    percentual: 50,
+                },
+                {
+                    origem: 'NAO_INFORMADO',
+                    total: 0,
+                    ativos: 0,
+                    cancelados: 0,
+                    percentual: 0,
+                },
+            ],
+        } as Awaited<
+            ReturnType<typeof relatorioService.buscarAgendamentosPorOrigem>
+        >);
+
+        const response = await app.inject({
+            method: 'GET',
+            url: '/relatorios/origem-agendamentos?de=2026-10-10&ate=2026-10-10',
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+            de: '2026-10-10',
+            ate: '2026-10-10',
+            total: 2,
+            origens: [
+                {
+                    origem: 'WHATSAPP_IA',
+                    total: 1,
+                    ativos: 1,
+                    cancelados: 0,
+                    percentual: 50,
+                },
+                {
+                    origem: 'PAINEL',
+                    total: 1,
+                    ativos: 0,
+                    cancelados: 1,
+                    percentual: 50,
+                },
+                {
+                    origem: 'NAO_INFORMADO',
+                    total: 0,
+                    ativos: 0,
+                    cancelados: 0,
+                    percentual: 0,
+                },
+            ],
+        });
+        expect(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).toHaveBeenCalledWith('2026-10-10', '2026-10-10');
+    });
+
+    it.each(['ate=2026-10-10', 'de=2026-10-10'])(
+        'exige as duas datas: %s',
+        async (query) => {
+            const response = await app.inject({
+                method: 'GET',
+                url: `/relatorios/origem-agendamentos?${query}`,
+            });
+
+            expect(response.statusCode).toBe(400);
+            expect(
+                relatorioService.buscarAgendamentosPorOrigem,
+            ).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        ['formato inválido', 'de=2026/10/10&ate=2026-10-10'],
+        ['início posterior', 'de=2026-10-11&ate=2026-10-10'],
+        ['intervalo acima de 366 dias', 'de=2025-01-01&ate=2026-01-02'],
+    ])('rejeita %s', async (_cenario, query) => {
+        vi.mocked(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).mockImplementation(async (de, ate) => {
+            calcularIntervaloRelatorio(de, ate);
+            return {
+                de,
+                ate,
+                total: 0,
+                origens: [],
+            };
+        });
+
+        const response = await app.inject({
+            method: 'GET',
+            url: `/relatorios/origem-agendamentos?${query}`,
+        });
+
+        expect(response.statusCode).toBe(400);
+        expect(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).toHaveBeenCalledTimes(1);
+    });
+
+    it('exige autenticação pelo hook global', async () => {
+        vi.stubEnv('JWT_SECRET', 'jwt-secret-relatorio-teste');
+        const appProtegido = Fastify();
+        await appProtegido.register(cookie);
+        await appProtegido.register(registerAuthPlugin);
+        await appProtegido.register(relatorioRoutes);
+
+        const response = await appProtegido.inject({
+            method: 'GET',
+            url: '/relatorios/origem-agendamentos?de=2026-10-10&ate=2026-10-10',
+        });
+
+        expect(response.statusCode).toBe(401);
+        expect(
+            relatorioService.buscarAgendamentosPorOrigem,
+        ).not.toHaveBeenCalled();
+        await appProtegido.close();
     });
 
     it('valida e serializa contrato 200 com valores decimais em string', async () => {

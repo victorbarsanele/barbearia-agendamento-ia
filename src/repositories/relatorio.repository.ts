@@ -74,6 +74,19 @@ export async function agregarAtendimentos(
     });
 }
 
+export async function agruparAgendamentosPorOrigem(
+    inicio: Date,
+    fimExclusivo: Date,
+) {
+    return prisma.agendamento.groupBy({
+        by: ['origem', 'status'],
+        where: {
+            createdAt: { gte: inicio, lt: fimExclusivo },
+        },
+        _count: { _all: true },
+    });
+}
+
 export interface ItemClienteInativo {
     clienteId: string;
     nome: string;
