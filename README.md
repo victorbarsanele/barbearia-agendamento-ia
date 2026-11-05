@@ -9,7 +9,7 @@ Sistema de agendamento para barbearia com automação de conversas via WhatsApp 
 ## O que este projeto demonstra
 
 - Sistema usado por uma barbearia real em produção.
-- Concorrência tratada no PostgreSQL com exclusion constraint `btree_gist` e lock `FOR UPDATE` na numeração de pacote.
+- Concorrência tratada no PostgreSQL com exclusion constraint `btree_gist`, lock `FOR UPDATE` na numeração de pacote e reserva transacional de reativação por cliente.
 - Gemini complementado por guardrails determinísticos: validação de nome, filtro de IDs internos, guarda de bloqueio total e confirmação explícita antes de gravar.
 - CI executa backend contra PostgreSQL 16 efêmero.
 
@@ -51,6 +51,7 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Escalonamento para atendimento humano em caso de confusão, limite de uso da API, pedido de atendimento humano e solicitações fora do fluxo automatizado. Pedidos de cortes recorrentes (ex.: semanais por 1 ou 2 meses) não são agendados em série pelo bot: ele avisa o cliente e encaminha o pedido ao barbeiro.
 - Consulta informativa de pacotes apenas quando liberados com `liberadoParaGemini` (padrão `false`). Gemini não vincula pacote nem trata pagamento; interesse em pacote fixo e combinações personalizadas seguem para o barbeiro.
 - Mensagens de mídia não textual recebem aviso. Transcrição de áudio é opcional e desligada por padrão (`AUDIO_TRANSCRIPTION_ENABLED`).
+- Quando não há vaga na data pedida, Gemini oferece próximas datas com horários disponíveis para o mesmo serviço. Se não houver disponibilidade até o horizonte, informa esse limite.
 
 #### Painel
 
@@ -59,8 +60,10 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Agendamento recorrente em lote.
 - Bloqueios de horário e expediente configurável por dia, incluindo almoço e extensão de fechamento.
 - Encaixe fora do expediente disponível somente no painel.
-- Horizonte de agenda do Gemini com janela móvel e teto: padrão de 20 dias, máximo de 180.
-- Lista de números ignorados.
+- Horizonte de agenda do Gemini: padrão de 20 dias, configurável até 180; `limiteAte` opcional também restringe a janela. O fim efetivo é o menor entre hoje + dias configurados e `limiteAte`, quando definida.
+- Lista de números ignorados aplicada a mensagens recebidas por YCloud e Evolution, ecos YCloud usados no takeover e envios de reativação.
+- Relatórios de atendimentos por serviço e período, clientes inativos e saldo de pacotes. Exportação CSV é gerada no painel; API de atendimentos retorna JSON. Valor estimado usa preço unitário salvo no agendamento.
+- Reativação de clientes inativos por template YCloud `notificar_inativo` (Marketing), com botões “Quero agendar” e “Não receber mais”. O primeiro inicia o agendamento com Gemini; o segundo registra opt-out no cliente. Cooldown de 30 dias por cliente e acompanhamento de entrega por webhook.
 
 #### Operação e integrações
 
@@ -92,6 +95,8 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Estado de escalonamento persistido em PostgreSQL.
 - Idempotência por ID de mensagem com ACK antecipado; deduplicação só ocorre quando ID existe.
 - Lock `FOR UPDATE` na numeração de pacote.
+- Snapshot de `precoUnitario` no agendamento preserva valor histórico usado nos relatórios.
+- Reativação usa reserva transacional com `SELECT ... FOR UPDATE` na linha do cliente. Opt-out persistido é tratado antes do takeover; status `ENTREGUE` não regride após reconciliação por webhook.
 - Guardrails determinísticos: validação de nome, filtro de IDs internos na saída e guarda de bloqueio total. Se consulta da guarda falhar, sistema trata como indisponibilidade, não como bloqueio garantido.
 - Segurança: rate limiting, CORS allowlist, cabeçalhos Helmet e JWT em cookie httpOnly; revogação de tokens em `Set` em memória; segredo `x-webhook-secret` no webhook Evolution e HMAC-SHA256 no webhook YCloud.
 - CI via GitHub Actions executa Vitest contra PostgreSQL 16.
@@ -141,11 +146,11 @@ npm run build
 
 Defina `WHATSAPP_PROVIDER=ycloud` e configure credenciais YCloud, `YCLOUD_FROM_NUMBER` em formato E.164 e `BARBER_PHONE`, número distinto que recebe avisos e escalonamentos. `YCLOUD_FROM_NUMBER` é o número da barbearia conectado à YCloud e deve ser diferente de `BARBER_PHONE`. A coexistência, que permite ao barbeiro responder pelo app WhatsApp Business usando o número da barbearia, é configurada na conta YCloud/Meta, não no repositório.
 
-Configure webhook como `https://<seu-backend>/webhook/ycloud`. Inscreva `whatsapp.inbound_message.received` e `whatsapp.smb.message.echoes`; endpoint valida assinatura HMAC do corpo bruto.
+Configure webhook como `https://<seu-backend>/webhook/ycloud`. Inscreva `whatsapp.inbound_message.received`, `whatsapp.smb.message.echoes` e `whatsapp.message.updated`; endpoint valida assinatura HMAC do corpo bruto.
 
 `WHATSAPP_ALLOWLIST` é recurso opcional para validação, não está ativa em produção. Lista vazia ou variável ausente desativa filtro.
 
-Respostas dentro da janela usam texto; notificações proativas usam templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`.
+Respostas dentro da janela usam texto; notificações proativas usam templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`. Reativação usa o template de Marketing `notificar_inativo`, com botões de resposta rápida “Quero agendar” e “Não receber mais”.
 
 #### 6.5 Evolution (rollback)
 
@@ -153,8 +158,8 @@ Código assume `evolution` quando `WHATSAPP_PROVIDER` não está definida. Produ
 
 ### 7. Testes
 
-- Backend: mais de 850 casos, executados na raiz com `npm run test`.
-- Nove arquivos de integração: oito exigem PostgreSQL; `auth.cookie.integration.test.ts` roda em memória. Os testes usam `DATABASE_URL` explícita porque dotenv não é carregado sob `VITEST`.
+- Backend: mais de 1.000 casos (`npm run test`): 914 unitários e 88 de integração.
+- `npm run test:unit` executa testes unitários, sem integrações. `npm run test:integration` executa os 13 arquivos de integração sem paralelismo entre arquivos: doze exigem PostgreSQL; `auth.cookie.integration.test.ts` roda em memória. Os testes usam `DATABASE_URL` explícita porque dotenv não é carregado sob `VITEST`.
 - Painel: unitários via Playwright com `cd painel && npm run test:unit`.
 - E2E via `cd painel && npx playwright test`; exige `E2E_USER`, `E2E_PASSWORD`, backend de desenvolvimento e painel rodando.
 - CI executa backend completo, incluindo integrações, contra PostgreSQL 16 efêmero após `prisma migrate deploy`. CI não executa testes do painel.
