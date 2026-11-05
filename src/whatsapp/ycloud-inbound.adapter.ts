@@ -3,6 +3,7 @@ import {
     normalizarTelefone,
 } from '../utils/telefone';
 import { IncomingWhatsAppMessage } from './types';
+import { resolverAcaoBotaoReativacao } from './ycloud-reativacao';
 
 type AnyRecord = Record<string, unknown>;
 const YCLOUD_NON_TEXT_TYPES = [
@@ -158,11 +159,24 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
 
     const messageType = stringField(payload, 'type');
     const textRecord = asRecord(payload.text);
+    const buttonRecord =
+        messageType === 'button' ? asRecord(payload.button) : null;
+    const contextRecord = asRecord(payload.context);
+    const buttonPayload = stringField(buttonRecord, 'payload');
+    const buttonText = stringField(buttonRecord, 'text');
+    const buttonAction = resolverAcaoBotaoReativacao(
+        buttonPayload,
+        buttonText,
+    );
     const textBody =
         messageType === 'text' ? stringField(textRecord, 'body') : null;
     const kind =
         messageType === 'text' && textBody !== null
             ? 'text'
+            : messageType === 'button'
+              ? buttonAction === null
+                  ? 'unknown'
+                  : 'button_reply'
             : messageType !== null &&
                 YCLOUD_NON_TEXT_TYPES.includes(
                     messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
@@ -199,6 +213,15 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             rawType: messageType,
             rawSubtype,
             text: kind === 'text' ? textBody : null,
+            buttonReply:
+                messageType === 'button'
+                    ? {
+                          payload: buttonPayload,
+                          text: buttonText,
+                          contextId: stringField(contextRecord, 'id'),
+                          action: buttonAction,
+                      }
+                    : null,
             media,
             isGroup: false,
             isFromMe: false,

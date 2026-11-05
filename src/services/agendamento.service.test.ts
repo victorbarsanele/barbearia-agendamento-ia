@@ -91,6 +91,7 @@ const clienteBase = {
     id: 'cliente-1',
     nome: 'João Silva',
     telefone: '11999999999',
+    optOutMarketingEm: null,
     createdAt: new Date('2026-07-20T00:00:00Z'),
 };
 

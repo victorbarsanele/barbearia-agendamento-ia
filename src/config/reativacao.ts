@@ -1,0 +1,1 @@
+export const REATIVACAO_COOLDOWN_DIAS = 30;
