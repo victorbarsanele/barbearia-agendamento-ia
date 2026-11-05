@@ -1,7 +1,12 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
-import { registrarRespostaHumanaIdempotente } from '../services/gemini.service';
+import { processarStatusReativacao } from '../services/reativacao-status.service';
+import {
+    buscarClientePorTelefoneVariantes,
+    registrarRespostaHumanaIdempotente,
+    sendWhatsAppText,
+} from '../services/gemini.service';
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
 import { IncomingWhatsAppMessage } from '../whatsapp/types';
 import { parseYCloudWebhookEvent } from '../whatsapp/ycloud-inbound.adapter';
@@ -9,6 +14,11 @@ import { verifyYCloudSignature } from '../whatsapp/ycloud-signature';
 import { getWhatsAppProvider } from '../whatsapp/config';
 import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
 import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
+import { getReativacaoRepository } from '../repositories/reativacao.repository';
+import {
+    REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
+    REATIVACAO_TEXTO_SINTETICO,
+} from '../whatsapp/ycloud-reativacao';
 
 function mascararTelefone(phone: string): string {
     return `${'*'.repeat(Math.max(0, phone.length - 4))}${phone.slice(-4)}`;
@@ -58,6 +68,26 @@ export async function receberYCloudWebhook(
     }
 
     const event = parseYCloudWebhookEvent(body);
+    if (event.kind === 'status') {
+        if (getWhatsAppProvider() !== 'ycloud') {
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        try {
+            await processarStatusReativacao(event);
+        } catch {
+            console.error(
+                '[YCLOUD WEBHOOK] Falha ao processar status de mensagem.',
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
+
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
     if (event.kind === 'echo') {
         console.info('[YCLOUD WEBHOOK] Estrutura de eco recebida', {
             ...event.structure,
@@ -162,44 +192,23 @@ export async function receberYCloudWebhook(
         return;
     }
 
-    if (!event.message.phone && !event.message.alternateUserId) {
-        if (!event.message.phone && !event.message.alternateUserId) {
-            console.warn(
-                '[YCLOUD WEBHOOK] Mensagem ignorada: remetente sem telefone e identificador alternativo.',
-            );
-        }
+    let message = event.message;
+    if (!message.phone && !message.alternateUserId) {
+        console.warn(
+            '[YCLOUD WEBHOOK] Mensagem ignorada: remetente sem telefone e identificador alternativo.',
+        );
         void reply.status(200).send({ ok: true });
         return;
     }
 
-    if (event.message.kind === 'unknown') {
-        if (event.message.rawType) {
-            console.info('[YCLOUD WEBHOOK] Tipo de mensagem ignorado', {
-                provider: event.message.provider,
-                rawType: event.message.rawType,
-                ...(event.message.rawSubtype
-                    ? { rawSubtype: event.message.rawSubtype }
-                    : {}),
-                motivo: 'tipo_ignorado',
-            });
-        }
-        void reply.status(200).send({ ok: true });
-        return;
-    }
-
-    if (event.message.kind !== 'non_text' && !event.message.text) {
-        void reply.status(200).send({ ok: true });
-        return;
-    }
-
-    if (event.message.phone) {
+    if (message.phone) {
         try {
-            if (await numeroEstaIgnorado(event.message.phone)) {
+            if (await numeroEstaIgnorado(message.phone)) {
                 console.info('[WHATSAPP] Mensagem ignorada', {
                     provider: 'ycloud',
                     origem: 'inbound',
                     motivo: 'numero_na_lista_ignorada',
-                    telefone: mascararTelefone(event.message.phone),
+                    telefone: mascararTelefone(message.phone),
                 });
                 void reply.status(200).send({ ok: true });
                 return;
@@ -215,15 +224,96 @@ export async function receberYCloudWebhook(
         }
     }
 
-    if (!event.message.messageId) {
+    const reativacaoAction =
+        message.kind === 'button_reply'
+            ? (message.buttonReply?.action ?? null)
+            : null;
+
+    if (message.kind === 'button_reply' && !message.phone) {
+        console.warn(
+            '[YCLOUD WEBHOOK] Quick reply ignorado: telefone do remetente ausente.',
+        );
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (message.kind === 'unknown') {
+        if (message.rawType) {
+            console.info('[YCLOUD WEBHOOK] Tipo de mensagem ignorado', {
+                provider: message.provider,
+                rawType: message.rawType,
+                ...(message.rawSubtype
+                    ? { rawSubtype: message.rawSubtype }
+                    : {}),
+                motivo: 'tipo_ignorado',
+            });
+        }
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (reativacaoAction === 'optout') {
+        const optOutPhone = message.phone;
+        if (!optOutPhone) {
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+        try {
+            const cliente =
+                await buscarClientePorTelefoneVariantes(optOutPhone);
+            if (cliente) {
+                await getReativacaoRepository().registrarOptOutMarketing(
+                    cliente.id,
+                    new Date(),
+                );
+            } else {
+                console.warn(
+                    '[YCLOUD WEBHOOK] Opt-out recebido para telefone sem cliente cadastrado.',
+                    { telefone: mascararTelefone(optOutPhone) },
+                );
+            }
+        } catch {
+            console.error(
+                '[YCLOUD WEBHOOK] Falha ao registrar opt-out de marketing.',
+                { telefone: mascararTelefone(optOutPhone) },
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
+    } else if (reativacaoAction === 'agendar') {
+        message = {
+            ...message,
+            kind: 'text',
+            text: REATIVACAO_TEXTO_SINTETICO,
+            buttonReply: null,
+        };
+    }
+
+    if (
+        reativacaoAction === null &&
+        message.kind !== 'non_text' &&
+        !message.text
+    ) {
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
+    if (!message.messageId) {
+        if (reativacaoAction === 'optout') {
+            console.warn(
+                '[YCLOUD WEBHOOK] Opt-out sem ID; confirmação ignorada sem deduplicação.',
+            );
+            void reply.status(200).send({ ok: true });
+            return;
+        }
         console.warn(
             '[YCLOUD WEBHOOK] ID da mensagem ausente; processamento sem deduplicação.',
         );
     } else {
         try {
             const isFirstDelivery = await registrarMensagemProcessada(
-                event.message.provider,
-                event.message.messageId,
+                message.provider,
+                message.messageId,
             );
             if (!isFirstDelivery) {
                 void reply.status(200).send({ ok: true });
@@ -239,7 +329,20 @@ export async function receberYCloudWebhook(
     }
 
     void reply.status(200).send({ ok: true });
-    void processarEventoYCloud(event.message).catch(() => {
+    if (reativacaoAction === 'optout') {
+        void sendWhatsAppText(
+            message.phone!,
+            REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
+        ).catch(() => {
+            console.error(
+                '[YCLOUD WEBHOOK] Falha ao enviar confirmação de opt-out.',
+                { telefone: mascararTelefone(message.phone!) },
+            );
+        });
+        return;
+    }
+
+    void processarEventoYCloud(message).catch(() => {
         console.error('[YCLOUD WEBHOOK] Falha no processamento assíncrono.');
     });
 }

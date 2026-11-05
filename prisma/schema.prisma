@@ -41,16 +41,41 @@ enum StatusSincronizacaoGoogleAgenda {
   ERRO
 }
 
+enum StatusReativacaoEnvio {
+  PENDENTE
+  ACEITA
+  ENTREGUE
+  FALHOU
+}
+
 model Cliente {
-  id           String        @id @default(cuid())
-  nome         String
-  telefone     String        @unique
-  createdAt    DateTime      @default(now()) @db.Timestamptz(3)
-  agendamentos Agendamento[]
-  pacotes      PacoteCliente[]
-  lotes        LoteAgendamento[]
+  id                String             @id @default(cuid())
+  nome              String
+  telefone          String             @unique
+  optOutMarketingEm DateTime?          @db.Timestamptz(3)
+  createdAt         DateTime           @default(now()) @db.Timestamptz(3)
+  agendamentos      Agendamento[]
+  pacotes           PacoteCliente[]
+  lotes             LoteAgendamento[]
+  reativacoes       ReativacaoEnvio[]
 
   @@map("clientes")
+}
+
+model ReativacaoEnvio {
+  id               String                 @id @default(cuid())
+  clienteId        String
+  ycloudMessageId  String?
+  status           StatusReativacaoEnvio   @default(PENDENTE)
+  motivoFalha      String?
+  criadoEm         DateTime               @default(now()) @db.Timestamptz(3)
+  atualizadoEm     DateTime               @updatedAt @db.Timestamptz(3)
+
+  cliente          Cliente                @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+
+  @@index([ycloudMessageId])
+  @@index([clienteId, criadoEm])
+  @@map("reativacoes_envios")
 }
 
 model Servico {

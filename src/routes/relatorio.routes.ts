@@ -89,6 +89,10 @@ const respostaClientesInativosSchema = {
                     'ultimoServico',
                     'totalVisitas',
                     'pacoteAtivoComSaldo',
+                    'ultimaTentativa',
+                    'podeReativar',
+                    'reativacaoBloqueio',
+                    'reativacaoBloqueadaAte',
                 ],
                 properties: {
                     clienteId: { type: 'string' },
@@ -101,6 +105,36 @@ const respostaClientesInativosSchema = {
                     },
                     totalVisitas: { type: 'integer', minimum: 1 },
                     pacoteAtivoComSaldo: { type: 'boolean' },
+                    ultimaTentativa: {
+                        anyOf: [
+                            {
+                                type: 'object',
+                                additionalProperties: false,
+                                required: ['status', 'criadoEm'],
+                                properties: {
+                                    status: { type: 'string' },
+                                    criadoEm: {
+                                        type: 'string',
+                                        format: 'date-time',
+                                    },
+                                },
+                            },
+                            { type: 'null' },
+                        ],
+                    },
+                    podeReativar: { type: 'boolean' },
+                    reativacaoBloqueio: {
+                        anyOf: [
+                            { type: 'string', enum: ['OPT_OUT', 'COOLDOWN'] },
+                            { type: 'null' },
+                        ],
+                    },
+                    reativacaoBloqueadaAte: {
+                        anyOf: [
+                            { type: 'string', format: 'date-time' },
+                            { type: 'null' },
+                        ],
+                    },
                 },
             },
         },

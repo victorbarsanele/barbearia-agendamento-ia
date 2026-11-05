@@ -1,5 +1,6 @@
 import { normalizarTelefone } from '../utils/telefone';
 import { getYCloudFromNumber } from './config';
+import { REATIVACAO_TEMPLATE_IDIOMA } from './ycloud-reativacao';
 
 const YCLOUD_API_URL =
     'https://api.ycloud.com/v2/whatsapp/messages/sendDirectly';
@@ -8,6 +9,23 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export interface YCloudTemplateParameter {
     type: 'text';
     text: string;
+}
+
+export interface YCloudTemplateButtonComponent {
+    type: 'button';
+    sub_type: 'quick_reply';
+    index: 0 | 1;
+    parameters: [{ type: 'payload'; payload: string }];
+}
+
+export interface YCloudMessageResponse {
+    id?: string;
+    status?: string;
+}
+
+interface YCloudProviderResponse {
+    id?: string;
+    status?: string;
 }
 
 function asE164(value: string): string {
@@ -83,7 +101,7 @@ async function readJsonResponse(response: Response): Promise<unknown> {
 async function sendYCloudMessage(
     recipient: string,
     message: Record<string, unknown>,
-): Promise<void> {
+): Promise<YCloudProviderResponse> {
     const apiKey = process.env.YCLOUD_API_KEY;
     if (!apiKey) {
         throw new Error('YCLOUD_API_KEY não configurado.');
@@ -159,8 +177,12 @@ async function sendYCloudMessage(
         console.info(
             `[YCLOUD] Envio aceito | id: ${safeLogValue(providerResponse.id)} | status: ${safeLogValue(providerResponse.status)}`,
         );
+        return providerResponse;
     } catch (error) {
-        if (error instanceof Error && error.message.startsWith('Falha no envio YCloud:')) {
+        if (
+            error instanceof Error &&
+            error.message.startsWith('Falha no envio YCloud:')
+        ) {
             throw error;
         }
         if (controller.signal.aborted) {
@@ -172,32 +194,39 @@ async function sendYCloudMessage(
     }
 }
 
-export function sendYCloudText(
-    recipient: string,
-    text: string,
-): Promise<void> {
+export function sendYCloudText(recipient: string, text: string): Promise<void> {
     return sendYCloudMessage(recipient, {
         type: 'text',
         text: { body: text, preview_url: false },
-    });
+    }).then(() => undefined);
 }
 
-export function sendYCloudTemplate(
+export async function sendYCloudTemplate(
     recipient: string,
     templateName: string,
     parameters: YCloudTemplateParameter[],
-): Promise<void> {
-    return sendYCloudMessage(recipient, {
+    buttonComponents: YCloudTemplateButtonComponent[] = [],
+): Promise<YCloudMessageResponse> {
+    const components: Array<
+        | { type: 'body'; parameters: YCloudTemplateParameter[] }
+        | YCloudTemplateButtonComponent
+    > = [
+        ...(parameters.length > 0
+            ? [{ type: 'body' as const, parameters }]
+            : []),
+        ...buttonComponents,
+    ];
+    const response = await sendYCloudMessage(recipient, {
         type: 'template',
         template: {
             name: templateName,
-            language: { code: 'pt_BR' },
-            components: [
-                {
-                    type: 'body',
-                    parameters,
-                },
-            ],
+            language: { code: REATIVACAO_TEMPLATE_IDIOMA },
+            components,
         },
     });
+
+    return {
+        ...(response.id?.trim() ? { id: response.id } : {}),
+        ...(response.status ? { status: response.status } : {}),
+    };
 }

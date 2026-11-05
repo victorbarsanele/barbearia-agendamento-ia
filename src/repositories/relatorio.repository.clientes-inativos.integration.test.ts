@@ -1,4 +1,8 @@
-import { StatusAgendamento, StatusPacoteCliente } from '@prisma/client';
+import {
+    StatusAgendamento,
+    StatusPacoteCliente,
+    StatusReativacaoEnvio,
+} from '@prisma/client';
 import { fromZonedTime } from 'date-fns-tz';
 import { afterEach, describe, expect, it } from 'vitest';
 import prisma from '../lib/prisma';
@@ -8,6 +12,7 @@ import {
 } from '../utils/telefone';
 import { chaveDataEmBrasilia, somarDiasAChaveData } from '../utils/dia-semana';
 import { TIME_ZONE } from '../services/horario-funcionamento';
+import { PrismaReativacaoRepository } from './reativacao.repository';
 import * as relatorioRepository from './relatorio.repository';
 
 let sequencia = 0;
@@ -129,6 +134,11 @@ async function consultar(
 
 afterEach(async () => {
     if (clienteIds.length > 0) {
+        await prisma.reativacaoEnvio.deleteMany({
+            where: { clienteId: { in: clienteIds } },
+        });
+    }
+    if (clienteIds.length > 0) {
         await prisma.agendamento.deleteMany({
             where: { clienteId: { in: clienteIds } },
         });
@@ -167,6 +177,54 @@ afterEach(async () => {
 });
 
 describe('relatorio.repository.listarClientesInativos integração', () => {
+    it('mantém opt-out e consulta separada da última tentativa não falha', async () => {
+        const cliente = await criarCliente('Opt-out com tentativas');
+        const servico = await criarServico();
+        await criarAgendamento({
+            clienteId: cliente.id,
+            servicoId: servico.id,
+            inicio: dataLocalHaDias(agoraPadrao, 40),
+        });
+        await prisma.cliente.update({
+            where: { id: cliente.id },
+            data: { optOutMarketingEm: new Date('2026-10-05T12:00:00.000Z') },
+        });
+        const aceitaEm = new Date('2026-10-01T12:00:00.000Z');
+        await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: cliente.id,
+                status: StatusReativacaoEnvio.ACEITA,
+                criadoEm: aceitaEm,
+            },
+        });
+        await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: cliente.id,
+                status: StatusReativacaoEnvio.FALHOU,
+                criadoEm: new Date('2026-10-10T12:00:00.000Z'),
+            },
+        });
+
+        const resultado = await consultar();
+        const tentativas = await new PrismaReativacaoRepository(
+            prisma,
+        ).buscarResumoReativacoesPorClientes([cliente.id]);
+
+        expect(resultado.itens).toMatchObject([
+            { clienteId: cliente.id, optOutMarketing: true },
+        ]);
+        expect(tentativas.get(cliente.id)).toEqual({
+            ultimaTentativa: {
+                status: StatusReativacaoEnvio.FALHOU,
+                criadoEm: new Date('2026-10-10T12:00:00.000Z'),
+            },
+            ultimaNaoFalhada: {
+                status: StatusReativacaoEnvio.ACEITA,
+                criadoEm: aceitaEm,
+            },
+        });
+    });
+
     it.each([
         { dias: 40, esperado: true, motivo: 'visita há 40 dias entra' },
         { dias: 10, esperado: false, motivo: 'visita há 10 dias fica fora' },

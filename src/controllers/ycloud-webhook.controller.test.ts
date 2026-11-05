@@ -2,20 +2,51 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
-import { registrarRespostaHumanaIdempotente } from '../services/gemini.service';
+import { processarStatusReativacao } from '../services/reativacao-status.service';
+import {
+    buscarClientePorTelefoneVariantes,
+    registrarRespostaHumanaIdempotente,
+    sendWhatsAppText,
+} from '../services/gemini.service';
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
 import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 import { receberYCloudWebhook } from './ycloud-webhook.controller';
 import { createYCloudSignature } from '../whatsapp/ycloud-signature';
+import {
+    REATIVACAO_PAYLOAD_AGENDAR,
+    REATIVACAO_PAYLOAD_OPTOUT,
+    REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
+    REATIVACAO_TEXTO_SINTETICO,
+} from '../whatsapp/ycloud-reativacao';
+
+const geminiMocks = vi.hoisted(() => ({
+    buscarClientePorTelefoneVariantes: vi.fn(),
+    sendWhatsAppText: vi.fn(),
+}));
+const reativacaoMocks = vi.hoisted(() => ({
+    registrarOptOutMarketing: vi.fn(),
+}));
+const statusReativacaoMock = vi.hoisted(() => ({
+    processarStatusReativacao: vi.fn(),
+}));
 
 vi.mock('../services/processed-whatsapp-message.service', () => ({
     registrarMensagemProcessada: vi.fn(),
 }));
+vi.mock('../services/reativacao-status.service', () => statusReativacaoMock);
 vi.mock('../services/whatsapp-incoming-message.service', () => ({
     processarMensagemRecebida: vi.fn(),
 }));
 vi.mock('../services/gemini.service', () => ({
     registrarRespostaHumanaIdempotente: vi.fn(),
+    buscarClientePorTelefoneVariantes:
+        geminiMocks.buscarClientePorTelefoneVariantes,
+    sendWhatsAppText: geminiMocks.sendWhatsAppText,
+}));
+vi.mock('../repositories/reativacao.repository', () => ({
+    getReativacaoRepository: vi.fn(() => ({
+        registrarOptOutMarketing: reativacaoMocks.registrarOptOutMarketing,
+    })),
 }));
 vi.mock('../services/ycloud-username-notification.service', () => ({
     avisarBarbeiroUsuarioSemTelefone: vi.fn(),
@@ -27,8 +58,12 @@ vi.mock('../services/numero-ignorado-whatsapp.service', () => ({
 const registerMock = vi.mocked(registrarMensagemProcessada);
 const processMock = vi.mocked(processarMensagemRecebida);
 const takeoverMock = vi.mocked(registrarRespostaHumanaIdempotente);
+const findClientMock = vi.mocked(buscarClientePorTelefoneVariantes);
+const sendTextMock = vi.mocked(sendWhatsAppText);
 const usernameMock = vi.mocked(avisarBarbeiroUsuarioSemTelefone);
 const ignoredMock = vi.mocked(numeroEstaIgnorado);
+const optOutMock = vi.mocked(reativacaoMocks.registrarOptOutMarketing);
+const statusMock = vi.mocked(processarStatusReativacao);
 const webhookSecret = 'ycloud-test-secret';
 
 function makeReply() {
@@ -67,6 +102,24 @@ function inboundBody(overrides: Record<string, unknown> = {}) {
     });
 }
 
+function buttonBody(
+    payload: string,
+    text: string,
+    wamid = 'button-wamid-1',
+    from = '+5511999999999',
+) {
+    return {
+        type: 'whatsapp.inbound_message.received',
+        whatsappInboundMessage: {
+            wamid,
+            from,
+            type: 'button',
+            button: { payload, text },
+            context: { id: 'template-wamid-1' },
+        },
+    };
+}
+
 beforeEach(() => {
     vi.stubEnv('YCLOUD_WEBHOOK_SECRET', webhookSecret);
     vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
@@ -75,6 +128,10 @@ beforeEach(() => {
     registerMock.mockResolvedValue(true);
     processMock.mockResolvedValue();
     takeoverMock.mockResolvedValue(true);
+    findClientMock.mockResolvedValue({ id: 'cliente-1' } as never);
+    sendTextMock.mockResolvedValue();
+    optOutMock.mockResolvedValue(undefined);
+    statusMock.mockResolvedValue(undefined);
     usernameMock.mockResolvedValue();
     ignoredMock.mockResolvedValue(false);
 });
@@ -124,6 +181,19 @@ describe('YCloud webhook controller', () => {
         vi.stubEnv('YCLOUD_WEBHOOK_SECRET', '');
         await receberYCloudWebhook(makeRequest(inboundBody()), missingSecret);
         expect(missingSecret.status).toHaveBeenCalledWith(401);
+
+        const invalidStatusSignature = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                {
+                    type: 'whatsapp.message.updated',
+                    whatsappMessage: { id: 'ycloud-id', status: 'delivered' },
+                },
+                null,
+            ),
+            invalidStatusSignature,
+        );
+        expect(invalidStatusSignature.status).toHaveBeenCalledWith(401);
         expect(registerMock).not.toHaveBeenCalled();
     });
 
@@ -314,7 +384,7 @@ describe('YCloud webhook controller', () => {
     it('returns 200 for unknown events and echoes without database processing', async () => {
         const unknownReply = makeReply();
         await receberYCloudWebhook(
-            makeRequest(JSON.stringify({ type: 'whatsapp.message.updated' })),
+            makeRequest(JSON.stringify({ type: 'whatsapp.message.deleted' })),
             unknownReply,
         );
         expect(unknownReply.status).toHaveBeenCalledWith(200);
@@ -332,6 +402,55 @@ describe('YCloud webhook controller', () => {
         );
         expect(echoReply.status).toHaveBeenCalledWith(200);
         expect(registerMock).not.toHaveBeenCalled();
+    });
+
+    it('processes status events without allowlist or disallow-list filtering', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const reply = makeReply();
+        const event = {
+            type: 'whatsapp.message.updated',
+            whatsappMessage: {
+                id: 'ycloud-message-id',
+                wamid: 'wamid-message-id',
+                status: 'delivered',
+            },
+        };
+
+        await receberYCloudWebhook(makeRequest(event), reply);
+
+        expect(statusMock).toHaveBeenCalledWith({
+            kind: 'status',
+            id: 'ycloud-message-id',
+            wamid: 'wamid-message-id',
+            status: 'delivered',
+            errorCode: null,
+            errorMessage: null,
+        });
+        expect(ignoredMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(log).not.toHaveBeenCalled();
+        log.mockRestore();
+    });
+
+    it('returns 500 when status persistence fails transiently', async () => {
+        statusMock.mockRejectedValueOnce(new Error('database unavailable'));
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.message.updated',
+                whatsappMessage: { id: 'ycloud-id', status: 'read' },
+            }),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Falha ao processar status de mensagem.',
+        );
+        log.mockRestore();
     });
 
     it('logs and acknowledges echo even when Evolution is active', async () => {
@@ -635,5 +754,201 @@ describe('YCloud webhook controller', () => {
             '[YCLOUD WEBHOOK] Falha ao registrar ID da mensagem processada.',
         );
         errorLog.mockRestore();
+    });
+
+    it('records opt-out before claim and sends confirmation outside Gemini/escalation flow', async () => {
+        const order: string[] = [];
+        findClientMock.mockImplementation(async () => {
+            order.push('lookup');
+            return { id: 'cliente-1' } as never;
+        });
+        optOutMock.mockImplementation(async () => {
+            order.push('optout');
+        });
+        registerMock.mockImplementation(async () => {
+            order.push('claim');
+            return true;
+        });
+        const reply = makeReply();
+        vi.mocked(reply.send).mockImplementation(() => {
+            order.push('ack');
+            return reply;
+        });
+        sendTextMock.mockImplementation(async () => {
+            order.push('confirmation');
+        });
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais'),
+            ),
+            reply,
+        );
+
+        expect(order).toEqual([
+            'lookup',
+            'optout',
+            'claim',
+            'ack',
+            'confirmation',
+        ]);
+        expect(optOutMock).toHaveBeenCalledWith('cliente-1', expect.any(Date));
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'button-wamid-1');
+        expect(sendTextMock).toHaveBeenCalledWith(
+            '5511999999999',
+            REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
+        );
+        expect(processMock).not.toHaveBeenCalled();
+    });
+
+    it('persists opt-out even when customer is absent and still confirms', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        findClientMock.mockResolvedValue(null);
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais'),
+            ),
+            reply,
+        );
+
+        expect(optOutMock).not.toHaveBeenCalled();
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'button-wamid-1');
+        expect(sendTextMock).toHaveBeenCalledWith(
+            '5511999999999',
+            REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
+        );
+        expect(warn).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Opt-out recebido para telefone sem cliente cadastrado.',
+            { telefone: '*********9999' },
+        );
+        warn.mockRestore();
+    });
+
+    it('does not confirm opt-out when persistence fails', async () => {
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
+        optOutMock.mockRejectedValueOnce(new Error('database unavailable'));
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais'),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(sendTextMock).not.toHaveBeenCalled();
+        expect(errorLog).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Falha ao registrar opt-out de marketing.',
+            { telefone: '*********9999' },
+        );
+        errorLog.mockRestore();
+    });
+
+    it('does not send a second opt-out confirmation when claim is duplicate', async () => {
+        registerMock.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        const body = buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais');
+
+        await receberYCloudWebhook(makeRequest(body), makeReply());
+        await receberYCloudWebhook(makeRequest(body), makeReply());
+
+        expect(optOutMock).toHaveBeenCalledTimes(2);
+        expect(registerMock).toHaveBeenCalledTimes(2);
+        expect(sendTextMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('routes reactivation booking reply as synthetic text with original wamid', async () => {
+        const reply = makeReply();
+        const order: string[] = [];
+        vi.mocked(reply.send).mockImplementation(() => {
+            order.push('ack');
+            return reply;
+        });
+        processMock.mockImplementation(async () => {
+            order.push('process');
+        });
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_AGENDAR, 'Quero agendar'),
+            ),
+            reply,
+        );
+
+        expect(registerMock).toHaveBeenCalledWith('ycloud', 'button-wamid-1');
+        expect(order).toEqual(['ack', 'process']);
+        expect(processMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                messageId: 'button-wamid-1',
+                kind: 'text',
+                text: REATIVACAO_TEXTO_SINTETICO,
+            }),
+        );
+        expect(sendTextMock).not.toHaveBeenCalled();
+    });
+
+    it('lets disallow list block reactivation buttons before opt-out or claim', async () => {
+        ignoredMock.mockResolvedValueOnce(true);
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais'),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(findClientMock).not.toHaveBeenCalled();
+        expect(optOutMock).not.toHaveBeenCalled();
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(sendTextMock).not.toHaveBeenCalled();
+    });
+
+    it('lets allowlist block reactivation buttons before disallow lookup', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(REATIVACAO_PAYLOAD_OPTOUT, 'Não receber mais'),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(ignoredMock).not.toHaveBeenCalled();
+        expect(findClientMock).not.toHaveBeenCalled();
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(sendTextMock).not.toHaveBeenCalled();
+    });
+
+    it('discards unknown button without claim or response', async () => {
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(buttonBody('future:payload', 'Outro botão')),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(registerMock).not.toHaveBeenCalled();
+        expect(processMock).not.toHaveBeenCalled();
+        expect(optOutMock).not.toHaveBeenCalled();
+        expect(sendTextMock).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Tipo de mensagem ignorado',
+            expect.objectContaining({
+                rawType: 'button',
+                motivo: 'tipo_ignorado',
+            }),
+        );
+        info.mockRestore();
     });
 });

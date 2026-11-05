@@ -4,6 +4,12 @@ import { AppError } from '../lib/app-error';
 import * as numeroIgnoradoWhatsAppService from './numero-ignorado-whatsapp.service';
 import { calcularIntervaloRelatorio } from '../utils/intervalo-relatorio';
 import { chaveDataEmBrasilia } from '../utils/dia-semana';
+import { getReativacaoRepository } from '../repositories/reativacao.repository';
+import {
+    calcularFimCooldown,
+    estaEmCooldown,
+    normalizarTentativaReativacao,
+} from '../utils/reativacao-cooldown';
 import {
     canonicalizarTelefoneWhatsApp,
     variantesTelefoneWhatsApp,
@@ -35,12 +41,25 @@ export interface FiltroClientesInativos {
     diasMax?: number;
 }
 
+export interface ItemRelatorioClienteInativo extends Omit<
+    relatorioRepository.ItemClienteInativo,
+    'optOutMarketing'
+> {
+    ultimaTentativa: {
+        status: string;
+        criadoEm: string;
+    } | null;
+    podeReativar: boolean;
+    reativacaoBloqueio: 'OPT_OUT' | 'COOLDOWN' | null;
+    reativacaoBloqueadaAte: string | null;
+}
+
 export interface RelatorioClientesInativos {
     geradoEm: string;
     filtro: { diasMin: number; diasMax: number };
     total: number;
     truncado: boolean;
-    itens: relatorioRepository.ItemClienteInativo[];
+    itens: ItemRelatorioClienteInativo[];
 }
 
 export interface FiltroSaldoPacotes {
@@ -119,13 +138,49 @@ export async function buscarClientesInativos(
         diasMax,
         variantesIgnoradas,
     );
+    const tentativas =
+        await getReativacaoRepository().buscarResumoReativacoesPorClientes(
+            resultado.itens.map((item) => item.clienteId),
+            agora,
+        );
+
+    const itens = resultado.itens.map((item) => {
+        const { optOutMarketing, ...dadosCliente } = item;
+        const resumo = tentativas.get(item.clienteId);
+        const ultimaNaoFalhada = normalizarTentativaReativacao(
+            resumo?.ultimaNaoFalhada ?? null,
+            agora,
+        );
+        const ultimaTentativa = normalizarTentativaReativacao(
+            resumo?.ultimaTentativa ?? null,
+            agora,
+        );
+        const fimCooldown = calcularFimCooldown(ultimaNaoFalhada, agora);
+        const emCooldown = estaEmCooldown(ultimaNaoFalhada, agora);
+        const bloqueio: ItemRelatorioClienteInativo['reativacaoBloqueio'] =
+            optOutMarketing ? 'OPT_OUT' : emCooldown ? 'COOLDOWN' : null;
+
+        return {
+            ...dadosCliente,
+            ultimaTentativa: ultimaTentativa
+                ? {
+                      status: ultimaTentativa.status,
+                      criadoEm: ultimaTentativa.criadoEm.toISOString(),
+                  }
+                : null,
+            podeReativar: bloqueio === null,
+            reativacaoBloqueio: bloqueio,
+            reativacaoBloqueadaAte:
+                emCooldown && fimCooldown ? fimCooldown.toISOString() : null,
+        };
+    });
 
     return {
         geradoEm: agora.toISOString(),
         filtro: { diasMin, diasMax },
         total: resultado.total,
         truncado: resultado.total > resultado.itens.length,
-        itens: resultado.itens,
+        itens,
     };
 }
 

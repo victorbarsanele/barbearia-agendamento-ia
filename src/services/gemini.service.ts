@@ -748,7 +748,7 @@ function buildPhoneVariants(value: string): string[] {
     return Array.from(variants);
 }
 
-async function buscarClientePorTelefoneVariantes(
+export async function buscarClientePorTelefoneVariantes(
     telefone: string,
 ): Promise<Awaited<ReturnType<typeof clienteRepository.buscarPorTelefone>>> {
     const variants = buildPhoneVariants(telefone);

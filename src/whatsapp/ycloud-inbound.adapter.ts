@@ -3,6 +3,7 @@ import {
     normalizarTelefone,
 } from '../utils/telefone';
 import { IncomingWhatsAppMessage } from './types';
+import { resolverAcaoBotaoReativacao } from './ycloud-reativacao';
 
 type AnyRecord = Record<string, unknown>;
 const YCLOUD_NON_TEXT_TYPES = [
@@ -18,6 +19,7 @@ const YCLOUD_NON_TEXT_TYPES = [
 
 export type YCloudWebhookEvent =
     | { kind: 'message'; message: IncomingWhatsAppMessage }
+    | YCloudMessageStatusEvent
     | {
           kind: 'echo';
           messageId: string | null;
@@ -27,6 +29,15 @@ export type YCloudWebhookEvent =
           structure: YCloudEchoStructure;
       }
     | { kind: 'ignored' };
+
+export interface YCloudMessageStatusEvent {
+    kind: 'status';
+    id: string | null;
+    wamid: string | null;
+    status: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+}
 
 export interface YCloudEchoStructure {
     eventKeys: string[];
@@ -47,6 +58,16 @@ function asRecord(value: unknown): AnyRecord | null {
 function stringField(record: AnyRecord | null, field: string): string | null {
     const value = record?.[field];
     return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function stringOrNumberField(
+    record: AnyRecord | null,
+    field: string,
+): string | null {
+    const value = record?.[field];
+    return typeof value === 'string' || typeof value === 'number'
+        ? String(value)
+        : null;
 }
 
 function valueType(value: unknown): string {
@@ -147,6 +168,18 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
         };
     }
 
+    if (eventType === 'whatsapp.message.updated') {
+        const payload = asRecord(root?.whatsappMessage);
+        return {
+            kind: 'status',
+            id: stringField(payload, 'id'),
+            wamid: stringField(payload, 'wamid'),
+            status: stringField(payload, 'status'),
+            errorCode: stringOrNumberField(payload, 'errorCode'),
+            errorMessage: stringField(payload, 'errorMessage'),
+        };
+    }
+
     if (eventType !== 'whatsapp.inbound_message.received') {
         return { kind: 'ignored' };
     }
@@ -158,17 +191,27 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
 
     const messageType = stringField(payload, 'type');
     const textRecord = asRecord(payload.text);
+    const buttonRecord =
+        messageType === 'button' ? asRecord(payload.button) : null;
+    const contextRecord = asRecord(payload.context);
+    const buttonPayload = stringField(buttonRecord, 'payload');
+    const buttonText = stringField(buttonRecord, 'text');
+    const buttonAction = resolverAcaoBotaoReativacao(buttonPayload, buttonText);
     const textBody =
         messageType === 'text' ? stringField(textRecord, 'body') : null;
     const kind =
         messageType === 'text' && textBody !== null
             ? 'text'
-            : messageType !== null &&
-                YCLOUD_NON_TEXT_TYPES.includes(
-                    messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
-                )
-              ? 'non_text'
-              : 'unknown';
+            : messageType === 'button'
+              ? buttonAction === null
+                  ? 'unknown'
+                  : 'button_reply'
+              : messageType !== null &&
+                  YCLOUD_NON_TEXT_TYPES.includes(
+                      messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
+                  )
+                ? 'non_text'
+                : 'unknown';
     const unsupportedRecord = asRecord(payload.unsupported);
     const rawSubtype =
         messageType === 'unsupported'
@@ -199,6 +242,15 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             rawType: messageType,
             rawSubtype,
             text: kind === 'text' ? textBody : null,
+            buttonReply:
+                messageType === 'button'
+                    ? {
+                          payload: buttonPayload,
+                          text: buttonText,
+                          contextId: stringField(contextRecord, 'id'),
+                          action: buttonAction,
+                      }
+                    : null,
             media,
             isGroup: false,
             isFromMe: false,

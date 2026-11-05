@@ -72,6 +72,23 @@ export async function clienteRoutes(app: FastifyInstance): Promise<void> {
         clienteController.buscarPorId,
     );
 
+    app.post(
+        '/clientes/:clienteId/reativacao-whatsapp',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['clienteId'],
+                    additionalProperties: false,
+                    properties: {
+                        clienteId: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        clienteController.reativarWhatsApp,
+    );
+
     app.put(
         '/clientes/:id',
         {

@@ -3,6 +3,10 @@ import {
     canonicalizeYCloudPhone,
     parseYCloudWebhookEvent,
 } from './ycloud-inbound.adapter';
+import {
+    REATIVACAO_PAYLOAD_AGENDAR,
+    REATIVACAO_PAYLOAD_OPTOUT,
+} from './ycloud-reativacao';
 
 describe('YCloud inbound adapter', () => {
     it('parses inbound text and canonicalizes phone with or without plus', () => {
@@ -88,6 +92,105 @@ describe('YCloud inbound adapter', () => {
         });
     });
 
+    it('parses reactivation quick replies using payload and original context ID', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-wamid-1',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: {
+                        payload: REATIVACAO_PAYLOAD_AGENDAR,
+                        text: 'Quero agendar',
+                    },
+                    context: { id: 'template-wamid-1' },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                messageId: 'button-wamid-1',
+                kind: 'button_reply',
+                buttonReply: {
+                    payload: REATIVACAO_PAYLOAD_AGENDAR,
+                    text: 'Quero agendar',
+                    contextId: 'template-wamid-1',
+                    action: 'agendar',
+                },
+            },
+        });
+    });
+
+    it('falls back to trimmed case-insensitive button label when payload is unknown', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-wamid-2',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: {
+                        payload: 'future:payload',
+                        text: '  QUERO AGENDAR  ',
+                    },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'button_reply',
+                buttonReply: { action: 'agendar' },
+            },
+        });
+    });
+
+    it('resolves opt-out label when payload is empty', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-wamid-3',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: { payload: '', text: ' Não receber mais ' },
+                    context: { id: 'template-wamid-2' },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'button_reply',
+                buttonReply: {
+                    payload: null,
+                    contextId: 'template-wamid-2',
+                    action: 'optout',
+                },
+            },
+        });
+    });
+
+    it('classifies button with unknown payload and label as unknown', () => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-wamid-4',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: { payload: 'future:payload', text: 'Outro botão' },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'unknown',
+                rawType: 'button',
+                buttonReply: { action: null },
+            },
+        });
+    });
+
     it('normalizes missing or invalid audio metadata to null', () => {
         const result = parseYCloudWebhookEvent({
             type: 'whatsapp.inbound_message.received',
@@ -149,7 +252,6 @@ describe('YCloud inbound adapter', () => {
 
     it.each([
         'reaction',
-        'button',
         'interactive',
         'order',
         'system',
@@ -256,7 +358,7 @@ describe('YCloud inbound adapter', () => {
         expect(canonicalizeYCloudPhone('5511998765432')).toBe('5511998765432');
     });
 
-    it('parses echoes and ignores unknown event types', () => {
+    it('parses echoes and status updates, ignoring unknown event types', () => {
         expect(
             parseYCloudWebhookEvent({
                 id: 'event-1',
@@ -298,7 +400,26 @@ describe('YCloud inbound adapter', () => {
             phone: '5511999999999',
         });
         expect(
-            parseYCloudWebhookEvent({ type: 'whatsapp.message.updated' }),
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.message.updated',
+                whatsappMessage: {
+                    id: 'ycloud-message-id',
+                    wamid: 'wamid-message-id',
+                    status: 'failed',
+                    errorCode: 131000,
+                    errorMessage: 'Temporary provider error',
+                },
+            }),
+        ).toEqual({
+            kind: 'status',
+            id: 'ycloud-message-id',
+            wamid: 'wamid-message-id',
+            status: 'failed',
+            errorCode: '131000',
+            errorMessage: 'Temporary provider error',
+        });
+        expect(
+            parseYCloudWebhookEvent({ type: 'whatsapp.message.deleted' }),
         ).toEqual({ kind: 'ignored' });
     });
 
