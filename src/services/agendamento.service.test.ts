@@ -1,4 +1,4 @@
-import { Prisma, StatusAgendamento } from '@prisma/client';
+import { OrigemAgendamento, Prisma, StatusAgendamento } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const notificationMock = vi.hoisted(() => ({
@@ -87,6 +87,17 @@ import { enfileirarSincronizacao } from '../google-calendar/sync.service';
 import * as geminiService from './gemini.service';
 import * as agendamentoService from './agendamento.service';
 
+describe('origemParaPersistencia', () => {
+    it('converte origem de regras para enum persistido', () => {
+        expect(agendamentoService.origemParaPersistencia('PAINEL')).toBe(
+            OrigemAgendamento.PAINEL,
+        );
+        expect(agendamentoService.origemParaPersistencia('GEMINI')).toBe(
+            OrigemAgendamento.WHATSAPP_IA,
+        );
+    });
+});
+
 const clienteBase = {
     id: 'cliente-1',
     nome: 'João Silva',
@@ -107,6 +118,7 @@ const agendamentoAtual = {
     id: 'agendamento-1',
     clienteId: clienteBase.id,
     servicoId: servicoBase.id,
+    origem: null,
     pacoteClienteId: null,
     loteId: null,
     precoUnitario: null,
@@ -285,6 +297,7 @@ describe('agendamento.service.criar', () => {
         expect(agendamentoRepository.criar).toHaveBeenCalledWith({
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
+            origem: OrigemAgendamento.PAINEL,
             precoUnitario: null,
             pacoteClienteId: null,
             dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
@@ -296,6 +309,25 @@ describe('agendamento.service.criar', () => {
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
         });
+    });
+
+    it('persiste criação do Gemini como WhatsApp IA', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            origem: 'GEMINI',
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                origem: OrigemAgendamento.WHATSAPP_IA,
+            }),
+        );
     });
 
     it('grava snapshot do preço vigente na criação pelo painel', async () => {
@@ -1067,6 +1099,31 @@ describe('agendamento.service.cancelar', () => {
 });
 
 describe('agendamento.service.atualizar', () => {
+    it.each(['PAINEL', 'GEMINI'] as const)(
+        'não altera origem persistida quando origem de validação é %s',
+        async (origem) => {
+            vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+                ...agendamentoAtual,
+            });
+            vi.mocked(agendamentoRepository.atualizar).mockResolvedValue({
+                ...agendamentoAtual,
+            });
+
+            await agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T09:00:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                origem,
+            });
+
+            expect(agendamentoRepository.atualizar).toHaveBeenCalledOnce();
+            expect(
+                vi.mocked(agendamentoRepository.atualizar).mock.calls[0]?.[1],
+            ).not.toHaveProperty('origem');
+        },
+    );
+
     it('preserva snapshot existente ao remarcar serviço sem trocar', async () => {
         const snapshotExistente = new Prisma.Decimal('35.00');
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
@@ -1250,6 +1307,9 @@ describe('agendamento.service.atualizar', () => {
                 status: StatusAgendamento.AGENDADO,
             }),
         );
+        expect(
+            vi.mocked(agendamentoRepository.atualizar).mock.calls[0]?.[1],
+        ).not.toHaveProperty('origem');
         expect(
             notificationMock.enviarNotificacaoWhatsApp,
         ).toHaveBeenCalledTimes(1);
@@ -1615,7 +1675,10 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
         expect(
             agendamentoRepository.criarComNumeroNoPacote,
         ).toHaveBeenCalledWith(
-            expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
+            expect.objectContaining({
+                pacoteClienteId: 'pacote-cliente-1',
+                origem: OrigemAgendamento.PAINEL,
+            }),
             'pacote-cliente-1',
             servicoBase.id,
         );
@@ -1733,6 +1796,7 @@ describe('agendamento.service.criar com pacoteId', () => {
             expect.objectContaining({
                 pacoteClienteId: 'pacote-cliente-1',
                 precoUnitario: servicoComPreco.preco,
+                origem: OrigemAgendamento.PAINEL,
             }),
             'pacote-cliente-1',
             servicoBase.id,
@@ -2477,7 +2541,10 @@ describe('agendamento.service.criarLote', () => {
         expect(resultado.criados).toHaveLength(1);
         expect(resultado.falhados).toEqual([]);
         expect(agendamentoRepository.criar).toHaveBeenCalledWith(
-            expect.objectContaining({ precoUnitario: servicoComPreco.preco }),
+            expect.objectContaining({
+                precoUnitario: servicoComPreco.preco,
+                origem: OrigemAgendamento.PAINEL,
+            }),
         );
     });
 
@@ -2736,7 +2803,10 @@ describe('agendamento.service lote com pacoteId', () => {
             agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
         ).toHaveBeenCalledWith(
             transacaoMock,
-            expect.objectContaining({ precoUnitario: servicoComPreco.preco }),
+            expect.objectContaining({
+                precoUnitario: servicoComPreco.preco,
+                origem: OrigemAgendamento.PAINEL,
+            }),
             expect.any(String),
             servicoBase.id,
         );

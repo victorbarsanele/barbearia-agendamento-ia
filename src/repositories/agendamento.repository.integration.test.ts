@@ -1,4 +1,4 @@
-import { StatusAgendamento } from '@prisma/client';
+import { OrigemAgendamento, StatusAgendamento } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
@@ -218,6 +218,7 @@ async function criarAgendamentoComPacoteTransacional(
             {
                 clienteId: entidades.clienteId,
                 servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
                 pacoteClienteId: pacoteCliente.id,
                 dataHoraInicio,
                 dataHoraFim: new Date(dataHoraInicio.getTime() + 30 * 60_000),
@@ -341,10 +342,13 @@ describe('agendamento.repository integração concorrência', () => {
         const agendamentos = await prisma.agendamento.findMany({
             where: { loteId: resultado.loteId },
             orderBy: { numeroNoPacote: 'asc' },
-            select: { numeroNoPacote: true },
+            select: { numeroNoPacote: true, origem: true },
         });
         expect(agendamentos.map((item) => item.numeroNoPacote)).toEqual(
             Array.from({ length: 20 }, (_, indice) => indice + 1),
+        );
+        expect(agendamentos.map((item) => item.origem)).toEqual(
+            Array.from({ length: 20 }, () => OrigemAgendamento.PAINEL),
         );
     });
 
@@ -368,11 +372,14 @@ describe('agendamento.repository integração concorrência', () => {
                 pacoteClienteId: { not: null },
             },
             orderBy: { numeroNoPacote: 'asc' },
-            select: { numeroNoPacote: true },
+            select: { numeroNoPacote: true, origem: true },
         });
         expect(numeros.map((item) => item.numeroNoPacote)).toEqual([
             1, 2, 3, 4,
         ]);
+        expect(numeros.map((item) => item.origem)).toEqual(
+            Array.from({ length: 4 }, () => OrigemAgendamento.PAINEL),
+        );
         await expect(
             prisma.pacoteCliente.count({
                 where: {
@@ -456,6 +463,10 @@ describe('agendamento.repository integração concorrência', () => {
 
         expect(resultados.map((item) => item.numeroNoPacote).sort()).toEqual([
             1, 2,
+        ]);
+        expect(resultados.map((item) => item.origem)).toEqual([
+            OrigemAgendamento.PAINEL,
+            OrigemAgendamento.PAINEL,
         ]);
         await expect(
             prisma.pacoteCliente.count({
@@ -572,6 +583,7 @@ describe('agendamento.repository integração concorrência', () => {
             {
                 clienteId: entidades.clienteId,
                 servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
                 pacoteClienteId: pacoteCliente.id,
                 dataHoraInicio: new Date('2026-09-20T13:00:00.000Z'),
                 dataHoraFim: new Date('2026-09-20T13:30:00.000Z'),
@@ -582,6 +594,7 @@ describe('agendamento.repository integração concorrência', () => {
         );
 
         expect(agendamento.numeroNoPacote).toBe(2);
+        expect(agendamento.origem).toBe(OrigemAgendamento.PAINEL);
     });
 
     it('bloqueia quando todos os números restantes estão ocupados', async () => {
@@ -591,6 +604,7 @@ describe('agendamento.repository integração concorrência', () => {
                 {
                     clienteId: entidades.clienteId,
                     servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
                     pacoteClienteId: pacoteCliente.id,
                     dataHoraInicio: new Date(`2026-09-20T${hora}:00:00.000Z`),
                     dataHoraFim: new Date(`2026-09-20T${hora}:30:00.000Z`),
@@ -606,6 +620,7 @@ describe('agendamento.repository integração concorrência', () => {
                 {
                     clienteId: entidades.clienteId,
                     servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
                     pacoteClienteId: pacoteCliente.id,
                     dataHoraInicio: new Date('2026-09-20T16:00:00.000Z'),
                     dataHoraFim: new Date('2026-09-20T16:30:00.000Z'),
@@ -627,6 +642,7 @@ describe('agendamento.repository integração concorrência', () => {
                 {
                     clienteId: entidades.clienteId,
                     servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
                     pacoteClienteId: pacoteCliente.id,
                     dataHoraInicio: new Date(`2026-09-20T${hora}:00:00.000Z`),
                     dataHoraFim: new Date(`2026-09-20T${hora}:30:00.000Z`),
@@ -648,6 +664,7 @@ describe('agendamento.repository integração concorrência', () => {
             {
                 clienteId: entidades.clienteId,
                 servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
                 pacoteClienteId: pacoteCliente.id,
                 dataHoraInicio: new Date('2026-09-20T13:00:00.000Z'),
                 dataHoraFim: new Date('2026-09-20T13:30:00.000Z'),
@@ -688,6 +705,7 @@ describe('agendamento.repository integração concorrência', () => {
                 {
                     clienteId: entidades.clienteId,
                     servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
                     pacoteClienteId: pacoteCliente.id,
                     dataHoraInicio: new Date(inicio),
                     dataHoraFim: new Date(
@@ -819,6 +837,7 @@ describe('agendamento.repository integração concorrência', () => {
         const payload = {
             clienteId: entidades.clienteId,
             servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
             dataHoraInicio: inicio,
             dataHoraFim: fim,
             status: StatusAgendamento.AGENDADO,
@@ -885,6 +904,7 @@ describe('agendamento.repository integração concorrência', () => {
             agendamentoRepository.criar({
                 clienteId: entidades.clienteId,
                 servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
                 dataHoraInicio: inicio,
                 dataHoraFim: fim,
                 status: StatusAgendamento.AGENDADO,
@@ -896,7 +916,10 @@ describe('agendamento.repository integração concorrência', () => {
 
         await expect(
             prisma.agendamento.findUnique({ where: { id: criado.id } }),
-        ).resolves.toMatchObject({ id: criado.id });
+        ).resolves.toMatchObject({
+            id: criado.id,
+            origem: 'PAINEL',
+        });
     });
 
     it('finaliza pacote somente quando todos os saldos de serviço zeram', async () => {
@@ -950,6 +973,7 @@ describe('agendamento.repository integração concorrência', () => {
         const primeiro = await agendamentoRepository.criar({
             clienteId: entidades.clienteId,
             servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
             pacoteClienteId: pacoteCliente.id,
             dataHoraInicio: new Date('2026-08-11T13:00:00.000Z'),
             dataHoraFim: new Date('2026-08-11T13:30:00.000Z'),
@@ -958,6 +982,7 @@ describe('agendamento.repository integração concorrência', () => {
         const segundo = await agendamentoRepository.criar({
             clienteId: entidades.clienteId,
             servicoId: segundoServico.id,
+            origem: OrigemAgendamento.PAINEL,
             pacoteClienteId: pacoteCliente.id,
             dataHoraInicio: new Date('2026-08-11T14:00:00.000Z'),
             dataHoraFim: new Date('2026-08-11T14:45:00.000Z'),

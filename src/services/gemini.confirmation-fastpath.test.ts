@@ -629,6 +629,9 @@ describe('gemini confirmation fast path', () => {
         await processarMensagemWhatsapp(phone, 'sim', 'message-confirm');
 
         expect(mocks.createBooking).toHaveBeenCalledTimes(1);
+        expect(mocks.createBooking.mock.calls[0][0]).toMatchObject({
+            origem: 'GEMINI',
+        });
         expect(mocks.createBooking.mock.calls[0][1]).toEqual({
             minAntecedenciaMinutos: 60,
         });
