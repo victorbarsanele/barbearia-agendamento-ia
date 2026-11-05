@@ -4,7 +4,10 @@ import {
     type ReativacaoEnvio,
 } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
-import { REATIVACAO_COOLDOWN_DIAS } from '../config/reativacao';
+import {
+    REATIVACAO_COOLDOWN_DIAS,
+    REATIVACAO_PENDENTE_EXPIRA_MS,
+} from '../config/reativacao';
 import { estaEmCooldown } from '../utils/reativacao-cooldown';
 
 export type UltimaReativacao = Pick<
@@ -44,11 +47,17 @@ export interface ReativacaoRepository {
     ): Promise<ResultadoReservaReativacao>;
     marcarEnvioAceito(envioId: string, ycloudMessageId: string): Promise<void>;
     marcarEnvioFalhou(envioId: string, motivo: string): Promise<void>;
+    atualizarStatusPorYCloudMessageId(
+        ycloudMessageId: string,
+        status: 'ENTREGUE' | 'FALHOU',
+        motivoFalha: string | null,
+    ): Promise<boolean>;
     buscarUltimasReativacoesPorClientes(
         clienteIds: string[],
     ): Promise<Map<string, UltimaReativacao>>;
     buscarResumoReativacoesPorClientes(
         clienteIds: string[],
+        agora?: Date,
     ): Promise<Map<string, ResumoReativacoesCliente>>;
 }
 
@@ -102,6 +111,22 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
             if (cliente.optOutMarketingEm !== null) {
                 return { ok: false, motivo: 'OPT_OUT' };
             }
+
+            await tx.reativacaoEnvio.updateMany({
+                where: {
+                    clienteId,
+                    status: StatusReativacaoEnvio.PENDENTE,
+                    criadoEm: {
+                        lt: new Date(
+                            agora.getTime() - REATIVACAO_PENDENTE_EXPIRA_MS,
+                        ),
+                    },
+                },
+                data: {
+                    status: StatusReativacaoEnvio.FALHOU,
+                    motivoFalha: 'PENDENTE_EXPIRADA',
+                },
+            });
 
             const inicioCooldown = new Date(
                 agora.getTime() -
@@ -164,6 +189,49 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
         });
     }
 
+    async atualizarStatusPorYCloudMessageId(
+        ycloudMessageId: string,
+        status: 'ENTREGUE' | 'FALHOU',
+        motivoFalha: string | null,
+    ): Promise<boolean> {
+        const prisma = await this.getPrisma();
+        return prisma.$transaction(async (tx) => {
+            const statusPermitidos =
+                status === StatusReativacaoEnvio.ENTREGUE
+                    ? [
+                          StatusReativacaoEnvio.PENDENTE,
+                          StatusReativacaoEnvio.ACEITA,
+                          StatusReativacaoEnvio.FALHOU,
+                      ]
+                    : [
+                          StatusReativacaoEnvio.PENDENTE,
+                          StatusReativacaoEnvio.ACEITA,
+                      ];
+            const resultado = await tx.reativacaoEnvio.updateMany({
+                where: {
+                    ycloudMessageId,
+                    status: { in: statusPermitidos },
+                },
+                data: {
+                    status,
+                    motivoFalha:
+                        status === StatusReativacaoEnvio.ENTREGUE
+                            ? null
+                            : motivoFalha,
+                },
+            });
+            if (resultado.count > 0) {
+                return true;
+            }
+
+            const existente = await tx.reativacaoEnvio.findFirst({
+                where: { ycloudMessageId },
+                select: { id: true },
+            });
+            return existente !== null;
+        });
+    }
+
     async buscarUltimasReativacoesPorClientes(
         clienteIds: string[],
     ): Promise<Map<string, UltimaReativacao>> {
@@ -181,6 +249,7 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
 
     async buscarResumoReativacoesPorClientes(
         clienteIds: string[],
+        agora = new Date(),
     ): Promise<Map<string, ResumoReativacoesCliente>> {
         if (clienteIds.length === 0) {
             return new Map();
@@ -198,12 +267,23 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
         };
 
         const prisma = await this.getPrisma();
+        const pendenteExpiraAntes = new Date(
+            agora.getTime() - REATIVACAO_PENDENTE_EXPIRA_MS,
+        );
         const rows = await prisma.$queryRaw<ResumoRaw[]>(Prisma.sql`
             WITH "clientesSolicitados" AS (
                 SELECT UNNEST(ARRAY[${Prisma.join(clienteIds)}]::text[]) AS "clienteId"
             ),
             "ultimas" AS (
-                SELECT DISTINCT ON ("clienteId") "clienteId", "status", "criadoEm"
+                SELECT DISTINCT ON ("clienteId")
+                    "clienteId",
+                    CASE
+                        WHEN "status" = ${StatusReativacaoEnvio.PENDENTE}::"StatusReativacaoEnvio"
+                          AND "criadoEm" < ${pendenteExpiraAntes}
+                        THEN ${StatusReativacaoEnvio.FALHOU}::"StatusReativacaoEnvio"
+                        ELSE "status"
+                    END AS "status",
+                    "criadoEm"
                 FROM "reativacoes_envios"
                 WHERE "clienteId" IN (${Prisma.join(clienteIds)})
                 ORDER BY "clienteId", "criadoEm" DESC, "id" DESC
@@ -213,6 +293,10 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
                 FROM "reativacoes_envios"
                 WHERE "clienteId" IN (${Prisma.join(clienteIds)})
                   AND "status" <> ${StatusReativacaoEnvio.FALHOU}::"StatusReativacaoEnvio"
+                                    AND NOT (
+                                            "status" = ${StatusReativacaoEnvio.PENDENTE}::"StatusReativacaoEnvio"
+                                            AND "criadoEm" < ${pendenteExpiraAntes}
+                                    )
                 ORDER BY "clienteId", "criadoEm" DESC, "id" DESC
             )
             SELECT

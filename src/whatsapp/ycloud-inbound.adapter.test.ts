@@ -358,7 +358,7 @@ describe('YCloud inbound adapter', () => {
         expect(canonicalizeYCloudPhone('5511998765432')).toBe('5511998765432');
     });
 
-    it('parses echoes and ignores unknown event types', () => {
+    it('parses echoes and status updates, ignoring unknown event types', () => {
         expect(
             parseYCloudWebhookEvent({
                 id: 'event-1',
@@ -400,7 +400,26 @@ describe('YCloud inbound adapter', () => {
             phone: '5511999999999',
         });
         expect(
-            parseYCloudWebhookEvent({ type: 'whatsapp.message.updated' }),
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.message.updated',
+                whatsappMessage: {
+                    id: 'ycloud-message-id',
+                    wamid: 'wamid-message-id',
+                    status: 'failed',
+                    errorCode: 131000,
+                    errorMessage: 'Temporary provider error',
+                },
+            }),
+        ).toEqual({
+            kind: 'status',
+            id: 'ycloud-message-id',
+            wamid: 'wamid-message-id',
+            status: 'failed',
+            errorCode: '131000',
+            errorMessage: 'Temporary provider error',
+        });
+        expect(
+            parseYCloudWebhookEvent({ type: 'whatsapp.message.deleted' }),
         ).toEqual({ kind: 'ignored' });
     });
 

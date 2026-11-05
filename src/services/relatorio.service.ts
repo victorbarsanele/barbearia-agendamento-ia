@@ -8,6 +8,7 @@ import { getReativacaoRepository } from '../repositories/reativacao.repository';
 import {
     calcularFimCooldown,
     estaEmCooldown,
+    normalizarTentativaReativacao,
 } from '../utils/reativacao-cooldown';
 import {
     canonicalizarTelefoneWhatsApp,
@@ -140,23 +141,31 @@ export async function buscarClientesInativos(
     const tentativas =
         await getReativacaoRepository().buscarResumoReativacoesPorClientes(
             resultado.itens.map((item) => item.clienteId),
+            agora,
         );
 
     const itens = resultado.itens.map((item) => {
         const { optOutMarketing, ...dadosCliente } = item;
         const resumo = tentativas.get(item.clienteId);
-        const ultimaNaoFalhada = resumo?.ultimaNaoFalhada ?? null;
-        const fimCooldown = calcularFimCooldown(ultimaNaoFalhada);
+        const ultimaNaoFalhada = normalizarTentativaReativacao(
+            resumo?.ultimaNaoFalhada ?? null,
+            agora,
+        );
+        const ultimaTentativa = normalizarTentativaReativacao(
+            resumo?.ultimaTentativa ?? null,
+            agora,
+        );
+        const fimCooldown = calcularFimCooldown(ultimaNaoFalhada, agora);
         const emCooldown = estaEmCooldown(ultimaNaoFalhada, agora);
         const bloqueio: ItemRelatorioClienteInativo['reativacaoBloqueio'] =
             optOutMarketing ? 'OPT_OUT' : emCooldown ? 'COOLDOWN' : null;
 
         return {
             ...dadosCliente,
-            ultimaTentativa: resumo?.ultimaTentativa
+            ultimaTentativa: ultimaTentativa
                 ? {
-                      status: resumo.ultimaTentativa.status,
-                      criadoEm: resumo.ultimaTentativa.criadoEm.toISOString(),
+                      status: ultimaTentativa.status,
+                      criadoEm: ultimaTentativa.criadoEm.toISOString(),
                   }
                 : null,
             podeReativar: bloqueio === null,

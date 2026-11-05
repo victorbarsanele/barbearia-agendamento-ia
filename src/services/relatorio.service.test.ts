@@ -256,7 +256,59 @@ describe('relatorio.service.buscarAtendimentos', () => {
         });
         expect(
             reativacaoRepositoryMock.buscarResumoReativacoesPorClientes,
-        ).toHaveBeenCalledWith(['cliente-1']);
+        ).toHaveBeenCalledWith(['cliente-1'], agora);
+    });
+
+    it('devolve PENDENTE expirado como FALHOU e libera reativação', async () => {
+        vi.mocked(numeroIgnoradoWhatsAppService.listar).mockResolvedValue([]);
+        vi.mocked(relatorioRepository.listarClientesInativos).mockResolvedValue(
+            {
+                total: 1,
+                itens: [
+                    {
+                        clienteId: 'cliente-1',
+                        nome: 'Cliente Teste',
+                        telefone: '5511999999999',
+                        ultimaVisita: '2026-08-01',
+                        diasSemVir: 70,
+                        ultimoServico: 'Corte',
+                        totalVisitas: 4,
+                        pacoteAtivoComSaldo: false,
+                        optOutMarketing: false,
+                    },
+                ],
+            },
+        );
+        const pendenteAntigo = new Date(agora.getTime() - 10 * 60 * 1000 - 1);
+        reativacaoRepositoryMock.buscarResumoReativacoesPorClientes.mockResolvedValue(
+            new Map([
+                [
+                    'cliente-1',
+                    {
+                        ultimaTentativa: {
+                            status: 'PENDENTE',
+                            criadoEm: pendenteAntigo,
+                        },
+                        ultimaNaoFalhada: {
+                            status: 'PENDENTE',
+                            criadoEm: pendenteAntigo,
+                        },
+                    },
+                ],
+            ]),
+        );
+
+        const resultado = await buscarClientesInativos({}, agora);
+
+        expect(resultado.itens[0]).toMatchObject({
+            ultimaTentativa: {
+                status: 'FALHOU',
+                criadoEm: pendenteAntigo.toISOString(),
+            },
+            podeReativar: true,
+            reativacaoBloqueio: null,
+            reativacaoBloqueadaAte: null,
+        });
     });
 
     it('marca opt-out como não reativável mesmo sem cooldown', async () => {

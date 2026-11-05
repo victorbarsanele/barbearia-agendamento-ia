@@ -1,6 +1,7 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { processarStatusReativacao } from '../services/reativacao-status.service';
 import {
     buscarClientePorTelefoneVariantes,
     registrarRespostaHumanaIdempotente,
@@ -67,6 +68,26 @@ export async function receberYCloudWebhook(
     }
 
     const event = parseYCloudWebhookEvent(body);
+    if (event.kind === 'status') {
+        if (getWhatsAppProvider() !== 'ycloud') {
+            void reply.status(200).send({ ok: true });
+            return;
+        }
+
+        try {
+            await processarStatusReativacao(event);
+        } catch {
+            console.error(
+                '[YCLOUD WEBHOOK] Falha ao processar status de mensagem.',
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
+
+        void reply.status(200).send({ ok: true });
+        return;
+    }
+
     if (event.kind === 'echo') {
         console.info('[YCLOUD WEBHOOK] Estrutura de eco recebida', {
             ...event.structure,

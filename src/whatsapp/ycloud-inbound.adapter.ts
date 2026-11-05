@@ -19,6 +19,7 @@ const YCLOUD_NON_TEXT_TYPES = [
 
 export type YCloudWebhookEvent =
     | { kind: 'message'; message: IncomingWhatsAppMessage }
+    | YCloudMessageStatusEvent
     | {
           kind: 'echo';
           messageId: string | null;
@@ -28,6 +29,15 @@ export type YCloudWebhookEvent =
           structure: YCloudEchoStructure;
       }
     | { kind: 'ignored' };
+
+export interface YCloudMessageStatusEvent {
+    kind: 'status';
+    id: string | null;
+    wamid: string | null;
+    status: string | null;
+    errorCode: string | null;
+    errorMessage: string | null;
+}
 
 export interface YCloudEchoStructure {
     eventKeys: string[];
@@ -48,6 +58,16 @@ function asRecord(value: unknown): AnyRecord | null {
 function stringField(record: AnyRecord | null, field: string): string | null {
     const value = record?.[field];
     return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function stringOrNumberField(
+    record: AnyRecord | null,
+    field: string,
+): string | null {
+    const value = record?.[field];
+    return typeof value === 'string' || typeof value === 'number'
+        ? String(value)
+        : null;
 }
 
 function valueType(value: unknown): string {
@@ -145,6 +165,18 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
             sendTime: parseDateField(eventPayload, 'sendTime'),
             messageType: stringField(eventPayload, 'type'),
             structure: getEchoStructure(root, eventPayload),
+        };
+    }
+
+    if (eventType === 'whatsapp.message.updated') {
+        const payload = asRecord(root?.whatsappMessage);
+        return {
+            kind: 'status',
+            id: stringField(payload, 'id'),
+            wamid: stringField(payload, 'wamid'),
+            status: stringField(payload, 'status'),
+            errorCode: stringOrNumberField(payload, 'errorCode'),
+            errorMessage: stringField(payload, 'errorMessage'),
         };
     }
 

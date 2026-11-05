@@ -42,4 +42,25 @@ describe('cooldown de reativação', () => {
             }),
         ).toBeNull();
     });
+
+    it('trata PENDENTE com mais de dez minutos como falha', () => {
+        const agora = new Date('2026-11-04T12:00:00.000Z');
+        const expirada = {
+            status: StatusReativacaoEnvio.PENDENTE,
+            criadoEm: new Date(agora.getTime() - 10 * 60 * 1000 - 1),
+        };
+
+        expect(estaEmCooldown(expirada, agora)).toBe(false);
+        expect(calcularFimCooldown(expirada, agora)).toBeNull();
+    });
+
+    it('mantém PENDENTE exatamente no limite de dez minutos', () => {
+        const agora = new Date('2026-11-04T12:00:00.000Z');
+        const pendente = {
+            status: StatusReativacaoEnvio.PENDENTE,
+            criadoEm: new Date(agora.getTime() - 10 * 60 * 1000),
+        };
+
+        expect(estaEmCooldown(pendente, agora)).toBe(true);
+    });
 });

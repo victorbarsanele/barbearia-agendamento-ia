@@ -79,6 +79,11 @@ describe('PrismaReativacaoRepository integração', () => {
             return;
         }
 
+        await repository.marcarEnvioAceito(
+            reserva.envioId,
+            'ycloud-cooldown-test',
+        );
+
         await expect(
             repository.reservarEnvioReativacao(
                 clienteId!,
@@ -113,6 +118,119 @@ describe('PrismaReativacaoRepository integração', () => {
             id: reserva.envioId,
             status: StatusReativacaoEnvio.ACEITA,
             ycloudMessageId: 'ycloud-123',
+        });
+    });
+
+    it('normaliza PENDENTE expirado na última tentativa e o exclui das não falhadas', async () => {
+        const agora = new Date('2026-11-04T12:00:00.000Z');
+        const aceitaEm = new Date(agora.getTime() - 20 * 60 * 1000);
+        const pendenteEm = new Date(agora.getTime() - 11 * 60 * 1000);
+        await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: clienteId!,
+                status: StatusReativacaoEnvio.ACEITA,
+                criadoEm: aceitaEm,
+            },
+        });
+        await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: clienteId!,
+                status: StatusReativacaoEnvio.PENDENTE,
+                criadoEm: pendenteEm,
+            },
+        });
+
+        const resumo = await repository.buscarResumoReativacoesPorClientes(
+            [clienteId!],
+            agora,
+        );
+
+        expect(resumo.get(clienteId!)).toEqual({
+            ultimaTentativa: {
+                status: StatusReativacaoEnvio.FALHOU,
+                criadoEm: pendenteEm,
+            },
+            ultimaNaoFalhada: {
+                status: StatusReativacaoEnvio.ACEITA,
+                criadoEm: aceitaEm,
+            },
+        });
+    });
+
+    it('marca PENDENTE expirado como falha antes de reservar novo envio', async () => {
+        const agora = new Date();
+        const tentativaAntiga = await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: clienteId!,
+                status: StatusReativacaoEnvio.PENDENTE,
+                criadoEm: new Date(agora.getTime() - 11 * 60 * 1000),
+            },
+        });
+
+        const reserva = await repository.reservarEnvioReativacao(
+            clienteId!,
+            agora,
+        );
+
+        expect(reserva.ok).toBe(true);
+        expect(
+            await prisma.reativacaoEnvio.findUnique({
+                where: { id: tentativaAntiga.id },
+                select: { status: true, motivoFalha: true },
+            }),
+        ).toEqual({
+            status: StatusReativacaoEnvio.FALHOU,
+            motivoFalha: 'PENDENTE_EXPIRADA',
+        });
+    });
+
+    it('aplica atualizações de status monotônicas por ycloudMessageId', async () => {
+        const ycloudMessageId = `ycloud-status-${RUN_ID}`;
+        const tentativa = await prisma.reativacaoEnvio.create({
+            data: {
+                clienteId: clienteId!,
+                ycloudMessageId,
+                status: StatusReativacaoEnvio.ACEITA,
+            },
+        });
+
+        await expect(
+            repository.atualizarStatusPorYCloudMessageId(
+                ycloudMessageId,
+                'FALHOU',
+                '131000: provider error',
+            ),
+        ).resolves.toBe(true);
+        await expect(
+            repository.atualizarStatusPorYCloudMessageId(
+                ycloudMessageId,
+                'ENTREGUE',
+                null,
+            ),
+        ).resolves.toBe(true);
+        await expect(
+            repository.atualizarStatusPorYCloudMessageId(
+                ycloudMessageId,
+                'FALHOU',
+                'late failure',
+            ),
+        ).resolves.toBe(true);
+        await expect(
+            repository.atualizarStatusPorYCloudMessageId(
+                ycloudMessageId,
+                'ENTREGUE',
+                null,
+            ),
+        ).resolves.toBe(true);
+
+        await expect(
+            prisma.reativacaoEnvio.findUnique({
+                where: { id: tentativa.id },
+                select: { status: true, motivoFalha: true },
+            }),
+        ).resolves.toEqual({
+            status: StatusReativacaoEnvio.ENTREGUE,
+            motivoFalha: null,
         });
     });
 

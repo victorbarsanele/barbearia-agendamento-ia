@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
+import { processarStatusReativacao } from '../services/reativacao-status.service';
 import {
     buscarClientePorTelefoneVariantes,
     registrarRespostaHumanaIdempotente,
@@ -25,10 +26,14 @@ const geminiMocks = vi.hoisted(() => ({
 const reativacaoMocks = vi.hoisted(() => ({
     registrarOptOutMarketing: vi.fn(),
 }));
+const statusReativacaoMock = vi.hoisted(() => ({
+    processarStatusReativacao: vi.fn(),
+}));
 
 vi.mock('../services/processed-whatsapp-message.service', () => ({
     registrarMensagemProcessada: vi.fn(),
 }));
+vi.mock('../services/reativacao-status.service', () => statusReativacaoMock);
 vi.mock('../services/whatsapp-incoming-message.service', () => ({
     processarMensagemRecebida: vi.fn(),
 }));
@@ -58,6 +63,7 @@ const sendTextMock = vi.mocked(sendWhatsAppText);
 const usernameMock = vi.mocked(avisarBarbeiroUsuarioSemTelefone);
 const ignoredMock = vi.mocked(numeroEstaIgnorado);
 const optOutMock = vi.mocked(reativacaoMocks.registrarOptOutMarketing);
+const statusMock = vi.mocked(processarStatusReativacao);
 const webhookSecret = 'ycloud-test-secret';
 
 function makeReply() {
@@ -125,6 +131,7 @@ beforeEach(() => {
     findClientMock.mockResolvedValue({ id: 'cliente-1' } as never);
     sendTextMock.mockResolvedValue();
     optOutMock.mockResolvedValue(undefined);
+    statusMock.mockResolvedValue(undefined);
     usernameMock.mockResolvedValue();
     ignoredMock.mockResolvedValue(false);
 });
@@ -174,6 +181,19 @@ describe('YCloud webhook controller', () => {
         vi.stubEnv('YCLOUD_WEBHOOK_SECRET', '');
         await receberYCloudWebhook(makeRequest(inboundBody()), missingSecret);
         expect(missingSecret.status).toHaveBeenCalledWith(401);
+
+        const invalidStatusSignature = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                {
+                    type: 'whatsapp.message.updated',
+                    whatsappMessage: { id: 'ycloud-id', status: 'delivered' },
+                },
+                null,
+            ),
+            invalidStatusSignature,
+        );
+        expect(invalidStatusSignature.status).toHaveBeenCalledWith(401);
         expect(registerMock).not.toHaveBeenCalled();
     });
 
@@ -364,7 +384,7 @@ describe('YCloud webhook controller', () => {
     it('returns 200 for unknown events and echoes without database processing', async () => {
         const unknownReply = makeReply();
         await receberYCloudWebhook(
-            makeRequest(JSON.stringify({ type: 'whatsapp.message.updated' })),
+            makeRequest(JSON.stringify({ type: 'whatsapp.message.deleted' })),
             unknownReply,
         );
         expect(unknownReply.status).toHaveBeenCalledWith(200);
@@ -382,6 +402,55 @@ describe('YCloud webhook controller', () => {
         );
         expect(echoReply.status).toHaveBeenCalledWith(200);
         expect(registerMock).not.toHaveBeenCalled();
+    });
+
+    it('processes status events without allowlist or disallow-list filtering', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const reply = makeReply();
+        const event = {
+            type: 'whatsapp.message.updated',
+            whatsappMessage: {
+                id: 'ycloud-message-id',
+                wamid: 'wamid-message-id',
+                status: 'delivered',
+            },
+        };
+
+        await receberYCloudWebhook(makeRequest(event), reply);
+
+        expect(statusMock).toHaveBeenCalledWith({
+            kind: 'status',
+            id: 'ycloud-message-id',
+            wamid: 'wamid-message-id',
+            status: 'delivered',
+            errorCode: null,
+            errorMessage: null,
+        });
+        expect(ignoredMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+        expect(log).not.toHaveBeenCalled();
+        log.mockRestore();
+    });
+
+    it('returns 500 when status persistence fails transiently', async () => {
+        statusMock.mockRejectedValueOnce(new Error('database unavailable'));
+        const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest({
+                type: 'whatsapp.message.updated',
+                whatsappMessage: { id: 'ycloud-id', status: 'read' },
+            }),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(log).toHaveBeenCalledWith(
+            '[YCLOUD WEBHOOK] Falha ao processar status de mensagem.',
+        );
+        log.mockRestore();
     });
 
     it('logs and acknowledges echo even when Evolution is active', async () => {
