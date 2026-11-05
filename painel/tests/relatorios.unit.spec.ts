@@ -37,6 +37,10 @@ const clienteInativo: ItemClienteInativo = {
     ultimoServico: '=Corte; clássico',
     totalVisitas: 8,
     pacoteAtivoComSaldo: true,
+    ultimaTentativa: null,
+    podeReativar: true,
+    reativacaoBloqueio: null,
+    reativacaoBloqueadaAte: null,
 };
 
 const pacoteBase: ItemSaldoPacote = {

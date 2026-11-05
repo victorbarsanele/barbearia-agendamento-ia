@@ -3,6 +3,7 @@ import {
     type RelatorioClientesInativos,
 } from '../services/relatorios.service.js';
 import { getBrazilDateKey } from './dateTime.js';
+import { formatBrazilDateKey } from './dateTime.js';
 import { formatarTelefone } from './formatarTelefone.js';
 import { neutralizarFormulaCsv, serializarCsv } from './csv.js';
 import { formatarDataRelatorio } from './relatorios.js';
@@ -62,4 +63,93 @@ export function nomeArquivoCsvClientesInativos(
 
 export function formatarTelefoneCliente(telefone: string): string {
     return telefone.trim() ? formatarTelefone(telefone) : 'Não informado';
+}
+
+export interface EstadoReativacao {
+    tipo: 'OPT_OUT' | 'COOLDOWN' | 'FALHOU' | 'DISPONIVEL' | 'INDISPONIVEL';
+    mensagem: string | null;
+    botaoTexto: 'Enviar reativação' | 'Reenviar' | null;
+    envioDesabilitado: boolean;
+    whatsappDesabilitado: boolean;
+    statusSecundario: string | null;
+}
+
+export function formatarDiaMesBrasil(dataIso: string | null): string | null {
+    if (!dataIso) return null;
+    const data = new Date(dataIso);
+    if (Number.isNaN(data.getTime())) return null;
+    return formatBrazilDateKey(getBrazilDateKey(data)).slice(0, 5);
+}
+
+export function derivarEstadoReativacao(
+    item: ItemClienteInativo,
+): EstadoReativacao {
+    if (item.reativacaoBloqueio === 'OPT_OUT') {
+        return {
+            tipo: 'OPT_OUT',
+            mensagem: 'Pediu para não receber',
+            botaoTexto: null,
+            envioDesabilitado: true,
+            whatsappDesabilitado: true,
+            statusSecundario: null,
+        };
+    }
+
+    if (item.reativacaoBloqueio === 'COOLDOWN') {
+        const dia = formatarDiaMesBrasil(item.reativacaoBloqueadaAte);
+        const statusUltimaTentativa = item.ultimaTentativa?.status;
+        const statusSecundario =
+            statusUltimaTentativa === 'PENDENTE'
+                ? 'Enviando'
+                : statusUltimaTentativa === 'ACEITA'
+                  ? 'Enviada'
+                  : statusUltimaTentativa === 'ENTREGUE'
+                    ? 'Entregue'
+                    : null;
+
+        return {
+            tipo: 'COOLDOWN',
+            mensagem: dia
+                ? `Reativação em espera até ${dia}`
+                : 'Reativação em espera',
+            botaoTexto: 'Enviar reativação',
+            envioDesabilitado: true,
+            whatsappDesabilitado: false,
+            statusSecundario: statusSecundario ?? null,
+        };
+    }
+
+    if (!item.podeReativar) {
+        return {
+            tipo: 'INDISPONIVEL',
+            mensagem: 'Reativação indisponível',
+            botaoTexto: null,
+            envioDesabilitado: true,
+            whatsappDesabilitado: false,
+            statusSecundario: null,
+        };
+    }
+
+    if (item.ultimaTentativa?.status === 'FALHOU') {
+        const dia = formatarDiaMesBrasil(item.ultimaTentativa.criadoEm);
+        return {
+            tipo: 'FALHOU',
+            mensagem: dia
+                ? `Último envio falhou em ${dia}`
+                : 'Último envio falhou',
+            botaoTexto: 'Reenviar',
+            envioDesabilitado: false,
+            whatsappDesabilitado: false,
+            statusSecundario: null,
+        };
+    }
+
+    return {
+        tipo: 'DISPONIVEL',
+        mensagem: null,
+        botaoTexto: 'Enviar reativação',
+        envioDesabilitado: false,
+        whatsappDesabilitado: false,
+        statusSecundario: null,
+    };
 }

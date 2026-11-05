@@ -22,6 +22,23 @@ export interface RelatorioAtendimentos {
     };
 }
 
+export type StatusReativacaoEnvio =
+    | 'PENDENTE'
+    | 'ACEITA'
+    | 'ENTREGUE'
+    | 'FALHOU';
+
+export type MotivoErroReativacao =
+    | 'CLIENTE_NAO_ENCONTRADO'
+    | 'OPT_OUT'
+    | 'COOLDOWN'
+    | 'TELEFONE_AUSENTE'
+    | 'TELEFONE_INVALIDO'
+    | 'NUMERO_IGNORADO'
+    | 'FORA_DA_ALLOWLIST'
+    | 'FALHA_ENVIO'
+    | 'PROVEDOR_SEM_SUPORTE';
+
 export interface ItemClienteInativo {
     clienteId: string;
     nome: string;
@@ -31,6 +48,36 @@ export interface ItemClienteInativo {
     ultimoServico: string | null;
     totalVisitas: number;
     pacoteAtivoComSaldo: boolean;
+    ultimaTentativa: {
+        status: StatusReativacaoEnvio;
+        criadoEm: string;
+    } | null;
+    podeReativar: boolean;
+    reativacaoBloqueio: 'OPT_OUT' | 'COOLDOWN' | null;
+    reativacaoBloqueadaAte: string | null;
+}
+
+export interface EnviarReativacaoResultado {
+    envioId: string;
+    status: 'ACEITA';
+}
+
+export class ErroReativacao extends Error {
+    readonly status: number;
+    readonly motivo: MotivoErroReativacao | null;
+    readonly bloqueadoAte: string | null;
+
+    constructor(
+        status: number,
+        motivo: MotivoErroReativacao | null,
+        bloqueadoAte: string | null = null,
+    ) {
+        super('Falha ao enviar reativação.');
+        this.name = 'ErroReativacao';
+        this.status = status;
+        this.motivo = motivo;
+        this.bloqueadoAte = bloqueadoAte;
+    }
 }
 
 export interface RelatorioClientesInativos {
@@ -115,6 +162,43 @@ export async function buscarClientesInativos(
         `/api/relatorios/clientes-inativos?${parametros.toString()}`,
     );
     return handleResponse<RelatorioClientesInativos>(response);
+}
+
+export async function enviarReativacaoWhatsApp(
+    clienteId: string,
+): Promise<EnviarReativacaoResultado> {
+    const response = await apiFetch(
+        `/api/clientes/${encodeURIComponent(clienteId)}/reativacao-whatsapp`,
+        { method: 'POST' },
+    );
+
+    if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+            motivo?: string;
+            bloqueadoAte?: string;
+        } | null;
+        const motivos: MotivoErroReativacao[] = [
+            'CLIENTE_NAO_ENCONTRADO',
+            'OPT_OUT',
+            'COOLDOWN',
+            'TELEFONE_AUSENTE',
+            'TELEFONE_INVALIDO',
+            'NUMERO_IGNORADO',
+            'FORA_DA_ALLOWLIST',
+            'FALHA_ENVIO',
+            'PROVEDOR_SEM_SUPORTE',
+        ];
+        const motivo = motivos.includes(body?.motivo as MotivoErroReativacao)
+            ? (body?.motivo as MotivoErroReativacao)
+            : null;
+        throw new ErroReativacao(
+            response.status,
+            motivo,
+            body?.bloqueadoAte ?? null,
+        );
+    }
+
+    return (await response.json()) as EnviarReativacaoResultado;
 }
 
 export async function buscarSaldoPacotes(

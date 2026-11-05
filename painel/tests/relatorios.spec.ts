@@ -25,6 +25,14 @@ interface RespostaMock {
     body: unknown;
 }
 
+interface OpcoesInterceptacaoInativos {
+    chamadasPost?: string[];
+    responderPost?: (
+        chamada: number,
+        route: Route,
+    ) => Promise<RespostaMock | null>;
+}
+
 interface RelatorioInativosMock {
     geradoEm: string;
     filtro: { diasMin: number; diasMax: number };
@@ -39,6 +47,13 @@ interface RelatorioInativosMock {
         ultimoServico: string | null;
         totalVisitas: number;
         pacoteAtivoComSaldo: boolean;
+        ultimaTentativa: {
+            status: 'PENDENTE' | 'ACEITA' | 'ENTREGUE' | 'FALHOU';
+            criadoEm: string;
+        } | null;
+        podeReativar: boolean;
+        reativacaoBloqueio: 'OPT_OUT' | 'COOLDOWN' | null;
+        reativacaoBloqueadaAte: string | null;
     }[];
 }
 
@@ -57,6 +72,10 @@ const relatorioInativosComDados: RelatorioInativosMock = {
             ultimoServico: 'Corte clássico',
             totalVisitas: 8,
             pacoteAtivoComSaldo: true,
+            ultimaTentativa: null,
+            podeReativar: true,
+            reativacaoBloqueio: null,
+            reativacaoBloqueadaAte: null,
         },
         {
             clienteId: 'cliente-sem-telefone',
@@ -67,6 +86,10 @@ const relatorioInativosComDados: RelatorioInativosMock = {
             ultimoServico: null,
             totalVisitas: 1,
             pacoteAtivoComSaldo: false,
+            ultimaTentativa: null,
+            podeReativar: true,
+            reativacaoBloqueio: null,
+            reativacaoBloqueadaAte: null,
         },
     ],
 };
@@ -131,6 +154,7 @@ async function interceptarApi(
 async function interceptarApiClientesInativos(
     page: Page,
     resposta: (chamada: number, route: Route) => Promise<RespostaMock>,
+    opcoes: OpcoesInterceptacaoInativos = {},
 ): Promise<string[]> {
     const chamadas: string[] = [];
 
@@ -142,6 +166,31 @@ async function interceptarApiClientesInativos(
             await route.fulfill({
                 status: 200,
                 json: { username: 'e2e', role: 'admin' },
+            });
+            return;
+        }
+
+        if (
+            request.method() === 'POST' &&
+            /^\/api\/clientes\/[^/]+\/reativacao-whatsapp$/.test(url.pathname)
+        ) {
+            opcoes.chamadasPost?.push(url.href);
+            const resultado = opcoes.responderPost
+                ? await opcoes.responderPost(
+                      opcoes.chamadasPost?.length ?? 1,
+                      route,
+                  )
+                : {
+                      status: 202,
+                      body: { envioId: 'envio-1', status: 'ACEITA' },
+                  };
+            if (resultado === null) {
+                await route.abort();
+                return;
+            }
+            await route.fulfill({
+                status: resultado.status,
+                json: resultado.body,
             });
             return;
         }
@@ -506,6 +555,228 @@ test('valida intervalo e apresenta resultados, pacote e ação WhatsApp somente 
         documento: document.documentElement.scrollWidth,
     }));
     expect(larguras.documento).toBeLessThanOrEqual(larguras.viewport);
+});
+
+test('confirma reativação elegível, cancela sem POST e refaz relatório no mobile', async ({
+    page,
+}) => {
+    await fixarData(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    const chamadasPost: string[] = [];
+    const chamadasGet = await interceptarApiClientesInativos(
+        page,
+        async () => {
+            if (chamadasPost.length === 0) return sucessoInativos();
+            return sucessoInativos({
+                ...relatorioInativosComDados,
+                itens: [
+                    {
+                        ...relatorioInativosComDados.itens[0],
+                        ultimaTentativa: {
+                            status: 'ACEITA',
+                            criadoEm: '2026-03-15T14:00:00.000Z',
+                        },
+                        podeReativar: false,
+                        reativacaoBloqueio: 'COOLDOWN',
+                        reativacaoBloqueadaAte: '2026-04-02T02:00:00.000Z',
+                    },
+                    relatorioInativosComDados.itens[1],
+                ],
+            });
+        },
+        { chamadasPost },
+    );
+
+    await page.goto('/relatorios?relatorio=inativos');
+    const card = page.getByTestId('cliente-inativo-card').first();
+    const acao = card.getByRole('button', {
+        name: 'Enviar reativação para Ana Silva',
+    });
+    await expect(acao).toBeVisible();
+    await acao.click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Ana Silva');
+    await expect(dialog).toContainText('+55 11 99999-9999');
+    await expect(dialog).toContainText('modelo aprovado do WhatsApp');
+    await expect(dialog).toContainText('Quero agendar');
+    await expect(dialog).toContainText('Não receber mais');
+    await expect(dialog).toContainText(
+        'cerca de R$ 0,32 por envio (mensagem de marketing da Meta)',
+    );
+    await dialog.getByRole('button', { name: 'Cancelar' }).click();
+    expect(chamadasPost).toHaveLength(0);
+
+    await acao.click();
+    await page.evaluate(() => window.scrollTo(0, 220));
+    const scrollAntes = await page.evaluate(() => window.scrollY);
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Enviar' })
+        .click();
+    await expect.poll(() => chamadasPost.length).toBe(1);
+    await expect(page.getByRole('status')).toContainText(
+        'Reativação enviada para Ana Silva.',
+    );
+    await expect(card).toContainText('Reativação em espera até 01/04');
+    await expect(card.getByText('Enviada')).toBeVisible();
+    await expect(
+        card.getByRole('button', { name: 'Enviar reativação para Ana Silva' }),
+    ).toBeDisabled();
+    await expect(
+        card.getByRole('link', { name: 'Abrir WhatsApp para Ana Silva' }),
+    ).toHaveAttribute('href', 'https://wa.me/5511999999999');
+    expect(new URL(chamadasGet[1]).searchParams.get('diasMin')).toBe('30');
+    expect(new URL(chamadasGet[1]).searchParams.get('diasMax')).toBe('180');
+    expect(await page.evaluate(() => window.scrollY)).toBe(scrollAntes);
+});
+
+test('clique duplo na confirmação gera um POST', async ({ page }) => {
+    await fixarData(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    const chamadasPost: string[] = [];
+    let liberarPost: (() => void) | undefined;
+    const postPendente = new Promise<void>((resolve) => {
+        liberarPost = resolve;
+    });
+    await interceptarApiClientesInativos(page, async () => sucessoInativos(), {
+        chamadasPost,
+        responderPost: async () => {
+            await postPendente;
+            return {
+                status: 202,
+                body: { envioId: 'envio-1', status: 'ACEITA' },
+            };
+        },
+    });
+
+    await page.goto('/relatorios?relatorio=inativos');
+    await page
+        .getByTestId('cliente-inativo-card')
+        .first()
+        .getByRole('button', { name: 'Enviar reativação para Ana Silva' })
+        .click();
+    const enviar = page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Enviar' });
+    await enviar.evaluate((button) => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await expect.poll(() => chamadasPost.length).toBe(1);
+    liberarPost?.();
+    await expect(page.getByRole('status')).toContainText('Reativação enviada');
+});
+
+test('prioriza opt-out, respeita cooldown e permite reenviar falha', async ({
+    page,
+}) => {
+    await fixarData(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    const itens = [
+        {
+            ...relatorioInativosComDados.itens[0],
+            reativacaoBloqueio: 'OPT_OUT' as const,
+            reativacaoBloqueadaAte: '2026-04-02T02:00:00.000Z',
+            podeReativar: false,
+        },
+        {
+            ...relatorioInativosComDados.itens[0],
+            clienteId: 'cliente-cooldown',
+            nome: 'Bruno Silva',
+            reativacaoBloqueio: 'COOLDOWN' as const,
+            reativacaoBloqueadaAte: '2026-03-17T02:00:00.000Z',
+            ultimaTentativa: {
+                status: 'ACEITA' as const,
+                criadoEm: '2026-03-15T14:00:00.000Z',
+            },
+            podeReativar: false,
+        },
+        {
+            ...relatorioInativosComDados.itens[0],
+            clienteId: 'cliente-falha',
+            nome: 'Carlos Silva',
+            ultimaTentativa: {
+                status: 'FALHOU' as const,
+                criadoEm: '2026-03-16T02:00:00.000Z',
+            },
+        },
+    ];
+    await interceptarApiClientesInativos(page, async () =>
+        sucessoInativos({
+            ...relatorioInativosComDados,
+            total: itens.length,
+            itens,
+        }),
+    );
+
+    await page.goto('/relatorios?relatorio=inativos');
+    const cards = page.getByTestId('cliente-inativo-card');
+    const optOut = cards.nth(0);
+    await expect(optOut).toContainText('Pediu para não receber');
+    await expect(
+        optOut.getByRole('button', { name: /Enviar reativação/ }),
+    ).toHaveCount(0);
+    await expect(optOut.getByRole('link')).toHaveCount(0);
+
+    const cooldown = cards.nth(1);
+    await expect(cooldown).toContainText('Reativação em espera até 16/03');
+    await expect(cooldown.getByText('Enviada')).toBeVisible();
+    await expect(
+        cooldown.getByRole('button', { name: /Enviar reativação/ }),
+    ).toBeDisabled();
+    await expect(
+        cooldown.getByRole('link', { name: /Abrir WhatsApp/ }),
+    ).toBeVisible();
+
+    const falha = cards.nth(2);
+    await expect(falha).toContainText('Último envio falhou em 15/03');
+    await expect(
+        falha.getByRole('button', { name: 'Reenviar para Carlos Silva' }),
+    ).toBeEnabled();
+});
+
+test('mapeia erros COOLDOWN, 422, 502 e falha de rede', async ({ page }) => {
+    await fixarData(page);
+    await page.setViewportSize({ width: 320, height: 800 });
+    const respostas: (RespostaMock | null)[] = [
+        {
+            status: 409,
+            body: {
+                motivo: 'COOLDOWN',
+                bloqueadoAte: '2026-03-17T02:00:00.000Z',
+            },
+        },
+        { status: 422, body: { motivo: 'NUMERO_IGNORADO' } },
+        { status: 502, body: { motivo: 'FALHA_ENVIO' } },
+        null,
+    ];
+    let indiceResposta = 0;
+    const chamadasPost: string[] = [];
+    await interceptarApiClientesInativos(page, async () => sucessoInativos(), {
+        chamadasPost,
+        responderPost: async () => respostas[indiceResposta++] ?? null,
+    });
+
+    for (const [indice, mensagem] of [
+        'Já houve um envio recente. Novo envio liberado em 16/03.',
+        'Este número está na lista de números ignorados.',
+        'Não foi possível enviar agora. Tente novamente em instantes.',
+        'Não foi possível enviar a reativação. Tente novamente.',
+    ].entries()) {
+        await page.goto('/relatorios?relatorio=inativos');
+        await page
+            .getByTestId('cliente-inativo-card')
+            .first()
+            .getByRole('button', { name: 'Enviar reativação para Ana Silva' })
+            .click();
+        await page
+            .getByRole('alertdialog')
+            .getByRole('button', { name: 'Enviar' })
+            .click();
+        await expect(page.getByRole('alert')).toHaveText(mensagem);
+        expect(chamadasPost).toHaveLength(indice + 1);
+    }
 });
 
 test('ignora respostas antigas quando uma busca mais recente termina primeiro', async ({

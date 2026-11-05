@@ -73,7 +73,7 @@ export function ConfirmDialog({
                 previouslyFocused?.isConnected &&
                 previouslyFocused !== document.body
             ) {
-                previouslyFocused.focus();
+                previouslyFocused.focus({ preventScroll: true });
             } else if (restoreFocusId) {
                 document.getElementById(restoreFocusId)?.focus();
             }

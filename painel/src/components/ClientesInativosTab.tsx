@@ -1,14 +1,19 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Download, MessageCircle, Search } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
+import { ConfirmDialog } from './ConfirmDialog';
 import { SkeletonCard } from './SkeletonCard';
 import {
     buscarClientesInativos,
+    enviarReativacaoWhatsApp,
+    ErroReativacao,
     type ItemClienteInativo,
     type RelatorioClientesInativos,
 } from '../services/relatorios.service';
 import {
+    derivarEstadoReativacao,
+    formatarDiaMesBrasil,
     formatarTelefoneCliente,
     montarCsvClientesInativos,
     nomeArquivoCsvClientesInativos,
@@ -16,6 +21,10 @@ import {
     validarIntervaloDiasInativos,
 } from '../utils/clientesInativos';
 import { formatarDataRelatorio } from '../utils/relatorios';
+
+// Fonte: tabela Meta, mensagens de marketing no Brasil, out/2026.
+const CUSTO_ESTIMADO_REATIVACAO =
+    'cerca de R$ 0,32 por envio (mensagem de marketing da Meta)';
 
 interface FiltroDias {
     diasMin: number;
@@ -58,9 +67,115 @@ function AcaoWhatsApp({ item }: { item: ItemClienteInativo }) {
             className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[8px] border border-[var(--color-border)] px-3 text-sm font-semibold text-[var(--color-text-primary)] transition hover:border-[var(--color-gold)] hover:text-[var(--color-gold)]"
         >
             <MessageCircle aria-hidden="true" className="h-4 w-4" />
-            WhatsApp
+            Abrir WhatsApp
         </a>
     );
+}
+
+function AcoesReativacao({
+    item,
+    enviando,
+    onEnviar,
+}: {
+    item: ItemClienteInativo;
+    enviando: boolean;
+    onEnviar: (item: ItemClienteInativo) => void;
+}) {
+    const estado = derivarEstadoReativacao(item);
+
+    return (
+        <div className="min-w-0 space-y-1.5">
+            {estado.mensagem && (
+                <p className="break-words text-xs font-medium text-[var(--color-text-secondary)]">
+                    {estado.mensagem}
+                </p>
+            )}
+            {estado.statusSecundario && (
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                    {estado.statusSecundario}
+                </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+                {estado.botaoTexto && (
+                    <Button
+                        type="button"
+                        disabled={estado.envioDesabilitado || enviando}
+                        aria-label={`${estado.botaoTexto} para ${nomeExibicao(item)}`}
+                        onClick={() => onEnviar(item)}
+                    >
+                        {enviando ? 'Enviando...' : estado.botaoTexto}
+                    </Button>
+                )}
+                {!estado.whatsappDesabilitado && <AcaoWhatsApp item={item} />}
+            </div>
+        </div>
+    );
+}
+
+function obterFeedbackErroReativacao(error: unknown): {
+    mensagem: string;
+    refetch: boolean;
+} {
+    if (!(error instanceof ErroReativacao)) {
+        return {
+            mensagem: 'Não foi possível enviar a reativação. Tente novamente.',
+            refetch: false,
+        };
+    }
+
+    switch (error.motivo) {
+        case 'OPT_OUT':
+            return {
+                mensagem:
+                    'Este cliente pediu para não receber mensagens promocionais.',
+                refetch: true,
+            };
+        case 'COOLDOWN': {
+            const dia = formatarDiaMesBrasil(error.bloqueadoAte);
+            return {
+                mensagem: dia
+                    ? `Já houve um envio recente. Novo envio liberado em ${dia}.`
+                    : 'Já houve um envio recente. Tente novamente mais tarde.',
+                refetch: true,
+            };
+        }
+        case 'TELEFONE_AUSENTE':
+        case 'TELEFONE_INVALIDO':
+            return {
+                mensagem: 'Telefone do cliente ausente ou inválido.',
+                refetch: false,
+            };
+        case 'NUMERO_IGNORADO':
+            return {
+                mensagem: 'Este número está na lista de números ignorados.',
+                refetch: false,
+            };
+        case 'FORA_DA_ALLOWLIST':
+            return {
+                mensagem: 'Número fora da lista de testes (allowlist).',
+                refetch: false,
+            };
+        case 'FALHA_ENVIO':
+            return {
+                mensagem:
+                    'Não foi possível enviar agora. Tente novamente em instantes.',
+                refetch: true,
+            };
+        case 'PROVEDOR_SEM_SUPORTE':
+            return {
+                mensagem:
+                    'O provedor de WhatsApp atual não suporta mensagens de modelo.',
+                refetch: false,
+            };
+        case 'CLIENTE_NAO_ENCONTRADO':
+            return { mensagem: 'Cliente não encontrado.', refetch: true };
+        default:
+            return {
+                mensagem:
+                    'Não foi possível enviar a reativação. Tente novamente.',
+                refetch: false,
+            };
+    }
 }
 
 function IndicadorPacote({ ativo }: { ativo: boolean }) {
@@ -84,6 +199,16 @@ export function ClientesInativosTab() {
         useState<RelatorioClientesInativos | null>(null);
     const [loading, setLoading] = useState(true);
     const [erro, setErro] = useState<string | null>(null);
+    const [feedback, setFeedback] = useState<{
+        tipo: 'sucesso' | 'erro';
+        mensagem: string;
+    } | null>(null);
+    const [clienteAConfirmar, setClienteAConfirmar] =
+        useState<ItemClienteInativo | null>(null);
+    const [enviosEmAndamento, setEnviosEmAndamento] = useState<Set<string>>(
+        () => new Set(),
+    );
+    const enviosAtivosRef = useRef(new Set<string>());
 
     const erroValidacao = validarIntervaloDiasInativos(diasMin, diasMax);
 
@@ -114,6 +239,7 @@ export function ClientesInativosTab() {
         setDiasMax(maximo);
         setRelatorio(null);
         setErro(null);
+        setFeedback(null);
         setLoading(true);
         setFiltro((atual) => ({
             diasMin: minimo,
@@ -133,6 +259,58 @@ export function ClientesInativosTab() {
         setErro(null);
         setLoading(true);
         setFiltro((atual) => ({ ...atual, tentativa: atual.tentativa + 1 }));
+    };
+
+    const atualizarRelatorio = async () => {
+        const resultado = await buscarClientesInativos(
+            filtro.diasMin,
+            filtro.diasMax,
+        );
+        setRelatorio(resultado);
+    };
+
+    const enviarReativacao = async () => {
+        const cliente = clienteAConfirmar;
+        if (!cliente || enviosAtivosRef.current.has(cliente.clienteId)) return;
+
+        enviosAtivosRef.current.add(cliente.clienteId);
+        setEnviosEmAndamento((atuais) =>
+            new Set(atuais).add(cliente.clienteId),
+        );
+        setFeedback(null);
+
+        let atualizar: boolean;
+        try {
+            await enviarReativacaoWhatsApp(cliente.clienteId);
+            setFeedback({
+                tipo: 'sucesso',
+                mensagem: `Reativação enviada para ${nomeExibicao(cliente)}.`,
+            });
+            atualizar = true;
+        } catch (error) {
+            const resultado = obterFeedbackErroReativacao(error);
+            setFeedback({ tipo: 'erro', mensagem: resultado.mensagem });
+            atualizar = resultado.refetch;
+        }
+
+        if (atualizar) {
+            try {
+                await atualizarRelatorio();
+            } catch {
+                setFeedback({
+                    tipo: 'erro',
+                    mensagem: 'Não foi possível atualizar o relatório.',
+                });
+            }
+        }
+
+        enviosAtivosRef.current.delete(cliente.clienteId);
+        setEnviosEmAndamento((atuais) => {
+            const proximo = new Set(atuais);
+            proximo.delete(cliente.clienteId);
+            return proximo;
+        });
+        setClienteAConfirmar(null);
     };
 
     const aplicarAtalho = (minimo: number) => {
@@ -236,6 +414,19 @@ export function ClientesInativosTab() {
                         Tentar novamente
                     </button>
                 </div>
+            )}
+
+            {feedback && (
+                <p
+                    role={feedback.tipo === 'sucesso' ? 'status' : 'alert'}
+                    className={`mb-4 rounded-[8px] border px-3 py-2 text-sm ${
+                        feedback.tipo === 'sucesso'
+                            ? 'border-[var(--color-gold)]/40 bg-[var(--color-gold-muted)] text-[var(--color-text-primary)]'
+                            : 'border-[var(--color-danger)]/40 bg-[var(--color-danger-muted)] text-[var(--color-danger-text)]'
+                    }`}
+                >
+                    {feedback.mensagem}
+                </p>
             )}
 
             {loading && (
@@ -383,8 +574,16 @@ export function ClientesInativosTab() {
                                                         }
                                                     />
                                                 </td>
-                                                <td className="px-4 py-3">
-                                                    <AcaoWhatsApp item={item} />
+                                                <td className="min-w-[230px] px-4 py-3">
+                                                    <AcoesReativacao
+                                                        item={item}
+                                                        enviando={enviosEmAndamento.has(
+                                                            item.clienteId,
+                                                        )}
+                                                        onEnviar={
+                                                            setClienteAConfirmar
+                                                        }
+                                                    />
                                                 </td>
                                             </tr>
                                         ))}
@@ -441,14 +640,22 @@ export function ClientesInativosTab() {
                                                         }
                                                     />
                                                 </div>
-                                                <div className="col-span-2 flex items-center justify-between gap-3">
+                                                <div className="col-span-2 flex flex-col gap-2 border-t border-[var(--color-border)] pt-3">
                                                     <span className="text-xs text-[var(--color-text-secondary)]">
                                                         {item.totalVisitas}{' '}
                                                         {item.totalVisitas === 1
                                                             ? 'visita'
                                                             : 'visitas'}
                                                     </span>
-                                                    <AcaoWhatsApp item={item} />
+                                                    <AcoesReativacao
+                                                        item={item}
+                                                        enviando={enviosEmAndamento.has(
+                                                            item.clienteId,
+                                                        )}
+                                                        onEnviar={
+                                                            setClienteAConfirmar
+                                                        }
+                                                    />
                                                 </div>
                                             </dl>
                                         </Card>
@@ -467,6 +674,42 @@ export function ClientesInativosTab() {
                     </p>
                 </section>
             )}
+
+            <ConfirmDialog
+                open={clienteAConfirmar !== null}
+                title="Confirmar reativação"
+                description={
+                    clienteAConfirmar
+                        ? `Enviar reativação para ${nomeExibicao(clienteAConfirmar)} (${formatarTelefoneCliente(clienteAConfirmar.telefone)})?`
+                        : ''
+                }
+                descriptionItems={[
+                    'Será enviado um modelo aprovado do WhatsApp com os botões “Quero agendar” e “Não receber mais”.',
+                    CUSTO_ESTIMADO_REATIVACAO,
+                ]}
+                confirmText="Enviar"
+                cancelText="Cancelar"
+                loadingText="Enviando..."
+                confirmVariant="primary"
+                cancelVariant="outline"
+                alertDialog
+                loading={
+                    clienteAConfirmar !== null &&
+                    enviosEmAndamento.has(clienteAConfirmar.clienteId)
+                }
+                onCancel={() => {
+                    if (
+                        !clienteAConfirmar ||
+                        enviosAtivosRef.current.has(clienteAConfirmar.clienteId)
+                    ) {
+                        return;
+                    }
+                    setClienteAConfirmar(null);
+                }}
+                onConfirm={() => {
+                    void enviarReativacao();
+                }}
+            />
         </div>
     );
 }
