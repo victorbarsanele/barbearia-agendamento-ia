@@ -12,7 +12,10 @@ beforeEach(() => {
         vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
-            json: vi.fn().mockResolvedValue({}),
+            json: vi.fn().mockResolvedValue({
+                id: 'ycloud-template-message-1',
+                status: 'accepted',
+            }),
         }),
     );
 });
@@ -96,6 +99,26 @@ describe('enviarNotificacaoWhatsApp', () => {
                 ],
             },
         });
+    });
+
+    it('accepts legacy template notification response without an ID', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+        vi.mocked(fetch).mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: vi.fn().mockResolvedValue({ status: 'accepted' }),
+        } as unknown as Response);
+
+        await expect(
+            enviarNotificacaoWhatsApp('cancelamento', '5511999999999', {
+                nomeCliente: 'Ana',
+                data: '10/10/2026',
+                horario: '15:00',
+                dataHoraCompleta: '10/10 às 15:00',
+                servico: 'Corte',
+                contatoBarbeiro: '5511222333444',
+            }),
+        ).resolves.toBeNull();
     });
 
     it('uses cancellation template with name, date/time, service and barber contact', async () => {

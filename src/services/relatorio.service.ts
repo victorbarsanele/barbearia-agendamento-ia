@@ -4,6 +4,11 @@ import { AppError } from '../lib/app-error';
 import * as numeroIgnoradoWhatsAppService from './numero-ignorado-whatsapp.service';
 import { calcularIntervaloRelatorio } from '../utils/intervalo-relatorio';
 import { chaveDataEmBrasilia } from '../utils/dia-semana';
+import { getReativacaoRepository } from '../repositories/reativacao.repository';
+import {
+    calcularFimCooldown,
+    estaEmCooldown,
+} from '../utils/reativacao-cooldown';
 import {
     canonicalizarTelefoneWhatsApp,
     variantesTelefoneWhatsApp,
@@ -35,12 +40,25 @@ export interface FiltroClientesInativos {
     diasMax?: number;
 }
 
+export interface ItemRelatorioClienteInativo extends Omit<
+    relatorioRepository.ItemClienteInativo,
+    'optOutMarketing'
+> {
+    ultimaTentativa: {
+        status: string;
+        criadoEm: string;
+    } | null;
+    podeReativar: boolean;
+    reativacaoBloqueio: 'OPT_OUT' | 'COOLDOWN' | null;
+    reativacaoBloqueadaAte: string | null;
+}
+
 export interface RelatorioClientesInativos {
     geradoEm: string;
     filtro: { diasMin: number; diasMax: number };
     total: number;
     truncado: boolean;
-    itens: relatorioRepository.ItemClienteInativo[];
+    itens: ItemRelatorioClienteInativo[];
 }
 
 export interface FiltroSaldoPacotes {
@@ -119,13 +137,41 @@ export async function buscarClientesInativos(
         diasMax,
         variantesIgnoradas,
     );
+    const tentativas =
+        await getReativacaoRepository().buscarResumoReativacoesPorClientes(
+            resultado.itens.map((item) => item.clienteId),
+        );
+
+    const itens = resultado.itens.map((item) => {
+        const { optOutMarketing, ...dadosCliente } = item;
+        const resumo = tentativas.get(item.clienteId);
+        const ultimaNaoFalhada = resumo?.ultimaNaoFalhada ?? null;
+        const fimCooldown = calcularFimCooldown(ultimaNaoFalhada);
+        const emCooldown = estaEmCooldown(ultimaNaoFalhada, agora);
+        const bloqueio: ItemRelatorioClienteInativo['reativacaoBloqueio'] =
+            optOutMarketing ? 'OPT_OUT' : emCooldown ? 'COOLDOWN' : null;
+
+        return {
+            ...dadosCliente,
+            ultimaTentativa: resumo?.ultimaTentativa
+                ? {
+                      status: resumo.ultimaTentativa.status,
+                      criadoEm: resumo.ultimaTentativa.criadoEm.toISOString(),
+                  }
+                : null,
+            podeReativar: bloqueio === null,
+            reativacaoBloqueio: bloqueio,
+            reativacaoBloqueadaAte:
+                emCooldown && fimCooldown ? fimCooldown.toISOString() : null,
+        };
+    });
 
     return {
         geradoEm: agora.toISOString(),
         filtro: { diasMin, diasMax },
         total: resultado.total,
         truncado: resultado.total > resultado.itens.length,
-        itens: resultado.itens,
+        itens,
     };
 }
 

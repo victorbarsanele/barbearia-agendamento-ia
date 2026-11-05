@@ -11,7 +11,14 @@ const numeroIgnoradoMock = vi.hoisted(() => ({
     listar: vi.fn(),
 }));
 
+const reativacaoRepositoryMock = vi.hoisted(() => ({
+    buscarResumoReativacoesPorClientes: vi.fn(),
+}));
+
 vi.mock('../repositories/relatorio.repository', () => repositoryMock);
+vi.mock('../repositories/reativacao.repository', () => ({
+    getReativacaoRepository: () => reativacaoRepositoryMock,
+}));
 vi.mock('./numero-ignorado-whatsapp.service', () => numeroIgnoradoMock);
 
 import * as relatorioRepository from '../repositories/relatorio.repository';
@@ -61,6 +68,9 @@ describe('relatorio.service.buscarAtendimentos', () => {
             total: 0,
             itens: [],
         });
+        reativacaoRepositoryMock.buscarResumoReativacoesPorClientes.mockResolvedValue(
+            new Map(),
+        );
     });
 
     it.each([
@@ -156,6 +166,7 @@ describe('relatorio.service.buscarAtendimentos', () => {
             ultimoServico: 'Corte',
             totalVisitas: 4,
             pacoteAtivoComSaldo: false,
+            optOutMarketing: false,
         };
         vi.mocked(relatorioRepository.listarClientesInativos).mockResolvedValue(
             { total: 501, itens: [itemInativo] },
@@ -175,7 +186,105 @@ describe('relatorio.service.buscarAtendimentos', () => {
             filtro: { diasMin: 30, diasMax: 180 },
             total: 501,
             truncado: true,
-            itens: [itemInativo],
+            itens: [
+                {
+                    clienteId: itemInativo.clienteId,
+                    nome: itemInativo.nome,
+                    telefone: itemInativo.telefone,
+                    ultimaVisita: itemInativo.ultimaVisita,
+                    diasSemVir: itemInativo.diasSemVir,
+                    ultimoServico: itemInativo.ultimoServico,
+                    totalVisitas: itemInativo.totalVisitas,
+                    pacoteAtivoComSaldo: itemInativo.pacoteAtivoComSaldo,
+                    ultimaTentativa: null,
+                    podeReativar: true,
+                    reativacaoBloqueio: null,
+                    reativacaoBloqueadaAte: null,
+                },
+            ],
+        });
+    });
+
+    it('mantém a última tentativa falha e calcula cooldown pela última não falha', async () => {
+        vi.mocked(numeroIgnoradoWhatsAppService.listar).mockResolvedValue([]);
+        vi.mocked(relatorioRepository.listarClientesInativos).mockResolvedValue(
+            {
+                total: 1,
+                itens: [
+                    {
+                        clienteId: 'cliente-1',
+                        nome: 'Cliente Teste',
+                        telefone: '5511999999999',
+                        ultimaVisita: '2026-08-01',
+                        diasSemVir: 70,
+                        ultimoServico: 'Corte',
+                        totalVisitas: 4,
+                        pacoteAtivoComSaldo: false,
+                        optOutMarketing: false,
+                    },
+                ],
+            },
+        );
+        reativacaoRepositoryMock.buscarResumoReativacoesPorClientes.mockResolvedValue(
+            new Map([
+                [
+                    'cliente-1',
+                    {
+                        ultimaTentativa: {
+                            status: 'FALHOU',
+                            criadoEm: new Date('2026-10-10T12:00:00.000Z'),
+                        },
+                        ultimaNaoFalhada: {
+                            status: 'ACEITA',
+                            criadoEm: new Date('2026-10-01T12:00:00.000Z'),
+                        },
+                    },
+                ],
+            ]),
+        );
+
+        const resultado = await buscarClientesInativos({}, agora);
+
+        expect(resultado.itens[0]).toMatchObject({
+            ultimaTentativa: {
+                status: 'FALHOU',
+                criadoEm: '2026-10-10T12:00:00.000Z',
+            },
+            podeReativar: false,
+            reativacaoBloqueio: 'COOLDOWN',
+            reativacaoBloqueadaAte: '2026-10-31T12:00:00.000Z',
+        });
+        expect(
+            reativacaoRepositoryMock.buscarResumoReativacoesPorClientes,
+        ).toHaveBeenCalledWith(['cliente-1']);
+    });
+
+    it('marca opt-out como não reativável mesmo sem cooldown', async () => {
+        vi.mocked(relatorioRepository.listarClientesInativos).mockResolvedValue(
+            {
+                total: 1,
+                itens: [
+                    {
+                        clienteId: 'cliente-1',
+                        nome: 'Cliente Teste',
+                        telefone: '5511999999999',
+                        ultimaVisita: '2026-08-01',
+                        diasSemVir: 70,
+                        ultimoServico: 'Corte',
+                        totalVisitas: 4,
+                        pacoteAtivoComSaldo: false,
+                        optOutMarketing: true,
+                    },
+                ],
+            },
+        );
+
+        const resultado = await buscarClientesInativos({}, agora);
+
+        expect(resultado.itens[0]).toMatchObject({
+            podeReativar: false,
+            reativacaoBloqueio: 'OPT_OUT',
+            reativacaoBloqueadaAte: null,
         });
     });
 

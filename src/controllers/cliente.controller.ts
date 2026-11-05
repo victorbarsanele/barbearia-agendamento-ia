@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { AppError } from '../lib/app-error';
 import * as clienteService from '../services/cliente.service';
+import * as reativacaoService from '../services/reativacao.service';
 
 interface CriarClienteBody {
     nome: string;
@@ -28,6 +29,10 @@ interface ListarClientesQuery {
 
 interface ExcluirClienteQuery {
     confirmarHistorico?: boolean;
+}
+
+interface ReativarWhatsAppParams {
+    clienteId: string;
 }
 
 function handleError(error: unknown, reply: FastifyReply): void {
@@ -153,5 +158,29 @@ export async function excluir(
         void reply.status(204).send();
     } catch (error) {
         handleError(error, reply);
+    }
+}
+
+export async function reativarWhatsApp(
+    request: FastifyRequest<{ Params: ReativarWhatsAppParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const resultado = await reativacaoService.reativarCliente(
+            request.params.clienteId,
+        );
+        void reply.status(202).send(resultado);
+    } catch (error) {
+        if (error instanceof AppError) {
+            void reply
+                .status(error.statusCode)
+                .send(
+                    error.details?.motivo
+                        ? error.details
+                        : { message: error.message },
+                );
+            return;
+        }
+        void reply.status(500).send({ message: 'Erro interno do servidor.' });
     }
 }

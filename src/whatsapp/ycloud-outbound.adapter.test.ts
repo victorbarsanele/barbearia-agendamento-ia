@@ -14,7 +14,10 @@ beforeEach(() => {
         vi.fn().mockResolvedValue({
             ok: true,
             status: 200,
-            json: vi.fn().mockResolvedValue({}),
+            json: vi.fn().mockResolvedValue({
+                id: 'template-id-1',
+                status: 'accepted',
+            }),
         }),
     );
 });
@@ -48,10 +51,14 @@ describe('YCloud outbound adapter', () => {
     });
 
     it('sends template parameters in order and uses pt_BR', async () => {
-        await sendYCloudTemplate('5511999999999', 'aviso_reagendamento', [
-            { type: 'text', text: 'Ana' },
-            { type: 'text', text: 'sexta-feira, 10/10 às 15:00' },
-        ]);
+        const result = await sendYCloudTemplate(
+            '5511999999999',
+            'aviso_reagendamento',
+            [
+                { type: 'text', text: 'Ana' },
+                { type: 'text', text: 'sexta-feira, 10/10 às 15:00' },
+            ],
+        );
 
         const [, init] = vi.mocked(fetch).mock.calls[0]!;
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -75,6 +82,78 @@ describe('YCloud outbound adapter', () => {
                 ],
             },
         });
+        expect(result).toEqual({ id: 'template-id-1', status: 'accepted' });
+    });
+
+    it('sends quick reply components without an empty body component', async () => {
+        await sendYCloudTemplate(
+            '5511999999999',
+            'notificar_inativo',
+            [],
+            [
+                {
+                    type: 'button',
+                    sub_type: 'quick_reply',
+                    index: 0,
+                    parameters: [
+                        { type: 'payload', payload: 'reativacao:agendar' },
+                    ],
+                },
+                {
+                    type: 'button',
+                    sub_type: 'quick_reply',
+                    index: 1,
+                    parameters: [
+                        { type: 'payload', payload: 'reativacao:optout' },
+                    ],
+                },
+            ],
+        );
+
+        const [, init] = vi.mocked(fetch).mock.calls[0]!;
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+            type: 'template',
+            template: {
+                name: 'notificar_inativo',
+                language: { code: 'pt_BR' },
+                components: [
+                    {
+                        type: 'button',
+                        sub_type: 'quick_reply',
+                        index: 0,
+                        parameters: [
+                            { type: 'payload', payload: 'reativacao:agendar' },
+                        ],
+                    },
+                    {
+                        type: 'button',
+                        sub_type: 'quick_reply',
+                        index: 1,
+                        parameters: [
+                            { type: 'payload', payload: 'reativacao:optout' },
+                        ],
+                    },
+                ],
+            },
+        });
+        expect(
+            JSON.parse(String(init?.body)).template.components,
+        ).not.toContainEqual(expect.objectContaining({ type: 'body' }));
+    });
+
+    it('returns template response without an ID when provider omits it', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                json: vi.fn().mockResolvedValue({ status: 'accepted' }),
+            }),
+        );
+
+        await expect(
+            sendYCloudTemplate('5511999999999', 'notificar_inativo', [], []),
+        ).resolves.toEqual({ status: 'accepted' });
     });
 
     it('rejects non-2xx without logging or including the request body', async () => {
@@ -152,7 +231,9 @@ describe('YCloud outbound adapter', () => {
             '[YCLOUD] Envio aceito | id: ausente | status: ausente',
         );
         expect(JSON.stringify(info.mock.calls)).not.toContain('5511999999999');
-        expect(JSON.stringify(info.mock.calls)).not.toContain('PRIVATE MESSAGE');
+        expect(JSON.stringify(info.mock.calls)).not.toContain(
+            'PRIVATE MESSAGE',
+        );
         info.mockRestore();
     });
 
@@ -176,7 +257,9 @@ describe('YCloud outbound adapter', () => {
             '[YCLOUD] Envio aceito | id: outbound-id | status: sent',
         );
         expect(JSON.stringify(info.mock.calls)).not.toContain('5511999999999');
-        expect(JSON.stringify(info.mock.calls)).not.toContain('PRIVATE MESSAGE');
+        expect(JSON.stringify(info.mock.calls)).not.toContain(
+            'PRIVATE MESSAGE',
+        );
         info.mockRestore();
     });
 

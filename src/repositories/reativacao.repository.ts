@@ -17,6 +17,17 @@ export type UltimaReativacao = Pick<
     | 'criadoEm'
 >;
 
+export interface ResumoReativacoesCliente {
+    ultimaTentativa: {
+        status: StatusReativacaoEnvio;
+        criadoEm: Date;
+    } | null;
+    ultimaNaoFalhada: {
+        status: Exclude<StatusReativacaoEnvio, 'FALHOU'>;
+        criadoEm: Date;
+    } | null;
+}
+
 export type ResultadoReservaReativacao =
     | { ok: true; envioId: string }
     | {
@@ -36,6 +47,9 @@ export interface ReativacaoRepository {
     buscarUltimasReativacoesPorClientes(
         clienteIds: string[],
     ): Promise<Map<string, UltimaReativacao>>;
+    buscarResumoReativacoesPorClientes(
+        clienteIds: string[],
+    ): Promise<Map<string, ResumoReativacoesCliente>>;
 }
 
 const MILISSEGUNDOS_POR_DIA = 24 * 60 * 60 * 1000;
@@ -163,6 +177,79 @@ export class PrismaReativacaoRepository implements ReativacaoRepository {
         );
 
         return new Map(rows.map((row) => [row.clienteId, row]));
+    }
+
+    async buscarResumoReativacoesPorClientes(
+        clienteIds: string[],
+    ): Promise<Map<string, ResumoReativacoesCliente>> {
+        if (clienteIds.length === 0) {
+            return new Map();
+        }
+
+        type ResumoRaw = {
+            clienteId: string;
+            ultimaStatus: StatusReativacaoEnvio | null;
+            ultimaCriadoEm: Date | null;
+            ultimaNaoFalhadaStatus: Exclude<
+                StatusReativacaoEnvio,
+                'FALHOU'
+            > | null;
+            ultimaNaoFalhadaCriadoEm: Date | null;
+        };
+
+        const prisma = await this.getPrisma();
+        const rows = await prisma.$queryRaw<ResumoRaw[]>(Prisma.sql`
+            WITH "clientesSolicitados" AS (
+                SELECT UNNEST(ARRAY[${Prisma.join(clienteIds)}]::text[]) AS "clienteId"
+            ),
+            "ultimas" AS (
+                SELECT DISTINCT ON ("clienteId") "clienteId", "status", "criadoEm"
+                FROM "reativacoes_envios"
+                WHERE "clienteId" IN (${Prisma.join(clienteIds)})
+                ORDER BY "clienteId", "criadoEm" DESC, "id" DESC
+            ),
+            "ultimasNaoFalhadas" AS (
+                SELECT DISTINCT ON ("clienteId") "clienteId", "status", "criadoEm"
+                FROM "reativacoes_envios"
+                WHERE "clienteId" IN (${Prisma.join(clienteIds)})
+                  AND "status" <> ${StatusReativacaoEnvio.FALHOU}::"StatusReativacaoEnvio"
+                ORDER BY "clienteId", "criadoEm" DESC, "id" DESC
+            )
+            SELECT
+                solicitados."clienteId",
+                ultimas."status" AS "ultimaStatus",
+                ultimas."criadoEm" AS "ultimaCriadoEm",
+                naoFalhadas."status" AS "ultimaNaoFalhadaStatus",
+                naoFalhadas."criadoEm" AS "ultimaNaoFalhadaCriadoEm"
+            FROM "clientesSolicitados" AS solicitados
+            LEFT JOIN "ultimas" AS ultimas
+                ON ultimas."clienteId" = solicitados."clienteId"
+            LEFT JOIN "ultimasNaoFalhadas" AS naoFalhadas
+                ON naoFalhadas."clienteId" = solicitados."clienteId"
+        `);
+
+        return new Map(
+            rows.map((row) => [
+                row.clienteId,
+                {
+                    ultimaTentativa:
+                        row.ultimaStatus !== null && row.ultimaCriadoEm !== null
+                            ? {
+                                  status: row.ultimaStatus,
+                                  criadoEm: row.ultimaCriadoEm,
+                              }
+                            : null,
+                    ultimaNaoFalhada:
+                        row.ultimaNaoFalhadaStatus !== null &&
+                        row.ultimaNaoFalhadaCriadoEm !== null
+                            ? {
+                                  status: row.ultimaNaoFalhadaStatus,
+                                  criadoEm: row.ultimaNaoFalhadaCriadoEm,
+                              }
+                            : null,
+                },
+            ]),
+        );
     }
 }
 

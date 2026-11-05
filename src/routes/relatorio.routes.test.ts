@@ -58,6 +58,10 @@ describe('GET /relatorios/atendimentos', () => {
                     ultimoServico: 'Corte',
                     totalVisitas: 4,
                     pacoteAtivoComSaldo: true,
+                    ultimaTentativa: null,
+                    podeReativar: true,
+                    reativacaoBloqueio: null,
+                    reativacaoBloqueadaAte: null,
                 },
             ],
         });

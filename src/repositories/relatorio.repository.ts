@@ -83,6 +83,7 @@ export interface ItemClienteInativo {
     ultimoServico: string | null;
     totalVisitas: number;
     pacoteAtivoComSaldo: boolean;
+    optOutMarketing: boolean;
 }
 
 export interface ResultadoClientesInativos {
@@ -100,6 +101,7 @@ interface ClienteInativoRaw {
     ultimoServico: string | null;
     totalVisitas: bigint | null;
     pacoteAtivoComSaldo: boolean | null;
+    optOutMarketingEm: Date | null;
 }
 
 const LIMITE_CLIENTES_INATIVOS = 500;
@@ -137,6 +139,7 @@ export async function listarClientesInativos(
                 c."id" AS "clienteId",
                 c."nome",
                 c."telefone",
+                c."optOutMarketingEm",
                 TO_CHAR(
                     v."dataHoraInicio" AT TIME ZONE ${TIME_ZONE},
                     'YYYY-MM-DD'
@@ -190,7 +193,8 @@ export async function listarClientesInativos(
             "limitados"."diasSemVir",
             "limitados"."ultimoServico",
             "limitados"."totalVisitas",
-            "limitados"."pacoteAtivoComSaldo"
+            "limitados"."pacoteAtivoComSaldo",
+            "limitados"."optOutMarketingEm"
         FROM "totalizado"
         LEFT JOIN "limitados" ON TRUE
         ORDER BY
@@ -223,6 +227,7 @@ export async function listarClientesInativos(
                 ultimoServico: row.ultimoServico,
                 totalVisitas: Number(row.totalVisitas),
                 pacoteAtivoComSaldo: row.pacoteAtivoComSaldo,
+                optOutMarketing: row.optOutMarketingEm !== null,
             },
         ];
     });
