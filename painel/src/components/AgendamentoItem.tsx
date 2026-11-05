@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Check, CheckCircle2, Clock, Package } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
 import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
+import { infoOrigemAgendamento } from '../utils/origemAgendamento.js';
 import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
 import { formatarPrecoBRL } from '../utils/preco';
 import { Badge } from './ui/Badge';
@@ -58,6 +59,7 @@ export function AgendamentoItem({
     const ehAgendamentoDePacote = Boolean(agendamento.pacoteClienteId);
     const podeConcluir = ehAgendamentoDePacote && !agendamento.concluido;
     const ehPacoteConcluido = ehAgendamentoDePacote && agendamento.concluido;
+    const origemInfo = infoOrigemAgendamento(agendamento.origem);
 
     const abrirConfirmacao = () => {
         setConfirmacaoAberta(true);
@@ -102,15 +104,28 @@ export function AgendamentoItem({
     return (
         <li>
             <Card
-                className={`space-y-4 rounded-[14px] bg-[var(--color-surface-elevated)] p-4 transition-opacity ${
+                className={`relative space-y-4 rounded-[14px] bg-[var(--color-surface-elevated)] p-4 transition-opacity ${
                     ehPacoteConcluido || agendamento.status === 'CANCELADO'
                         ? 'opacity-60'
                         : ''
                 }`}
             >
                 <div className="flex items-start justify-between gap-3">
+                    {origemInfo && (
+                        <span
+                            role="img"
+                            aria-label={origemInfo.label}
+                            title={origemInfo.label}
+                            className={`pointer-events-none absolute -top-2 right-1.5 z-10 inline-flex h-6 w-6 items-center justify-center rounded-full border ${agendamento.origem === 'WHATSAPP_IA' ? 'border-[var(--color-gold)] bg-[var(--color-bg)] text-[var(--color-gold)]' : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)]'}`}
+                        >
+                            <origemInfo.Icon
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5"
+                            />
+                        </span>
+                    )}
                     <div className="min-w-0 flex-1">
-                        <p className="truncate text-base font-bold text-[var(--color-text-primary)]">
+                        <p className="min-w-0 truncate text-base font-bold text-[var(--color-text-primary)]">
                             {agendamento.cliente.nome}
                         </p>
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
