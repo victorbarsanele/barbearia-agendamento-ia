@@ -34,7 +34,8 @@ vi.mock('../services/whatsapp-incoming-message.service', () => ({
 }));
 vi.mock('../services/gemini.service', () => ({
     registrarRespostaHumanaIdempotente: vi.fn(),
-    buscarClientePorTelefoneVariantes: geminiMocks.buscarClientePorTelefoneVariantes,
+    buscarClientePorTelefoneVariantes:
+        geminiMocks.buscarClientePorTelefoneVariantes,
     sendWhatsAppText: geminiMocks.sendWhatsAppText,
 }));
 vi.mock('../repositories/reativacao.repository', () => ({
@@ -722,10 +723,7 @@ describe('YCloud webhook controller', () => {
             'ack',
             'confirmation',
         ]);
-        expect(optOutMock).toHaveBeenCalledWith(
-            'cliente-1',
-            expect.any(Date),
-        );
+        expect(optOutMock).toHaveBeenCalledWith('cliente-1', expect.any(Date));
         expect(registerMock).toHaveBeenCalledWith('ycloud', 'button-wamid-1');
         expect(sendTextMock).toHaveBeenCalledWith(
             '5511999999999',
@@ -760,7 +758,9 @@ describe('YCloud webhook controller', () => {
     });
 
     it('does not confirm opt-out when persistence fails', async () => {
-        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
         optOutMock.mockRejectedValueOnce(new Error('database unavailable'));
         const reply = makeReply();
 
@@ -875,7 +875,10 @@ describe('YCloud webhook controller', () => {
         expect(sendTextMock).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(
             '[YCLOUD WEBHOOK] Tipo de mensagem ignorado',
-            expect.objectContaining({ rawType: 'button', motivo: 'tipo_ignorado' }),
+            expect.objectContaining({
+                rawType: 'button',
+                motivo: 'tipo_ignorado',
+            }),
         );
         info.mockRestore();
     });

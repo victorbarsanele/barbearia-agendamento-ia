@@ -238,7 +238,8 @@ export async function receberYCloudWebhook(
             return;
         }
         try {
-            const cliente = await buscarClientePorTelefoneVariantes(optOutPhone);
+            const cliente =
+                await buscarClientePorTelefoneVariantes(optOutPhone);
             if (cliente) {
                 await getReativacaoRepository().registrarOptOutMarketing(
                     cliente.id,

@@ -164,10 +164,7 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
     const contextRecord = asRecord(payload.context);
     const buttonPayload = stringField(buttonRecord, 'payload');
     const buttonText = stringField(buttonRecord, 'text');
-    const buttonAction = resolverAcaoBotaoReativacao(
-        buttonPayload,
-        buttonText,
-    );
+    const buttonAction = resolverAcaoBotaoReativacao(buttonPayload, buttonText);
     const textBody =
         messageType === 'text' ? stringField(textRecord, 'body') : null;
     const kind =
@@ -177,12 +174,12 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
               ? buttonAction === null
                   ? 'unknown'
                   : 'button_reply'
-            : messageType !== null &&
-                YCLOUD_NON_TEXT_TYPES.includes(
-                    messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
-                )
-              ? 'non_text'
-              : 'unknown';
+              : messageType !== null &&
+                  YCLOUD_NON_TEXT_TYPES.includes(
+                      messageType as (typeof YCLOUD_NON_TEXT_TYPES)[number],
+                  )
+                ? 'non_text'
+                : 'unknown';
     const unsupportedRecord = asRecord(payload.unsupported);
     const rawSubtype =
         messageType === 'unsupported'

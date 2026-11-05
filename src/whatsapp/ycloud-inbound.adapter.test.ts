@@ -130,7 +130,10 @@ describe('YCloud inbound adapter', () => {
                     wamid: 'button-wamid-2',
                     from: '5511999999999',
                     type: 'button',
-                    button: { payload: 'future:payload', text: '  QUERO AGENDAR  ' },
+                    button: {
+                        payload: 'future:payload',
+                        text: '  QUERO AGENDAR  ',
+                    },
                 },
             }),
         ).toMatchObject({
