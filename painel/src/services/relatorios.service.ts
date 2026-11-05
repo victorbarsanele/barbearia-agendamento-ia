@@ -22,6 +22,26 @@ export interface RelatorioAtendimentos {
     };
 }
 
+export type OrigemRelatorioAgendamentos =
+    | 'WHATSAPP_IA'
+    | 'PAINEL'
+    | 'NAO_INFORMADO';
+
+export interface ItemRelatorioOrigemAgendamentos {
+    origem: OrigemRelatorioAgendamentos;
+    total: number;
+    ativos: number;
+    cancelados: number;
+    percentual: number;
+}
+
+export interface RelatorioOrigemAgendamentos {
+    de: string;
+    ate: string;
+    total: number;
+    origens: ItemRelatorioOrigemAgendamentos[];
+}
+
 export type StatusReativacaoEnvio =
     | 'PENDENTE'
     | 'ACEITA'
@@ -148,6 +168,17 @@ export async function buscarAtendimentos(
         `/api/relatorios/atendimentos?${parametros.toString()}`,
     );
     return handleResponse<RelatorioAtendimentos>(response);
+}
+
+export async function buscarOrigemAgendamentos(
+    de: string,
+    ate: string,
+): Promise<RelatorioOrigemAgendamentos> {
+    const parametros = new URLSearchParams({ de, ate });
+    const response = await apiFetch(
+        `/api/relatorios/origem-agendamentos?${parametros.toString()}`,
+    );
+    return handleResponse<RelatorioOrigemAgendamentos>(response);
 }
 
 export async function buscarClientesInativos(

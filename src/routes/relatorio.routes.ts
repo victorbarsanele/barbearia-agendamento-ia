@@ -58,6 +58,43 @@ const respostaAtendimentosSchema = {
     },
 };
 
+const respostaOrigemAgendamentosSchema = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['de', 'ate', 'total', 'origens'],
+    properties: {
+        de: { type: 'string', format: 'date' },
+        ate: { type: 'string', format: 'date' },
+        total: { type: 'integer', minimum: 0 },
+        origens: {
+            type: 'array',
+            minItems: 3,
+            maxItems: 3,
+            items: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                    'origem',
+                    'total',
+                    'ativos',
+                    'cancelados',
+                    'percentual',
+                ],
+                properties: {
+                    origem: {
+                        type: 'string',
+                        enum: ['WHATSAPP_IA', 'PAINEL', 'NAO_INFORMADO'],
+                    },
+                    total: { type: 'integer', minimum: 0 },
+                    ativos: { type: 'integer', minimum: 0 },
+                    cancelados: { type: 'integer', minimum: 0 },
+                    percentual: { type: 'number', minimum: 0, maximum: 100 },
+                },
+            },
+        },
+    },
+};
+
 const respostaClientesInativosSchema = {
     type: 'object',
     additionalProperties: false,
@@ -257,6 +294,27 @@ export async function relatorioRoutes(app: FastifyInstance): Promise<void> {
             },
         },
         relatorioController.listarAtendimentos,
+    );
+
+    app.get(
+        '/relatorios/origem-agendamentos',
+        {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    required: ['de', 'ate'],
+                    additionalProperties: false,
+                    properties: {
+                        de: { type: 'string' },
+                        ate: { type: 'string' },
+                    },
+                },
+                response: {
+                    200: respostaOrigemAgendamentosSchema,
+                },
+            },
+        },
+        relatorioController.listarAgendamentosPorOrigem,
     );
 
     app.get(

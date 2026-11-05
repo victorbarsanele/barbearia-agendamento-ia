@@ -1,5 +1,9 @@
 import { getBrazilDateKey } from './dateTime.js';
 import { neutralizarFormulaCsv, serializarCsv } from './csv.js';
+import type {
+    OrigemRelatorioAgendamentos,
+    RelatorioOrigemAgendamentos,
+} from '../services/relatorios.service.js';
 
 export type AtalhoPeriodo = 'este-mes' | 'mes-passado' | 'ultimos-30-dias';
 
@@ -204,4 +208,66 @@ export function formatarValorEstimado(valor: string | null): string {
 
 export function nomeArquivoCsvAtendimentos(periodo: PeriodoRelatorio): string {
     return `atendimentos_${periodo.de}_a_${periodo.ate}.csv`;
+}
+
+export function rotuloOrigemRelatorio(
+    origem: OrigemRelatorioAgendamentos,
+): string {
+    switch (origem) {
+        case 'WHATSAPP_IA':
+            return 'WhatsApp (IA)';
+        case 'PAINEL':
+            return 'Painel';
+        case 'NAO_INFORMADO':
+            return 'Não informado';
+    }
+}
+
+export function formatarPercentualOrigem(percentual: number): string {
+    return `${new Intl.NumberFormat('pt-BR', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+    }).format(percentual)}%`;
+}
+
+export function montarCsvOrigemAgendamentos(
+    relatorio: RelatorioOrigemAgendamentos,
+): string {
+    const totalCriados = relatorio.origens.reduce(
+        (soma, item) => soma + item.total,
+        0,
+    );
+    const totalAtivos = relatorio.origens.reduce(
+        (soma, item) => soma + item.ativos,
+        0,
+    );
+    const totalCancelados = relatorio.origens.reduce(
+        (soma, item) => soma + item.cancelados,
+        0,
+    );
+    const linhas: (string | number)[][] = [
+        ['Origem', 'Criados', 'Ativos', 'Cancelados', '% do total'],
+        ...relatorio.origens.map((item) => [
+            neutralizarFormulaCsv(rotuloOrigemRelatorio(item.origem)),
+            item.total,
+            item.ativos,
+            item.cancelados,
+            formatarPercentualOrigem(item.percentual),
+        ]),
+        [
+            'TOTAL',
+            totalCriados,
+            totalAtivos,
+            totalCancelados,
+            formatarPercentualOrigem(totalCriados > 0 ? 100 : 0),
+        ],
+    ];
+
+    return serializarCsv(linhas);
+}
+
+export function nomeArquivoCsvOrigemAgendamentos(
+    periodo: PeriodoRelatorio,
+): string {
+    return `origem_agendamentos_${periodo.de}_a_${periodo.ate}.csv`;
 }

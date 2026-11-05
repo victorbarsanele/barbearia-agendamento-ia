@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Download, Search } from 'lucide-react';
 import { ClientesInativosTab } from '../components/ClientesInativosTab';
+import { OrigemAgendamentosTab } from '../components/OrigemAgendamentosTab';
 import { SaldoPacotesTab } from '../components/SaldoPacotesTab';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -404,7 +405,7 @@ function AtendimentosTab() {
     );
 }
 
-type AbaRelatorio = 'servicos' | 'inativos' | 'pacotes';
+type AbaRelatorio = 'servicos' | 'inativos' | 'pacotes' | 'origem';
 
 const abas: { id: AbaRelatorio; label: string; labelMobile: string }[] = [
     {
@@ -414,16 +415,20 @@ const abas: { id: AbaRelatorio; label: string; labelMobile: string }[] = [
     },
     { id: 'inativos', label: 'Clientes inativos', labelMobile: 'Inativos' },
     { id: 'pacotes', label: 'Pacotes', labelMobile: 'Pacotes' },
+    {
+        id: 'origem',
+        label: 'Origem dos agendamentos',
+        labelMobile: 'Origem',
+    },
 ];
 
 export function RelatoriosPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const botoesAbas = useRef<Array<HTMLButtonElement | null>>([]);
     const abaParam = searchParams.get('relatorio');
-    const abaAtiva: AbaRelatorio =
-        abaParam === 'inativos' || abaParam === 'pacotes'
-            ? abaParam
-            : 'servicos';
+    const abaAtiva: AbaRelatorio = abas.some((aba) => aba.id === abaParam)
+        ? (abaParam as AbaRelatorio)
+        : 'servicos';
 
     const selecionarAba = (aba: AbaRelatorio) => {
         const parametros = new URLSearchParams(searchParams);
@@ -498,6 +503,7 @@ export function RelatoriosPage() {
                 {abaAtiva === 'inativos' && <ClientesInativosTab />}
                 {abaAtiva === 'pacotes' && <SaldoPacotesTab />}
                 {abaAtiva === 'servicos' && <AtendimentosTab />}
+                {abaAtiva === 'origem' && <OrigemAgendamentosTab />}
             </div>
         </main>
     );

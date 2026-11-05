@@ -1,8 +1,9 @@
-import { Prisma } from '@prisma/client';
+import { OrigemAgendamento, Prisma, StatusAgendamento } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const repositoryMock = vi.hoisted(() => ({
     agregarAtendimentos: vi.fn(),
+    agruparAgendamentosPorOrigem: vi.fn(),
     listarClientesInativos: vi.fn(),
     listarSaldoPacotes: vi.fn(),
 }));
@@ -25,6 +26,7 @@ import * as relatorioRepository from '../repositories/relatorio.repository';
 import * as numeroIgnoradoWhatsAppService from './numero-ignorado-whatsapp.service';
 import {
     buscarAtendimentos,
+    buscarAgendamentosPorOrigem,
     buscarClientesInativos,
     buscarSaldoPacotes,
 } from './relatorio.service';
@@ -485,5 +487,127 @@ describe('relatorio.service.buscarSaldoPacotes', () => {
                 },
             ],
         });
+    });
+});
+
+describe('relatorio.service.buscarAgendamentosPorOrigem', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(
+            relatorioRepository.agruparAgendamentosPorOrigem,
+        ).mockResolvedValue([]);
+    });
+
+    it('agrega origens e estados, mapeia null e arredonda percentuais', async () => {
+        vi.mocked(
+            relatorioRepository.agruparAgendamentosPorOrigem,
+        ).mockResolvedValue([
+            {
+                origem: OrigemAgendamento.WHATSAPP_IA,
+                status: StatusAgendamento.CANCELADO,
+                _count: { _all: 1 },
+            },
+            {
+                origem: null,
+                status: StatusAgendamento.CONFIRMADO,
+                _count: { _all: 1 },
+            },
+            {
+                origem: OrigemAgendamento.PAINEL,
+                status: StatusAgendamento.CONCLUIDO,
+                _count: { _all: 2 },
+            },
+            {
+                origem: OrigemAgendamento.WHATSAPP_IA,
+                status: StatusAgendamento.AGENDADO,
+                _count: { _all: 1 },
+            },
+            {
+                origem: OrigemAgendamento.PAINEL,
+                status: StatusAgendamento.CANCELADO,
+                _count: { _all: 1 },
+            },
+        ]);
+
+        const resultado = await buscarAgendamentosPorOrigem(
+            '2026-10-10',
+            '2026-10-10',
+        );
+
+        expect(
+            relatorioRepository.agruparAgendamentosPorOrigem,
+        ).toHaveBeenCalledWith(
+            new Date('2026-10-10T03:00:00.000Z'),
+            new Date('2026-10-11T03:00:00.000Z'),
+        );
+        expect(resultado).toEqual({
+            de: '2026-10-10',
+            ate: '2026-10-10',
+            total: 6,
+            origens: [
+                {
+                    origem: 'WHATSAPP_IA',
+                    total: 2,
+                    ativos: 1,
+                    cancelados: 1,
+                    percentual: 33.3,
+                },
+                {
+                    origem: 'PAINEL',
+                    total: 3,
+                    ativos: 2,
+                    cancelados: 1,
+                    percentual: 50,
+                },
+                {
+                    origem: 'NAO_INFORMADO',
+                    total: 1,
+                    ativos: 1,
+                    cancelados: 0,
+                    percentual: 16.7,
+                },
+            ],
+        });
+    });
+
+    it('mantém três origens zeradas e percentuais zero sem registros', async () => {
+        const resultado = await buscarAgendamentosPorOrigem(
+            '2026-10-10',
+            '2026-10-10',
+        );
+
+        expect(resultado.total).toBe(0);
+        expect(resultado.origens).toEqual([
+            {
+                origem: 'WHATSAPP_IA',
+                total: 0,
+                ativos: 0,
+                cancelados: 0,
+                percentual: 0,
+            },
+            {
+                origem: 'PAINEL',
+                total: 0,
+                ativos: 0,
+                cancelados: 0,
+                percentual: 0,
+            },
+            {
+                origem: 'NAO_INFORMADO',
+                total: 0,
+                ativos: 0,
+                cancelados: 0,
+                percentual: 0,
+            },
+        ]);
+    });
+
+    it('rejeita intervalo inválido antes de consultar repository', async () => {
+        await expect(
+            buscarAgendamentosPorOrigem('2026-10-11', '2026-10-10'),
+        ).rejects.toMatchObject({ statusCode: 400 });
+        expect(
+            relatorioRepository.agruparAgendamentosPorOrigem,
+        ).not.toHaveBeenCalled();
     });
 });

@@ -36,6 +36,26 @@ export interface RelatorioAtendimentos {
     };
 }
 
+export type OrigemRelatorioAgendamentos =
+    | 'WHATSAPP_IA'
+    | 'PAINEL'
+    | 'NAO_INFORMADO';
+
+export interface ItemRelatorioOrigemAgendamentos {
+    origem: OrigemRelatorioAgendamentos;
+    total: number;
+    ativos: number;
+    cancelados: number;
+    percentual: number;
+}
+
+export interface RelatorioOrigemAgendamentos {
+    de: string;
+    ate: string;
+    total: number;
+    origens: ItemRelatorioOrigemAgendamentos[];
+}
+
 export interface FiltroClientesInativos {
     diasMin?: number;
     diasMax?: number;
@@ -243,5 +263,58 @@ export async function buscarAtendimentos(
             valorEstimado: temPreco ? valorEstimado.toFixed(2) : null,
             semPreco,
         },
+    };
+}
+
+export async function buscarAgendamentosPorOrigem(
+    de: string,
+    ate: string,
+): Promise<RelatorioOrigemAgendamentos> {
+    const intervalo = calcularIntervaloRelatorio(de, ate);
+    const grupos = await relatorioRepository.agruparAgendamentosPorOrigem(
+        intervalo.inicio,
+        intervalo.fimExclusivo,
+    );
+    const origens: OrigemRelatorioAgendamentos[] = [
+        'WHATSAPP_IA',
+        'PAINEL',
+        'NAO_INFORMADO',
+    ];
+    const contagens = new Map(
+        origens.map((origem) => [origem, { total: 0, cancelados: 0 }]),
+    );
+
+    for (const grupo of grupos) {
+        const origem = grupo.origem ?? 'NAO_INFORMADO';
+        const contagem = contagens.get(origem)!;
+        const quantidade = grupo._count._all;
+        contagem.total += quantidade;
+        if (grupo.status === 'CANCELADO') {
+            contagem.cancelados += quantidade;
+        }
+    }
+
+    const total = origens.reduce(
+        (soma, origem) => soma + contagens.get(origem)!.total,
+        0,
+    );
+
+    return {
+        de,
+        ate,
+        total,
+        origens: origens.map((origem) => {
+            const contagem = contagens.get(origem)!;
+            return {
+                origem,
+                total: contagem.total,
+                ativos: contagem.total - contagem.cancelados,
+                cancelados: contagem.cancelados,
+                percentual:
+                    total === 0
+                        ? 0
+                        : Number(((contagem.total / total) * 100).toFixed(1)),
+            };
+        }),
     };
 }

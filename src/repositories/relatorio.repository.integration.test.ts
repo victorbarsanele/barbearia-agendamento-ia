@@ -1,4 +1,8 @@
-import { StatusAgendamento, StatusPacoteCliente } from '@prisma/client';
+import {
+    OrigemAgendamento,
+    StatusAgendamento,
+    StatusPacoteCliente,
+} from '@prisma/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import prisma from '../lib/prisma';
 import * as relatorioRepository from './relatorio.repository';
@@ -210,5 +214,112 @@ describe('relatorio.repository.agregarAtendimentos', () => {
         expect(comPreco!.quantidadeAvulso + comPreco!.quantidadePacote).toBe(
             comPreco!.quantidade,
         );
+    });
+});
+
+describe('relatorio.repository.agruparAgendamentosPorOrigem', () => {
+    it('agrupa por origem e status usando createdAt e intervalo semiaberto', async () => {
+        const cliente = await prisma.cliente.create({
+            data: {
+                nome: `Relatorio origem ${crypto.randomUUID()}`,
+                telefone: crypto.randomUUID(),
+            },
+        });
+        clienteId = cliente.id;
+        const servicoId = await criarServico('Relatorio origem', null);
+        let ordemSlot = 0;
+
+        async function criar(
+            createdAt: string,
+            origem: OrigemAgendamento | null,
+            status: StatusAgendamento,
+        ): Promise<void> {
+            const dataHoraInicio = new Date(
+                Date.parse('2080-10-10T03:00:00.000Z') +
+                    ordemSlot++ * 60 * 60 * 1000,
+            );
+            const agendamento = await prisma.agendamento.create({
+                data: {
+                    clienteId: cliente.id,
+                    servicoId,
+                    dataHoraInicio,
+                    dataHoraFim: new Date(
+                        dataHoraInicio.getTime() + 30 * 60 * 1000,
+                    ),
+                    createdAt: new Date(createdAt),
+                    origem,
+                    status,
+                    precoUnitario: null,
+                    concluido: status === StatusAgendamento.CONCLUIDO,
+                },
+            });
+            agendamentoIds.push(agendamento.id);
+        }
+
+        await criar(
+            '2080-10-10T03:00:00.000Z',
+            OrigemAgendamento.WHATSAPP_IA,
+            StatusAgendamento.CONCLUIDO,
+        );
+        await criar(
+            '2080-10-10T12:00:00.000Z',
+            OrigemAgendamento.WHATSAPP_IA,
+            StatusAgendamento.CANCELADO,
+        );
+        await criar(
+            '2080-10-11T03:00:00.000Z',
+            OrigemAgendamento.PAINEL,
+            StatusAgendamento.AGENDADO,
+        );
+        await criar(
+            '2080-10-11T04:00:00.000Z',
+            OrigemAgendamento.PAINEL,
+            StatusAgendamento.CANCELADO,
+        );
+        await criar(
+            '2080-10-11T15:00:00.000Z',
+            null,
+            StatusAgendamento.CONFIRMADO,
+        );
+        await criar(
+            '2080-10-11T16:00:00.000Z',
+            null,
+            StatusAgendamento.CANCELADO,
+        );
+        await criar(
+            '2080-10-12T03:00:00.000Z',
+            OrigemAgendamento.WHATSAPP_IA,
+            StatusAgendamento.AGENDADO,
+        );
+        await criar(
+            '2080-10-10T02:59:59.999Z',
+            OrigemAgendamento.PAINEL,
+            StatusAgendamento.CANCELADO,
+        );
+        await criar(
+            '2080-10-12T03:00:00.001Z',
+            null,
+            StatusAgendamento.AGENDADO,
+        );
+
+        const grupos = await relatorioRepository.agruparAgendamentosPorOrigem(
+            new Date('2080-10-10T03:00:00.000Z'),
+            new Date('2080-10-12T03:00:00.000Z'),
+        );
+        const contagens = Object.fromEntries(
+            grupos.map(({ origem, status, _count }) => [
+                `${origem ?? 'NULL'}:${status}`,
+                _count._all,
+            ]),
+        );
+
+        expect(contagens).toEqual({
+            'WHATSAPP_IA:CONCLUIDO': 1,
+            'WHATSAPP_IA:CANCELADO': 1,
+            'PAINEL:AGENDADO': 1,
+            'PAINEL:CANCELADO': 1,
+            'NULL:CONFIRMADO': 1,
+            'NULL:CANCELADO': 1,
+        });
     });
 });
