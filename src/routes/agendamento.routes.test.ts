@@ -44,6 +44,7 @@ describe('POST /agendamentos', () => {
                 clienteId: 'cliente-1',
                 servicoId: 'servico-1',
                 dataHoraInicio: '2026-11-02T10:00:00-03:00',
+                origem: 'WHATSAPP_IA',
             },
         });
 
@@ -368,7 +369,7 @@ describe('PUT /agendamentos/:id', () => {
         await app.close();
     });
 
-    it('aceita override explícito e fixa origem do painel', async () => {
+    it('ignora origem do body e fixa PAINEL no servidor', async () => {
         await app.register(agendamentoRoutes);
         const response = await app.inject({
             method: 'PUT',
@@ -379,6 +380,7 @@ describe('PUT /agendamentos/:id', () => {
                 dataHoraInicio: '2026-11-02T08:30:00-03:00',
                 status: 'AGENDADO',
                 permitirForaDoExpediente: true,
+                origem: 'WHATSAPP_IA',
             },
         });
 
@@ -390,5 +392,8 @@ describe('PUT /agendamentos/:id', () => {
                 origem: 'PAINEL',
             }),
         );
+        expect(
+            vi.mocked(agendamentoService.atualizar).mock.calls[0]?.[1],
+        ).not.toHaveProperty('origem', 'WHATSAPP_IA');
     });
 });

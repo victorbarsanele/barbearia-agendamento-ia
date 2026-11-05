@@ -13,6 +13,11 @@ enum StatusAgendamento {
   CONCLUIDO
 }
 
+enum OrigemAgendamento {
+  PAINEL
+  WHATSAPP_IA
+}
+
 enum StatusPacoteCliente {
   ATIVO
   FINALIZADO
@@ -97,6 +102,7 @@ model Agendamento {
   id              String            @id @default(cuid())
   clienteId       String
   servicoId       String
+  origem          OrigemAgendamento?
   precoUnitario   Decimal?          @db.Decimal(10, 2)
   pacoteClienteId String?
   numeroNoPacote  Int?

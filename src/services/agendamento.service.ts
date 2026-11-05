@@ -1,4 +1,4 @@
-import { Prisma, StatusAgendamento } from '@prisma/client';
+import { OrigemAgendamento, Prisma, StatusAgendamento } from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
 import { getAgendamentoConfig } from '../config/agendamento';
 import { AppError } from '../lib/app-error';
@@ -31,6 +31,14 @@ export function formatarAntecedenciaMinima(minutos: number): string {
     }
 
     return `${minutos} ${minutos === 1 ? 'minuto' : 'minutos'}`;
+}
+
+export function origemParaPersistencia(
+    origem: 'PAINEL' | 'GEMINI',
+): OrigemAgendamento {
+    return origem === 'GEMINI'
+        ? OrigemAgendamento.WHATSAPP_IA
+        : OrigemAgendamento.PAINEL;
 }
 
 interface CriarAgendamentoData {
@@ -740,6 +748,7 @@ export async function criar(
         const dados = {
             clienteId: data.clienteId,
             servicoId: data.servicoId,
+            origem: origemParaPersistencia(data.origem ?? 'PAINEL'),
             precoUnitario: servico.preco,
             pacoteClienteId: data.pacoteClienteId ?? null,
             dataHoraInicio,
@@ -894,6 +903,7 @@ export async function criarLote(data: LoteAgendamentoData) {
                 const dados = {
                     clienteId: data.clienteId,
                     servicoId: data.servicoId,
+                    origem: origemParaPersistencia(data.origem ?? 'PAINEL'),
                     precoUnitario: servico.preco,
                     pacoteClienteId: data.pacoteClienteId ?? null,
                     loteId: lote.id,
@@ -1041,6 +1051,8 @@ function motivoFalhaLote(
 }
 
 async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
+    const origem = origemParaPersistencia(data.origem ?? 'PAINEL');
+
     try {
         return await pacoteClienteRepository.transacionar(
             async (tx) => {
@@ -1111,6 +1123,7 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                                 {
                                     clienteId: data.clienteId,
                                     servicoId: data.servicoId,
+                                    origem,
                                     precoUnitario: servico.preco,
                                     pacoteClienteId: resolvido.pacoteClienteId,
                                     loteId: lote.id,

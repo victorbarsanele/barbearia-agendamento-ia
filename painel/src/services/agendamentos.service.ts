@@ -8,6 +8,7 @@ export type StatusAgendamento =
 
 export interface Agendamento {
     id: string;
+    origem?: 'PAINEL' | 'WHATSAPP_IA' | null;
     dataHoraInicio: string;
     dataHoraFim: string;
     status: StatusAgendamento;

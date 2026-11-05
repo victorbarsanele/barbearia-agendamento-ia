@@ -126,6 +126,7 @@ const agendamentoAtivoProximo = {
     id: 'agendamento-1',
     clienteId: clienteBase.id,
     servicoId: servicoBase.id,
+    origem: null,
     pacoteClienteId: null,
     loteId: null,
     precoUnitario: null,
@@ -324,6 +325,9 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
         expect(confirmed.sucesso).toBe(true);
         expect(duplicate).toMatchObject({ sucesso: true, jaConfirmado: true });
         expect(agendamentoService.criar).toHaveBeenCalledOnce();
+        expect(
+            vi.mocked(agendamentoService.criar).mock.calls[0]?.[0],
+        ).toMatchObject({ origem: 'GEMINI' });
     });
 
     it('usa telefone da sessão por padrão e valida telefone informado', async () => {

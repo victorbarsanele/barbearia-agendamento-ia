@@ -135,6 +135,7 @@ describe('confirmação de agendamento', () => {
         expect(mocks.criar).toHaveBeenCalledOnce();
         expect(mocks.criar.mock.calls[0][0]).toMatchObject({
             clienteId: 'cliente-1',
+            origem: 'GEMINI',
         });
     });
 

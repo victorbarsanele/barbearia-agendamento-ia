@@ -1,5 +1,6 @@
 import {
     PacoteCliente,
+    OrigemAgendamento,
     Prisma,
     StatusAgendamento,
     StatusPacoteCliente,
@@ -21,6 +22,7 @@ export type AgendamentoComRelacoes = Omit<AgendamentoBase, 'numeroNoPacote'> & {
 interface SalvarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    origem: OrigemAgendamento;
     precoUnitario?: Prisma.Decimal | null;
     pacoteClienteId?: string | null;
     loteId?: string | null;
@@ -28,6 +30,8 @@ interface SalvarAgendamentoData {
     dataHoraFim: Date;
     status?: StatusAgendamento;
 }
+
+type AtualizarAgendamentoData = Omit<SalvarAgendamentoData, 'origem'>;
 
 interface BuscarConflitoParams {
     dataHoraInicio: Date;
@@ -423,7 +427,7 @@ export async function buscarConflito(
 
 export async function atualizar(
     id: string,
-    data: SalvarAgendamentoData,
+    data: AtualizarAgendamentoData,
 ): Promise<AgendamentoComRelacoes> {
     try {
         return await prisma.agendamento.update({
@@ -442,7 +446,7 @@ export async function atualizar(
 
 export async function atualizarComNumeroNoPacote(
     id: string,
-    data: SalvarAgendamentoData,
+    data: AtualizarAgendamentoData,
     pacoteClienteId: string | null,
     servicoId: string,
     numeroNoPacoteAtual: number | null,
