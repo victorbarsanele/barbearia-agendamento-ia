@@ -1,9 +1,36 @@
 import { expect, test, type Page } from '@playwright/test';
 
+const DATA_FIXA = new Date('2026-10-15T12:00:00-03:00');
+
+function dataMesSeguinte(): string {
+    const data = new Date(DATA_FIXA);
+    data.setUTCMonth(data.getUTCMonth() + 1, 15);
+    return data.toISOString().slice(0, 10);
+}
+
+function dataHoraSaoPaulo(hora: string): string {
+    return `${dataMesSeguinte()}T${hora}-03:00`;
+}
+
+function dataHoraUtc(hora: string): string {
+    return new Date(dataHoraSaoPaulo(hora)).toISOString();
+}
+
+function dataCurta(): string {
+    return new Date(`${dataMesSeguinte()}T12:00:00.000Z`).toLocaleDateString(
+        'pt-BR',
+        { day: '2-digit', month: '2-digit', timeZone: 'UTC' },
+    );
+}
+
+test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(DATA_FIXA);
+});
+
 const AGENDAMENTO = {
     id: 'agendamento-edicao',
-    dataHoraInicio: '2026-11-15T13:00:00.000-03:00',
-    dataHoraFim: '2026-11-15T13:30:00.000-03:00',
+    dataHoraInicio: dataHoraSaoPaulo('13:00:00.000'),
+    dataHoraFim: dataHoraSaoPaulo('13:30:00.000'),
     status: 'AGENDADO',
     pacoteClienteId: null,
     numeroNoPacote: null,
@@ -168,7 +195,7 @@ for (const viewport of [
         page,
     }) => {
         await page.setViewportSize(viewport);
-        await mockEdicao(page, '2026-11-15T09:00:00.000-03:00');
+        await mockEdicao(page, dataHoraSaoPaulo('09:00:00.000'));
         await page.goto('/editar/agendamento-edicao');
         await expect(page.getByText('SELECIONE UM NOVO HORÁRIO')).toBeVisible();
         await page.waitForTimeout(200);
@@ -194,8 +221,8 @@ for (const viewport of [
 }
 
 for (const horario of [
-    { hora: '06', minuto: '00', iso: '2026-11-15T06:00:00.000-03:00' },
-    { hora: '22', minuto: '45', iso: '2026-11-15T22:45:00.000-03:00' },
+    { hora: '06', minuto: '00', iso: dataHoraSaoPaulo('06:00:00.000') },
+    { hora: '22', minuto: '45', iso: dataHoraSaoPaulo('22:45:00.000') },
 ]) {
     test(`pré-seleção de borda ${horario.hora}:${horario.minuto} fica centralizada`, async ({
         page,
@@ -221,10 +248,12 @@ for (const horario of [
 }
 
 test('trocar só serviço mantém ISO original no PUT', async ({ page }) => {
-    const dataHoraInicioOriginal = '2026-11-15T09:00:37.123-03:00';
+    const dataHoraInicioOriginal = dataHoraSaoPaulo('09:00:37.123');
     const atualizacoes = await abrirEdicao(page, dataHoraInicioOriginal);
 
-    await expect(page.getByText('Atual: 15/11 às 09:00')).toBeVisible();
+    await expect(
+        page.getByText(`Atual: ${dataCurta()} às 09:00`),
+    ).toBeVisible();
     await expect(page.getByText(/^Novo:/)).toHaveCount(0);
     await page.getByLabel('Serviço').selectOption('servico-barba');
     await page.getByRole('button', { name: 'Salvar alterações' }).click();
@@ -236,7 +265,7 @@ test('trocar só serviço mantém ISO original no PUT', async ({ page }) => {
 test('scroll manual muda horário; voltar ao original limpa Novo e preserva ISO', async ({
     page,
 }) => {
-    const dataHoraInicioOriginal = '2026-11-15T09:00:37.123-03:00';
+    const dataHoraInicioOriginal = dataHoraSaoPaulo('09:00:37.123');
     const atualizacoes = await abrirEdicao(page, dataHoraInicioOriginal);
     const colunas = page.locator('.date-time-picker-scrollbar-hidden');
     const colunaHora = colunas.nth(0);
@@ -244,17 +273,17 @@ test('scroll manual muda horário; voltar ao original limpa Novo e preserva ISO'
 
     await colunaHora.hover();
     await page.mouse.wheel(0, 44);
-    const novoHorario = page.getByText('Novo: 15/11 às 10:00');
+    const novoHorario = page.getByText(`Novo: ${dataCurta()} às 10:00`);
     await expect(novoHorario).toBeVisible();
     await expect(novoHorario).toHaveAttribute('aria-live', 'polite');
 
     await colunaMinuto.hover();
     await page.mouse.wheel(0, 44);
-    await expect(page.getByText('Novo: 15/11 às 10:15')).toBeVisible();
+    await expect(page.getByText(`Novo: ${dataCurta()} às 10:15`)).toBeVisible();
 
     await colunaMinuto.hover();
     await page.mouse.wheel(0, -44);
-    await expect(page.getByText('Novo: 15/11 às 10:00')).toBeVisible();
+    await expect(page.getByText(`Novo: ${dataCurta()} às 10:00`)).toBeVisible();
     await colunaHora.hover();
     await page.mouse.wheel(0, -44);
     await expect(page.getByText(/^Novo:/)).toHaveCount(0);
@@ -268,12 +297,12 @@ test('scroll manual muda horário; voltar ao original limpa Novo e preserva ISO'
 for (const horario of [
     {
         label: '05:30',
-        iso: '2026-11-15T05:30:00.000-03:00',
+        iso: dataHoraSaoPaulo('05:30:00.000'),
         horaSelecionada: null,
     },
     {
         label: '09:20',
-        iso: '2026-11-15T09:20:00.000-03:00',
+        iso: dataHoraSaoPaulo('09:20:00.000'),
         horaSelecionada: '09',
     },
 ]) {
@@ -287,7 +316,7 @@ for (const horario of [
             ),
         ).toBeVisible();
         await expect(
-            page.getByText(`Atual: 15/11 às ${horario.label}`),
+            page.getByText(`Atual: ${dataCurta()} às ${horario.label}`),
         ).toBeVisible();
         await expect(page.getByText(/^Novo:/)).toHaveCount(0);
 
@@ -350,7 +379,7 @@ test('Bloqueios ainda seleciona início e fim manualmente', async ({ page }) => 
                     diaSemana: null,
                     horaInicioMinutos: null,
                     horaFimMinutos: null,
-                    createdAt: '2026-10-20T12:00:00.000Z',
+                    createdAt: DATA_FIXA.toISOString(),
                 },
             };
         }
@@ -403,8 +432,8 @@ test('Bloqueios ainda seleciona início e fim manualmente', async ({ page }) => 
 
     await expect.poll(() => bloqueiosCriados.length).toBe(1);
     expect(bloqueiosCriados[0]).toMatchObject({
-        dataHoraInicio: '2026-11-15T13:30:00.000Z',
-        dataHoraFim: '2026-11-15T14:00:00.000Z',
+        dataHoraInicio: dataHoraUtc('10:30:00.000'),
+        dataHoraFim: dataHoraUtc('11:00:00.000'),
         motivo: 'Teste seletor compartilhado',
     });
 });

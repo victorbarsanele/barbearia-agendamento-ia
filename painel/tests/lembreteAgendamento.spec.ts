@@ -207,3 +207,44 @@ test('allows retry after a failed reminder attempt', async ({ page }) => {
     await expect(card.getByText('Lembrete enviado às 12:02')).toBeVisible();
     expect(chamadasEnvio).toBe(2);
 });
+
+test('does not offer reminder for past appointment', async ({ page }) => {
+    await page.clock.install({ time: new Date('2026-11-05T15:00:00.000Z') });
+    await page.route('**/api/**', async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (url.pathname === '/api/auth/me') {
+            await route.fulfill({ status: 200, json: { role: 'admin' } });
+            return;
+        }
+        if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/agendamentos'
+        ) {
+            await route.fulfill({
+                status: 200,
+                json: [
+                    {
+                        ...criarAgendamento(),
+                        dataHoraInicio: '2026-11-05T14:00:00.000Z',
+                        dataHoraFim: '2026-11-05T14:30:00.000Z',
+                    },
+                ],
+            });
+            return;
+        }
+        await route.fulfill({
+            status: 404,
+            json: { message: 'Rota não prevista pelo teste.' },
+        });
+    });
+
+    await page.goto('/');
+    const card = page.getByRole('listitem').filter({
+        hasText: 'Cliente do lembrete',
+    });
+    await expect(card).toBeVisible();
+    await expect(
+        card.getByRole('button', { name: 'Enviar lembrete' }),
+    ).toHaveCount(0);
+});

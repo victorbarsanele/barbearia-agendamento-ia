@@ -1,5 +1,23 @@
 import { expect, test, type Page } from '@playwright/test';
 
+const DATA_FIXA = new Date('2026-10-15T12:00:00-03:00');
+
+function dataMesSeguinte(dia: number): string {
+    const data = new Date(DATA_FIXA);
+    data.setUTCMonth(data.getUTCMonth() + 1, dia);
+    return data.toISOString().slice(0, 10);
+}
+
+function dataLegivel(data: string): string {
+    return new Date(`${data}T12:00:00.000Z`).toLocaleDateString('pt-BR', {
+        timeZone: 'UTC',
+    });
+}
+
+test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(DATA_FIXA);
+});
+
 const CLIENTES = [
     { id: 'cliente-ana', nome: 'Ana Souza', telefone: '11999990001' },
     { id: 'cliente-bruno', nome: 'Bruno Lima', telefone: '11999990002' },
@@ -198,7 +216,7 @@ async function mockApi(
                     criados: [
                         {
                             agendamentoId: 'agendamento-mock',
-                            data: '2026-11-15',
+                            data: dataMesSeguinte(15),
                             horario: '10:00',
                         },
                     ],
@@ -480,7 +498,7 @@ test('excesso retornado pela simulação vira conflito e bloqueia confirmação'
                 ).slice(0, 1),
                 conflitos: [
                     {
-                        data: '2026-11-16',
+                        data: dataMesSeguinte(16),
                         horario: '10:00',
                         motivo: 'Todos os usos restantes já estão agendados.',
                     },
@@ -524,7 +542,7 @@ test('simulação e criação enviam pacoteId exclusivo e sucesso fecha modal', 
         clienteId: 'cliente-ana',
         servicoId: 'servico-corte',
         pacoteId: 'pacote-corte',
-        slots: [expect.objectContaining({ data: '2026-11-15' })],
+        slots: [expect.objectContaining({ data: dataMesSeguinte(15) })],
     });
     expect(api.simulations[0]).not.toHaveProperty('pacoteClienteId');
     expect(api.creates[0]).toEqual(api.simulations[0]);
@@ -542,7 +560,7 @@ test('409 atômico mostra horário e motivo, sem fechar modal', async ({
             status: 409,
             body: {
                 message: 'Você já tem agendamento nesse horário.',
-                slot: { data: '2026-11-15', horario: '10:00' },
+                slot: { data: dataMesSeguinte(15), horario: '10:00' },
                 motivo: 'conflito_horario',
             },
         }),
@@ -557,7 +575,9 @@ test('409 atômico mostra horário e motivo, sem fechar modal', async ({
     await confirmar(page);
 
     await expect(
-        page.getByText(/15\/11\/2026 às 10:00: Este horário já está ocupado/),
+        page.getByText(
+            `${dataLegivel(dataMesSeguinte(15))} às 10:00: Este horário já está ocupado`,
+        ),
     ).toBeVisible();
     await expect(page.getByText(/Este horário já está ocupado/)).toBeVisible();
     await expect(page.getByText('Nada foi criado.')).toBeVisible();
@@ -624,13 +644,13 @@ test('resposta parcial mostra contagens e falhas antes de atualizar agenda', asy
                 criados: [
                     {
                         agendamentoId: 'agendamento-ok',
-                        data: '2026-11-15',
+                        data: dataMesSeguinte(15),
                         horario: '10:00',
                     },
                 ],
                 falhados: [
                     {
-                        data: '2026-11-16',
+                        data: dataMesSeguinte(16),
                         horario: '10:00',
                         motivo: 'Horário ocupado.',
                     },
@@ -649,7 +669,11 @@ test('resposta parcial mostra contagens e falhas antes de atualizar agenda', asy
         page.getByRole('heading', { name: 'Lote parcialmente criado' }),
     ).toBeVisible();
     await expect(page.getByText('1 criados · 1 falharam.')).toBeVisible();
-    await expect(page.getByText(/16\/11\/2026 às 10:00/)).toBeVisible();
+    await expect(
+        page.getByText(
+            new RegExp(`${dataLegivel(dataMesSeguinte(16))} às 10:00`),
+        ),
+    ).toBeVisible();
     await expect(
         page.getByRole('heading', { name: 'Agendar em lote' }),
     ).toBeVisible();
