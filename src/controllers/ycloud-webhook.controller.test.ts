@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
+import {
+    mensagemFoiProcessada,
+    registrarMensagemProcessada,
+} from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
 import { processarStatusReativacao } from '../services/reativacao-status.service';
 import {
@@ -11,6 +14,7 @@ import {
 import { avisarBarbeiroUsuarioSemTelefone } from '../services/ycloud-username-notification.service';
 import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 import { receberYCloudWebhook } from './ycloud-webhook.controller';
+import { processarCliqueLembrete } from '../services/lembrete-agendamento.service';
 import { createYCloudSignature } from '../whatsapp/ycloud-signature';
 import {
     REATIVACAO_PAYLOAD_AGENDAR,
@@ -29,11 +33,14 @@ const reativacaoMocks = vi.hoisted(() => ({
 const statusReativacaoMock = vi.hoisted(() => ({
     processarStatusReativacao: vi.fn(),
 }));
+const lembreteMock = vi.hoisted(() => ({ processarCliqueLembrete: vi.fn() }));
 
 vi.mock('../services/processed-whatsapp-message.service', () => ({
+    mensagemFoiProcessada: vi.fn(),
     registrarMensagemProcessada: vi.fn(),
 }));
 vi.mock('../services/reativacao-status.service', () => statusReativacaoMock);
+vi.mock('../services/lembrete-agendamento.service', () => lembreteMock);
 vi.mock('../services/whatsapp-incoming-message.service', () => ({
     processarMensagemRecebida: vi.fn(),
 }));
@@ -56,6 +63,7 @@ vi.mock('../services/numero-ignorado-whatsapp.service', () => ({
 }));
 
 const registerMock = vi.mocked(registrarMensagemProcessada);
+const processedMock = vi.mocked(mensagemFoiProcessada);
 const processMock = vi.mocked(processarMensagemRecebida);
 const takeoverMock = vi.mocked(registrarRespostaHumanaIdempotente);
 const findClientMock = vi.mocked(buscarClientePorTelefoneVariantes);
@@ -64,6 +72,7 @@ const usernameMock = vi.mocked(avisarBarbeiroUsuarioSemTelefone);
 const ignoredMock = vi.mocked(numeroEstaIgnorado);
 const optOutMock = vi.mocked(reativacaoMocks.registrarOptOutMarketing);
 const statusMock = vi.mocked(processarStatusReativacao);
+const reminderMock = vi.mocked(processarCliqueLembrete);
 const webhookSecret = 'ycloud-test-secret';
 
 function makeReply() {
@@ -126,17 +135,105 @@ beforeEach(() => {
     vi.stubEnv('WHATSAPP_ALLOWLIST', '');
     vi.clearAllMocks();
     registerMock.mockResolvedValue(true);
+    processedMock.mockResolvedValue(false);
     processMock.mockResolvedValue();
     takeoverMock.mockResolvedValue(true);
     findClientMock.mockResolvedValue({ id: 'cliente-1' } as never);
     sendTextMock.mockResolvedValue();
     optOutMock.mockResolvedValue(undefined);
     statusMock.mockResolvedValue(undefined);
+    reminderMock.mockResolvedValue('Certo! Estaremos no seu aguardo!');
     usernameMock.mockResolvedValue();
     ignoredMock.mockResolvedValue(false);
 });
 
 describe('YCloud webhook controller', () => {
+    it('handles reminder quick reply before unknown discard and records only after response succeeds', async () => {
+        const reply = makeReply();
+        const order: string[] = [];
+        sendTextMock.mockImplementation(async () => {
+            order.push('reply');
+        });
+        registerMock.mockImplementation(async () => {
+            order.push('processed');
+            return true;
+        });
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody('lembrete:confirmar:agendamento-1', 'Confirmar'),
+            ),
+            reply,
+        );
+
+        expect(reminderMock).toHaveBeenCalledWith('5511999999999', {
+            type: 'lembrete',
+            action: 'confirmar',
+            agendamentoId: 'agendamento-1',
+        });
+        expect(order).toEqual(['reply', 'processed']);
+        expect(processMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('leaves reminder click reprocessable when fixed response fails', async () => {
+        sendTextMock.mockRejectedValueOnce(new Error('send failed'));
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody(
+                    'lembrete:remarcar:agendamento-1',
+                    'Preciso remarcar',
+                ),
+            ),
+            reply,
+        );
+
+        expect(reply.status).toHaveBeenCalledWith(500);
+        expect(registerMock).not.toHaveBeenCalled();
+    });
+
+    it('does not repeat an already processed reminder click', async () => {
+        processedMock.mockResolvedValueOnce(true);
+        const reply = makeReply();
+
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody('lembrete:confirmar:agendamento-1', 'Confirmar'),
+            ),
+            reply,
+        );
+
+        expect(reminderMock).not.toHaveBeenCalled();
+        expect(sendTextMock).not.toHaveBeenCalled();
+        expect(reply.status).toHaveBeenCalledWith(200);
+    });
+
+    it('applies allowlist and ignored-number filters to reminder clicks', async () => {
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
+        const outsideReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody('lembrete:confirmar:agendamento-1', 'Confirmar'),
+            ),
+            outsideReply,
+        );
+        expect(reminderMock).not.toHaveBeenCalled();
+
+        vi.stubEnv('WHATSAPP_ALLOWLIST', '');
+        ignoredMock.mockResolvedValueOnce(true);
+        const ignoredReply = makeReply();
+        await receberYCloudWebhook(
+            makeRequest(
+                buttonBody('lembrete:confirmar:agendamento-1', 'Confirmar'),
+            ),
+            ignoredReply,
+        );
+        expect(reminderMock).not.toHaveBeenCalled();
+        expect(registerMock).not.toHaveBeenCalled();
+    });
+
     it('retorna 401 para assinatura ausente, malformada, inválida, expirada ou segredo ausente', async () => {
         const absentHeader = makeReply();
         await receberYCloudWebhook(

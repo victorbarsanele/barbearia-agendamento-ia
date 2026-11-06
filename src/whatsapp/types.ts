@@ -6,11 +6,17 @@ export type IncomingWhatsAppMessageKind =
 
 export type ReativacaoButtonAction = 'agendar' | 'optout';
 
+export interface LembreteButtonAction {
+    type: 'lembrete';
+    action: 'confirmar' | 'remarcar';
+    agendamentoId: string;
+}
+
 export interface IncomingWhatsAppButtonReply {
     payload: string | null;
     text: string | null;
     contextId: string | null;
-    action: ReativacaoButtonAction | null;
+    action: ReativacaoButtonAction | LembreteButtonAction | null;
 }
 
 export interface IncomingWhatsAppMessageMedia {

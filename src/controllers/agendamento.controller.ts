@@ -2,6 +2,7 @@ import { StatusAgendamento } from '@prisma/client';
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { AppError } from '../lib/app-error';
 import * as agendamentoService from '../services/agendamento.service';
+import { enviarLembreteAgendamento } from '../services/lembrete-agendamento.service';
 
 interface CriarAgendamentoBody {
     clienteId: string;
@@ -114,6 +115,18 @@ export async function buscarPorId(
             request.params.id,
         );
         void reply.send(agendamento);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function enviarLembrete(
+    request: FastifyRequest<{ Params: AgendamentoParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const resultado = await enviarLembreteAgendamento(request.params.id);
+        void reply.status(202).send(resultado);
     } catch (error) {
         handleError(error, reply);
     }

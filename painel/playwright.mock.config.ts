@@ -11,6 +11,7 @@ export default defineConfig({
         '**/bottom-sheet.spec.ts',
         '**/relatorios.spec.ts',
         '**/saldoPacotes.spec.ts',
+        '**/lembreteAgendamento.spec.ts',
     ],
     fullyParallel: true,
     workers: process.env.CI ? 1 : 2,

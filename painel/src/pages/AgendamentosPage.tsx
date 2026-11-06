@@ -9,6 +9,7 @@ import { Button } from '../components/ui/Button';
 import {
     cancelarAgendamento,
     concluirAgendamento,
+    enviarLembreteAgendamento,
     listarAgendamentos,
     type Agendamento,
 } from '../services/agendamentos.service';
@@ -95,13 +96,22 @@ export function AgendamentosPage() {
 
     const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
+    const [agora, setAgora] = useState(() => Date.now());
     const [erro, setErro] = useState<string | null>(null);
     const [cancelandoId, setCancelandoId] = useState<string | null>(null);
     const [concluindoId, setConcluindoId] = useState<string | null>(null);
+    const [enviandoLembreteId, setEnviandoLembreteId] = useState<string | null>(
+        null,
+    );
     const [dataSelecionadaKey, setDataSelecionadaKey] =
         useState<string>(dataInicial);
     const [calendarioAberto, setCalendarioAberto] = useState(false);
     const [loteModalAberto, setLoteModalAberto] = useState(false);
+
+    useEffect(() => {
+        const timer = window.setInterval(() => setAgora(Date.now()), 30_000);
+        return () => window.clearInterval(timer);
+    }, []);
 
     useEffect(() => {
         let isMounted = true;
@@ -206,6 +216,29 @@ export function AgendamentosPage() {
         },
         [],
     );
+
+    const handleEnviarLembrete = useCallback(async (id: string) => {
+        setEnviandoLembreteId(id);
+        setErro(null);
+
+        try {
+            await enviarLembreteAgendamento(id);
+            setAgendamentos(await listarAgendamentos());
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Não foi possível enviar o lembrete.';
+            setErro(message);
+            try {
+                setAgendamentos(await listarAgendamentos());
+            } catch {
+                // Mantém a falha principal visível se a atualização também falhar.
+            }
+        } finally {
+            setEnviandoLembreteId(null);
+        }
+    }, []);
 
     const handleDiaAnterior = useCallback(() => {
         setDataSelecionadaKey((current) => addDaysToDateKey(current, -1));
@@ -343,6 +376,11 @@ export function AgendamentosPage() {
                             cancelando={cancelandoId === agendamento.id}
                             onConcluir={handleConcluir}
                             concluindo={concluindoId === agendamento.id}
+                            onEnviarLembrete={handleEnviarLembrete}
+                            enviandoLembrete={
+                                enviandoLembreteId === agendamento.id
+                            }
+                            agora={agora}
                         />
                     ))}
                 </ul>
