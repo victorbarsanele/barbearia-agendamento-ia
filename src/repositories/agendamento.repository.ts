@@ -260,21 +260,34 @@ export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
                         },
                     },
                 },
+                lembretes: {
+                    take: 1,
+                    orderBy: { criadoEm: 'desc' },
+                    select: {
+                        status: true,
+                        criadoEm: true,
+                        aceitoEm: true,
+                        motivoFalha: true,
+                    },
+                },
             },
             orderBy: { dataHoraInicio: 'asc' },
         });
 
-        return agendamentos.map(({ pacoteCliente, ...agendamento }) => ({
-            ...agendamento,
-            totalServicoNoPacote:
-                pacoteCliente?.servicos.find(
-                    (item) => item.servicoId === agendamento.servicoId,
-                )?.quantidadeTotal ?? null,
-            usosAnteriores:
-                pacoteCliente?.servicos.find(
-                    (item) => item.servicoId === agendamento.servicoId,
-                )?.usosAnteriores ?? null,
-        }));
+        return agendamentos.map(
+            ({ pacoteCliente, lembretes, ...agendamento }) => ({
+                ...agendamento,
+                ultimoLembrete: lembretes[0] ?? null,
+                totalServicoNoPacote:
+                    pacoteCliente?.servicos.find(
+                        (item) => item.servicoId === agendamento.servicoId,
+                    )?.quantidadeTotal ?? null,
+                usosAnteriores:
+                    pacoteCliente?.servicos.find(
+                        (item) => item.servicoId === agendamento.servicoId,
+                    )?.usosAnteriores ?? null,
+            }),
+        );
     } catch (error) {
         throw error;
     }

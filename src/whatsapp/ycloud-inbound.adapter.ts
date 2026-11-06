@@ -3,6 +3,7 @@ import {
     normalizarTelefone,
 } from '../utils/telefone';
 import { IncomingWhatsAppMessage } from './types';
+import { resolverAcaoBotaoLembrete } from './ycloud-lembrete';
 import { resolverAcaoBotaoReativacao } from './ycloud-reativacao';
 
 type AnyRecord = Record<string, unknown>;
@@ -196,7 +197,9 @@ export function parseYCloudWebhookEvent(body: unknown): YCloudWebhookEvent {
     const contextRecord = asRecord(payload.context);
     const buttonPayload = stringField(buttonRecord, 'payload');
     const buttonText = stringField(buttonRecord, 'text');
-    const buttonAction = resolverAcaoBotaoReativacao(buttonPayload, buttonText);
+    const buttonAction =
+        resolverAcaoBotaoLembrete(buttonPayload) ??
+        resolverAcaoBotaoReativacao(buttonPayload, buttonText);
     const textBody =
         messageType === 'text' ? stringField(textRecord, 'body') : null;
     const kind =

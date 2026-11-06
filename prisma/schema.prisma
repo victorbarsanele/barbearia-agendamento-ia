@@ -53,6 +53,12 @@ enum StatusReativacaoEnvio {
   FALHOU
 }
 
+enum StatusLembreteAgendamentoEnvio {
+  PENDENTE
+  ACEITO
+  FALHOU
+}
+
 model Cliente {
   id                String             @id @default(cuid())
   nome              String
@@ -118,6 +124,8 @@ model Agendamento {
   servico         Servico           @relation(fields: [servicoId], references: [id], onDelete: Restrict)
   pacoteCliente   PacoteCliente?    @relation(fields: [pacoteClienteId], references: [id], onDelete: Restrict)
   lote            LoteAgendamento?  @relation(fields: [loteId], references: [id], onDelete: SetNull)
+  lembretes       LembreteAgendamentoEnvio[]
+  contextosRemarcacao ContextoRemarcacao[]
 
   @@index([clienteId])
   @@index([servicoId])
@@ -125,6 +133,37 @@ model Agendamento {
   @@index([loteId])
   @@index([dataHoraInicio, dataHoraFim, status])
   @@map("agendamentos")
+}
+
+model LembreteAgendamentoEnvio {
+  id                String                         @id @default(cuid())
+  agendamentoId     String
+  providerMessageId String?
+  status            StatusLembreteAgendamentoEnvio @default(PENDENTE)
+  motivoFalha       String?
+  criadoEm          DateTime                       @default(now()) @db.Timestamptz(3)
+  atualizadoEm      DateTime                       @updatedAt @db.Timestamptz(3)
+  aceitoEm          DateTime?                      @db.Timestamptz(3)
+
+  agendamento       Agendamento                    @relation(fields: [agendamentoId], references: [id], onDelete: Restrict)
+
+  @@index([agendamentoId, criadoEm])
+  @@map("lembretes_agendamento_envios")
+}
+
+model ContextoRemarcacao {
+  id            String       @id @default(cuid())
+  telefone      String       @unique
+  agendamentoId String
+  expiraEm      DateTime     @db.Timestamptz(3)
+  consumidoEm   DateTime?    @db.Timestamptz(3)
+  criadoEm      DateTime     @default(now()) @db.Timestamptz(3)
+  atualizadoEm DateTime     @updatedAt @db.Timestamptz(3)
+
+  agendamento   Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+
+  @@index([expiraEm])
+  @@map("contextos_remarcacao")
 }
 
 model LoteAgendamento {

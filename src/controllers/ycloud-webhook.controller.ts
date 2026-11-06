@@ -1,5 +1,8 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
-import { registrarMensagemProcessada } from '../services/processed-whatsapp-message.service';
+import {
+    mensagemFoiProcessada,
+    registrarMensagemProcessada,
+} from '../services/processed-whatsapp-message.service';
 import { processarMensagemRecebida } from '../services/whatsapp-incoming-message.service';
 import { processarStatusReativacao } from '../services/reativacao-status.service';
 import {
@@ -15,6 +18,8 @@ import { getWhatsAppProvider } from '../whatsapp/config';
 import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
 import { numeroEstaIgnorado } from '../services/numero-ignorado-whatsapp.service';
 import { getReativacaoRepository } from '../repositories/reativacao.repository';
+import { processarCliqueLembrete } from '../services/lembrete-agendamento.service';
+import { runExclusive } from '../utils/phone-queue';
 import {
     REATIVACAO_TEXTO_CONFIRMACAO_OPTOUT,
     REATIVACAO_TEXTO_SINTETICO,
@@ -228,6 +233,47 @@ export async function receberYCloudWebhook(
         message.kind === 'button_reply'
             ? (message.buttonReply?.action ?? null)
             : null;
+    const lembreteAction =
+        typeof reativacaoAction === 'object' &&
+        reativacaoAction?.type === 'lembrete'
+            ? reativacaoAction
+            : null;
+
+    if (lembreteAction && message.phone) {
+        try {
+            await runExclusive(message.phone, async () => {
+                if (
+                    message.messageId &&
+                    (await mensagemFoiProcessada(
+                        message.provider,
+                        message.messageId,
+                    ))
+                ) {
+                    return;
+                }
+
+                const resposta = await processarCliqueLembrete(
+                    message.phone!,
+                    lembreteAction,
+                );
+                await sendWhatsAppText(message.phone!, resposta);
+                if (message.messageId) {
+                    await registrarMensagemProcessada(
+                        message.provider,
+                        message.messageId,
+                    );
+                }
+            });
+        } catch {
+            console.error(
+                '[YCLOUD WEBHOOK] Falha ao processar quick reply de lembrete.',
+            );
+            void reply.status(500).send({ ok: false });
+            return;
+        }
+        void reply.status(200).send({ ok: true });
+        return;
+    }
 
     if (message.kind === 'button_reply' && !message.phone) {
         console.warn(

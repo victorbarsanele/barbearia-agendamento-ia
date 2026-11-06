@@ -122,6 +122,53 @@ describe('YCloud inbound adapter', () => {
         });
     });
 
+    it.each([
+        ['lembrete:confirmar:agendamento-1', 'confirmar'],
+        ['lembrete:remarcar:agendamento-2', 'remarcar'],
+    ] as const)('parses dynamic reminder payload %s', (payload, action) => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-reminder-1',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: { payload, text: 'label ignorado' },
+                },
+            }),
+        ).toMatchObject({
+            kind: 'message',
+            message: {
+                kind: 'button_reply',
+                buttonReply: {
+                    action: {
+                        type: 'lembrete',
+                        action,
+                        agendamentoId: payload.split(':')[2],
+                    },
+                },
+            },
+        });
+    });
+
+    it.each([
+        'lembrete:confirmar:',
+        'lembrete:confirmar:id:extra',
+        'lembrete:outro:agendamento-1',
+    ])('does not parse malformed reminder payload %s', (payload) => {
+        expect(
+            parseYCloudWebhookEvent({
+                type: 'whatsapp.inbound_message.received',
+                whatsappInboundMessage: {
+                    wamid: 'button-reminder-invalid',
+                    from: '5511999999999',
+                    type: 'button',
+                    button: { payload, text: 'Confirmar' },
+                },
+            }),
+        ).toMatchObject({ kind: 'message', message: { kind: 'unknown' } });
+    });
+
     it('falls back to trimmed case-insensitive button label when payload is unknown', () => {
         expect(
             parseYCloudWebhookEvent({

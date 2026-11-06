@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, CheckCircle2, Clock, Package } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Package, Send } from 'lucide-react';
 import type { Agendamento } from '../services/agendamentos.service';
 import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
 import { infoOrigemAgendamento } from '../utils/origemAgendamento.js';
@@ -8,6 +8,7 @@ import { formatarPrecoBRL } from '../utils/preco';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
+import { ConfirmDialog } from './ConfirmDialog';
 import { IconButton } from './ui/IconButton';
 
 interface AgendamentoItemProps {
@@ -21,6 +22,9 @@ interface AgendamentoItemProps {
     cancelando: boolean;
     onConcluir: (id: string, aplicarParaLote: boolean) => Promise<void>;
     concluindo: boolean;
+    onEnviarLembrete: (id: string) => Promise<void>;
+    enviandoLembrete: boolean;
+    agora: number;
 }
 
 function formatarHora(isoDate: string): string {
@@ -32,6 +36,14 @@ function formatarHora(isoDate: string): string {
     }).format(new Date(isoDate));
 }
 
+function formatarDataHora(isoDate: string): string {
+    return new Intl.DateTimeFormat('pt-BR', {
+        dateStyle: 'full',
+        timeStyle: 'short',
+        timeZone: 'America/Sao_Paulo',
+    }).format(new Date(isoDate));
+}
+
 export function AgendamentoItem({
     agendamento,
     onEditar,
@@ -39,6 +51,9 @@ export function AgendamentoItem({
     cancelando,
     onConcluir,
     concluindo,
+    onEnviarLembrete,
+    enviandoLembrete,
+    agora,
 }: AgendamentoItemProps) {
     const [confirmacaoAberta, setConfirmacaoAberta] = useState(false);
     const [confirmacaoConclusaoAberta, setConfirmacaoConclusaoAberta] =
@@ -47,6 +62,8 @@ export function AgendamentoItem({
     const [aplicarParaLoteCancelar, setAplicarParaLoteCancelar] =
         useState(false);
     const [aplicarParaLoteConcluir, setAplicarParaLoteConcluir] =
+        useState(false);
+    const [confirmacaoLembreteAberta, setConfirmacaoLembreteAberta] =
         useState(false);
 
     const fazPartesDeLote = Boolean(agendamento.loteId);
@@ -60,6 +77,14 @@ export function AgendamentoItem({
     const podeConcluir = ehAgendamentoDePacote && !agendamento.concluido;
     const ehPacoteConcluido = ehAgendamentoDePacote && agendamento.concluido;
     const origemInfo = infoOrigemAgendamento(agendamento.origem);
+    const ultimoLembrete = agendamento.ultimoLembrete;
+    const lembreteAceito = ultimoLembrete?.status === 'ACEITO';
+    const lembretePendente = ultimoLembrete?.status === 'PENDENTE';
+    const podeEnviarLembrete =
+        (agendamento.status === 'AGENDADO' ||
+            agendamento.status === 'CONFIRMADO') &&
+        new Date(agendamento.dataHoraInicio).getTime() > agora &&
+        !lembreteAceito;
 
     const abrirConfirmacao = () => {
         setConfirmacaoAberta(true);
@@ -99,6 +124,11 @@ export function AgendamentoItem({
     const confirmarConclusao = async () => {
         await onConcluir(agendamento.id, aplicarParaLoteConcluir);
         setConfirmacaoConclusaoAberta(false);
+    };
+
+    const confirmarEnvioLembrete = async () => {
+        await onEnviarLembrete(agendamento.id);
+        setConfirmacaoLembreteAberta(false);
     };
 
     return (
@@ -198,7 +228,10 @@ export function AgendamentoItem({
                     </div>
                 )}
 
-                {(podeEditar || podeCancelar) && (
+                {(podeEditar ||
+                    podeCancelar ||
+                    podeEnviarLembrete ||
+                    lembreteAceito) && (
                     <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                         {podeEditar && (
                             <Button
@@ -219,6 +252,50 @@ export function AgendamentoItem({
                             >
                                 {cancelando ? 'Cancelando...' : 'Cancelar'}
                             </Button>
+                        )}
+
+                        {lembreteAceito ? (
+                            <span className="inline-flex min-h-9 items-center gap-1.5 text-sm font-medium text-[var(--color-success)]">
+                                <CheckCircle2 className="h-4 w-4" />
+                                Lembrete enviado às{' '}
+                                {formatarHora(
+                                    ultimoLembrete.aceitoEm ??
+                                        ultimoLembrete.criadoEm,
+                                )}
+                            </span>
+                        ) : (
+                            podeEnviarLembrete && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="rounded-full px-3 text-sm font-semibold"
+                                        onClick={() =>
+                                            setConfirmacaoLembreteAberta(true)
+                                        }
+                                        disabled={
+                                            enviandoLembrete || lembretePendente
+                                        }
+                                    >
+                                        <Send
+                                            aria-hidden="true"
+                                            className="mr-1.5 h-4 w-4"
+                                        />
+                                        {enviandoLembrete
+                                            ? 'Enviando...'
+                                            : lembretePendente
+                                              ? 'Lembrete em andamento'
+                                              : ultimoLembrete?.status ===
+                                                  'FALHOU'
+                                                ? 'Tentar novamente'
+                                                : 'Enviar lembrete'}
+                                    </Button>
+                                    {ultimoLembrete?.status === 'FALHOU' && (
+                                        <span className="text-xs text-[var(--color-danger-text)]">
+                                            Última tentativa falhou
+                                        </span>
+                                    )}
+                                </div>
+                            )
                         )}
 
                         {agendamento.status !== 'CANCELADO' &&
@@ -411,6 +488,24 @@ export function AgendamentoItem({
                     </Card>
                 </div>
             )}
+
+            <ConfirmDialog
+                open={confirmacaoLembreteAberta}
+                title="Enviar lembrete"
+                description="Confirme os dados antes de enviar o lembrete por WhatsApp."
+                descriptionItems={[
+                    `Cliente: ${agendamento.cliente.nome}`,
+                    `Serviço: ${agendamento.servico.nome}`,
+                    `Data e horário: ${formatarDataHora(agendamento.dataHoraInicio)}`,
+                ]}
+                confirmText="Enviar lembrete"
+                loadingText="Enviando..."
+                confirmVariant="primary"
+                cancelVariant="ghost"
+                loading={enviandoLembrete}
+                onConfirm={() => void confirmarEnvioLembrete()}
+                onCancel={() => setConfirmacaoLembreteAberta(false)}
+            />
         </li>
     );
 }

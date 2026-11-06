@@ -6,6 +6,13 @@ export type StatusAgendamento =
     | 'CANCELADO'
     | 'CONCLUIDO';
 
+export interface UltimoLembreteAgendamento {
+    status: 'PENDENTE' | 'ACEITO' | 'FALHOU';
+    criadoEm: string;
+    aceitoEm: string | null;
+    motivoFalha: string | null;
+}
+
 export interface Agendamento {
     id: string;
     origem?: 'PAINEL' | 'WHATSAPP_IA' | null;
@@ -17,6 +24,7 @@ export interface Agendamento {
     totalServicoNoPacote: number | null;
     loteId: string | null;
     concluido: boolean;
+    ultimoLembrete?: UltimoLembreteAgendamento | null;
     cliente: {
         id: string;
         nome: string;
@@ -193,6 +201,16 @@ export async function atualizarAgendamento(
     });
 
     return handleResponse<Agendamento>(response);
+}
+
+export async function enviarLembreteAgendamento(
+    id: string,
+): Promise<{ status: 'ACEITO'; aceitoEm: string }> {
+    const response = await apiFetch(`/api/agendamentos/${id}/lembrete`, {
+        method: 'POST',
+    });
+
+    return handleResponse<{ status: 'ACEITO'; aceitoEm: string }>(response);
 }
 
 export async function concluirAgendamento(

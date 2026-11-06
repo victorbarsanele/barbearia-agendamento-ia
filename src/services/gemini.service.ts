@@ -56,6 +56,7 @@ import {
 import { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 import { getWhatsAppAllowlist } from '../whatsapp/allowlist';
 import { canonicalizeYCloudPhone } from '../whatsapp/ycloud-inbound.adapter';
+import { consumirContextoRemarcacao } from './lembrete-agendamento.service';
 import { enviarNotificacaoWhatsApp } from './whatsapp-notification.service';
 import {
     getEscalationStateRepository,
@@ -3811,6 +3812,18 @@ export async function processarMensagemWhatsapp(
             return;
         }
 
+        let contextoRemarcacao: string | undefined;
+        try {
+            contextoRemarcacao = await consumirContextoRemarcacao(phone);
+        } catch (error) {
+            console.warn(
+                '[GEMINI SERVICE] Falha ao consumir contexto de remarcação.',
+                {
+                    erro: describeSafeError(error),
+                },
+            );
+        }
+
         const horizonteTurno = await carregarContextoHorizonteTurno();
 
         if (!estado || estado.estado === EstadoEscalonamento.BOT) {
@@ -3905,7 +3918,9 @@ export async function processarMensagemWhatsapp(
                 remoteJid,
                 texto,
                 messageId,
-                contextoRascunho,
+                [contextoRascunho, contextoRemarcacao]
+                    .filter((contexto): contexto is string => Boolean(contexto))
+                    .join('\n') || undefined,
                 confirmarDisponivel,
                 rascunhoNoInicio !== null,
                 horizonteTurno,
@@ -3919,7 +3934,7 @@ export async function processarMensagemWhatsapp(
             remoteJid,
             texto,
             messageId,
-            undefined,
+            contextoRemarcacao,
             false,
             false,
             horizonteTurno,

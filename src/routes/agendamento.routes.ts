@@ -28,6 +28,23 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
 
     app.get('/agendamentos', agendamentoController.listarTodos);
 
+    app.post(
+        '/agendamentos/:id/lembrete',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: {
+                        id: { type: 'string', minLength: 1 },
+                    },
+                },
+            },
+        },
+        agendamentoController.enviarLembrete,
+    );
+
     app.get(
         '/agendamentos/:id',
         {
