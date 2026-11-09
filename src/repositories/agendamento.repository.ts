@@ -1,5 +1,6 @@
 import {
     PacoteCliente,
+    OrigemConclusaoAgendamento,
     OrigemAgendamento,
     Prisma,
     StatusAgendamento,
@@ -15,8 +16,13 @@ type AgendamentoBase = Prisma.AgendamentoGetPayload<{
     };
 }>;
 
-export type AgendamentoComRelacoes = Omit<AgendamentoBase, 'numeroNoPacote'> & {
+export type AgendamentoComRelacoes = Omit<
+    AgendamentoBase,
+    'numeroNoPacote' | 'concluidoEm' | 'concluidoPor'
+> & {
     numeroNoPacote?: number | null;
+    concluidoEm?: Date | null;
+    concluidoPor?: OrigemConclusaoAgendamento | null;
 };
 
 interface SalvarAgendamentoData {
@@ -147,6 +153,7 @@ async function reservarNumeroNoPacote(
     servicoId: string,
     ignorarAgendamentoId?: string,
 ): Promise<number> {
+    // Chamadores de linhas existentes travam Agendamento antes; slot novo ainda não tem linha.
     const saldos = await tx.$queryRaw<
         { quantidadeTotal: number; usosAnteriores: number }[]
     >(
@@ -212,6 +219,7 @@ export async function criarComNumeroNoPacoteNaTransacao(
     servicoId: string,
 ): Promise<AgendamentoComRelacoes> {
     try {
+        // Slot novo reserva saldo antes do INSERT porque ainda não existe linha de Agendamento.
         const numeroNoPacote = await reservarNumeroNoPacote(
             tx,
             pacoteClienteId,
@@ -467,6 +475,11 @@ export async function atualizarComNumeroNoPacote(
 ): Promise<AgendamentoComRelacoes> {
     try {
         return await prisma.$transaction(async (tx) => {
+            // Ordem canônica para linha existente: Agendamento -> Cliente -> saldo -> PacoteCliente.
+            await tx.$queryRaw(Prisma.sql`
+                SELECT "id" FROM "agendamentos" WHERE "id" = ${id} FOR UPDATE
+            `);
+
             let numeroNoPacote: number | null = null;
 
             if (
@@ -547,15 +560,22 @@ export async function atualizarPacoteClienteId(
     pacoteClienteId: string | null,
 ): Promise<AgendamentoComRelacoes> {
     return prisma.$transaction(async (tx) => {
-        const atual = await tx.agendamento.findUnique({
-            where: { id },
-            select: {
-                pacoteClienteId: true,
-                servicoId: true,
-                status: true,
-                numeroNoPacote: true,
-            },
-        });
+        // Travar Agendamento antes de reservar saldo ou mudar vínculo do pacote.
+        const linhas = await tx.$queryRaw<
+            {
+                id: string;
+                pacoteClienteId: string | null;
+                servicoId: string;
+                status: StatusAgendamento;
+                numeroNoPacote: number | null;
+            }[]
+        >(Prisma.sql`
+            SELECT "id", "pacoteClienteId", "servicoId", "status", "numeroNoPacote"
+            FROM "agendamentos"
+            WHERE "id" = ${id}
+            FOR UPDATE
+        `);
+        const atual = linhas[0];
 
         if (!atual) {
             throw new AppError('Agendamento não encontrado.', 404);
@@ -656,50 +676,286 @@ export async function concluirComPacote(
     agendamentoId: string,
     pacoteClienteId: string,
     servicoId: string,
+    concluidoPor: OrigemConclusaoAgendamento,
+    concluidoEm: Date,
+    elegibilidadeAutomatica?: { aPartirDe: Date; corte: Date },
 ): Promise<{
+    estado: 'CONCLUIDO' | 'IGNORADO' | 'SALDO_ESGOTADO';
     agendamento: AgendamentoComRelacoes;
     pacoteCliente: PacoteCliente;
 }> {
-    return prisma.$transaction(async (tx) => {
-        const saldo = await tx.pacoteClienteServico.updateMany({
-            where: {
-                pacoteClienteId,
-                servicoId,
-                quantidadeRestante: { gt: 0 },
-            },
-            data: { quantidadeRestante: { decrement: 1 } },
-        });
+    class ConclusaoSemSaldo extends Error {}
+    class PacoteInativo extends Error {}
 
-        if (saldo.count === 0) {
-            const saldoExistente = await tx.pacoteClienteServico.findUnique({
+    try {
+        return await prisma.$transaction(async (tx) => {
+            const claim = await tx.agendamento.updateMany({
                 where: {
-                    pacoteClienteId_servicoId: {
-                        pacoteClienteId,
-                        servicoId,
-                    },
+                    id: agendamentoId,
+                    pacoteClienteId,
+                    concluido: false,
+                    status: { not: StatusAgendamento.CANCELADO },
+                    ...(elegibilidadeAutomatica
+                        ? {
+                              dataHoraInicio: {
+                                  gte: elegibilidadeAutomatica.aPartirDe,
+                              },
+                              dataHoraFim: {
+                                  lt: elegibilidadeAutomatica.corte,
+                              },
+                          }
+                        : {}),
                 },
-                select: { id: true },
+                data: { concluido: true, concluidoEm, concluidoPor },
             });
 
+            if (claim.count !== 1) {
+                if (concluidoPor === OrigemConclusaoAgendamento.AUTOMATICO) {
+                    return {
+                        estado: 'IGNORADO' as const,
+                        agendamento: null as never,
+                        pacoteCliente: null as never,
+                    };
+                }
+
+                const atual = await tx.agendamento.findUnique({
+                    where: { id: agendamentoId },
+                    select: { status: true },
+                });
+                throw new AppError(
+                    atual?.status === StatusAgendamento.CANCELADO
+                        ? 'Agendamento cancelado não pode ser concluído.'
+                        : 'Agendamento já está concluído.',
+                    409,
+                );
+            }
+
+            const saldos = await tx.$queryRaw<
+                { id: string; quantidadeRestante: number }[]
+            >(Prisma.sql`
+                SELECT "id", "quantidadeRestante"
+                FROM "pacotes_clientes_servicos"
+                WHERE "pacoteClienteId" = ${pacoteClienteId}
+                  AND "servicoId" = ${servicoId}
+                FOR UPDATE
+            `);
+            const saldo = saldos[0];
+
+            if (!saldo) {
+                throw new AppError('Pacote do cliente não encontrado.', 404);
+            }
+            if (saldo.quantidadeRestante <= 0) {
+                if (concluidoPor === OrigemConclusaoAgendamento.AUTOMATICO) {
+                    throw new ConclusaoSemSaldo();
+                }
+                throw new AppError('Pacote do cliente está esgotado.', 400);
+            }
+
+            await tx.pacoteClienteServico.update({
+                where: { id: saldo.id },
+                data: { quantidadeRestante: { decrement: 1 } },
+            });
+
+            const saldosRestantes = await tx.pacoteClienteServico.count({
+                where: { pacoteClienteId, quantidadeRestante: { gt: 0 } },
+            });
+            const pacoteAtualizado = await tx.pacoteCliente.updateMany({
+                where: {
+                    id: pacoteClienteId,
+                    status: StatusPacoteCliente.ATIVO,
+                },
+                data: {
+                    status:
+                        saldosRestantes === 0
+                            ? StatusPacoteCliente.FINALIZADO
+                            : StatusPacoteCliente.ATIVO,
+                },
+            });
+            if (pacoteAtualizado.count !== 1) {
+                if (concluidoPor === OrigemConclusaoAgendamento.AUTOMATICO) {
+                    throw new PacoteInativo();
+                }
+                throw new AppError(
+                    'Não é possível concluir: pacote do cliente não está ativo.',
+                    409,
+                );
+            }
+
+            const agendamento = await tx.agendamento.findUniqueOrThrow({
+                where: { id: agendamentoId },
+                include: includeRelacoes,
+            });
+            const pacoteCliente = await tx.pacoteCliente.findUniqueOrThrow({
+                where: { id: pacoteClienteId },
+            });
+
+            return { estado: 'CONCLUIDO' as const, agendamento, pacoteCliente };
+        });
+    } catch (error) {
+        if (error instanceof ConclusaoSemSaldo) {
+            return {
+                estado: 'SALDO_ESGOTADO',
+                agendamento: null as never,
+                pacoteCliente: null as never,
+            };
+        }
+        if (error instanceof PacoteInativo) {
+            return {
+                estado: 'IGNORADO',
+                agendamento: null as never,
+                pacoteCliente: null as never,
+            };
+        }
+        throw error;
+    }
+}
+
+export async function listarParaConclusaoAutomatica(
+    aPartirDe: Date,
+    corte: Date,
+    limite: number,
+): Promise<{ id: string; pacoteClienteId: string; servicoId: string }[]> {
+    const candidatos = await prisma.agendamento.findMany({
+        where: {
+            pacoteClienteId: { not: null },
+            concluido: false,
+            status: { not: StatusAgendamento.CANCELADO },
+            dataHoraInicio: { gte: aPartirDe },
+            dataHoraFim: { lt: corte },
+        },
+        select: { id: true, pacoteClienteId: true, servicoId: true },
+        orderBy: [{ dataHoraFim: 'asc' }, { id: 'asc' }],
+        take: limite,
+    });
+    return candidatos.flatMap((candidato) =>
+        candidato.pacoteClienteId
+            ? [{ ...candidato, pacoteClienteId: candidato.pacoteClienteId }]
+            : [],
+    );
+}
+
+export async function estornarConclusaoAutomatica(
+    agendamentoId: string,
+    agora: Date,
+    janelaEstornoHoras: number,
+): Promise<AgendamentoComRelacoes> {
+    return prisma.$transaction(async (tx) => {
+        const linhas = await tx.$queryRaw<
+            {
+                clienteId: string;
+                pacoteClienteId: string | null;
+                servicoId: string;
+                status: StatusAgendamento;
+                concluido: boolean;
+                concluidoEm: Date | null;
+                concluidoPor: OrigemConclusaoAgendamento | null;
+            }[]
+        >(Prisma.sql`
+            SELECT a."clienteId", a."pacoteClienteId", a."servicoId",
+                   a."status", a."concluido", a."concluidoEm", a."concluidoPor"
+            FROM "agendamentos" AS a
+            WHERE a."id" = ${agendamentoId}
+            FOR UPDATE
+        `);
+        const atual = linhas[0];
+        if (!atual) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+        if (
+            !atual.concluido ||
+            atual.concluidoPor !== OrigemConclusaoAgendamento.AUTOMATICO ||
+            atual.status === StatusAgendamento.CANCELADO ||
+            !atual.concluidoEm ||
+            agora.getTime() - atual.concluidoEm.getTime() < 0 ||
+            agora.getTime() - atual.concluidoEm.getTime() >
+                janelaEstornoHoras * 60 * 60 * 1000 ||
+            !atual.pacoteClienteId
+        ) {
             throw new AppError(
-                saldoExistente
-                    ? 'Pacote do cliente está esgotado.'
-                    : 'Pacote do cliente não encontrado.',
-                saldoExistente ? 400 : 404,
+                'Agendamento concluído não pode ser cancelado.',
+                409,
             );
         }
 
-        const pacoteClienteAtualizado = await atualizarStatusConformeSaldos(
-            tx,
-            pacoteClienteId,
-        );
+        await tx.$queryRaw(Prisma.sql`
+            SELECT "id" FROM "clientes" WHERE "id" = ${atual.clienteId} FOR UPDATE
+        `);
+        const outroPacoteAtivo = await tx.pacoteCliente.findFirst({
+            where: {
+                clienteId: atual.clienteId,
+                status: StatusPacoteCliente.ATIVO,
+                id: { not: atual.pacoteClienteId },
+            },
+            select: { id: true },
+        });
+        if (outroPacoteAtivo) {
+            throw new AppError(
+                'Não é possível estornar: cliente já possui outro pacote ativo.',
+                409,
+            );
+        }
 
-        const agendamento = await tx.agendamento.update({
-            where: { id: agendamentoId },
-            data: { concluido: true },
-            include: includeRelacoes,
+        const saldo = await tx.$queryRaw<
+            {
+                id: string;
+                quantidadeTotal: number;
+                usosAnteriores: number;
+                quantidadeRestante: number;
+            }[]
+        >(Prisma.sql`
+            SELECT "id", "quantidadeTotal", "usosAnteriores", "quantidadeRestante"
+            FROM "pacotes_clientes_servicos"
+            WHERE "pacoteClienteId" = ${atual.pacoteClienteId}
+              AND "servicoId" = ${atual.servicoId}
+            FOR UPDATE
+        `);
+        const servicoPacote = saldo[0];
+        if (
+            !servicoPacote ||
+            servicoPacote.quantidadeRestante >=
+                servicoPacote.quantidadeTotal - servicoPacote.usosAnteriores
+        ) {
+            throw new AppError('Saldo do pacote não permite estorno.', 409);
+        }
+
+        const cancelado = await tx.agendamento.updateMany({
+            where: {
+                id: agendamentoId,
+                concluido: true,
+                concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+                status: { not: StatusAgendamento.CANCELADO },
+            },
+            data: {
+                status: StatusAgendamento.CANCELADO,
+                concluido: false,
+                concluidoEm: null,
+                concluidoPor: null,
+                numeroNoPacote: null,
+            },
+        });
+        if (cancelado.count !== 1) {
+            throw new AppError(
+                'Agendamento concluído não pode ser cancelado.',
+                409,
+            );
+        }
+
+        await tx.pacoteClienteServico.update({
+            where: { id: servicoPacote.id },
+            data: { quantidadeRestante: { increment: 1 } },
+        });
+        await tx.pacoteCliente.updateMany({
+            where: {
+                id: atual.pacoteClienteId,
+                status: StatusPacoteCliente.FINALIZADO,
+            },
+            // Etapa 2 deve distinguir estorno de um ciclo já renovado.
+            data: { status: StatusPacoteCliente.ATIVO },
         });
 
-        return { agendamento, pacoteCliente: pacoteClienteAtualizado };
+        return tx.agendamento.findUniqueOrThrow({
+            where: { id: agendamentoId },
+            include: includeRelacoes,
+        });
     });
 }

@@ -30,6 +30,8 @@ import { numeroIgnoradoWhatsAppRoutes } from './src/routes/numero-ignorado-whats
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 import { validateWhatsAppConfiguration } from './src/whatsapp/config';
 import { iniciarJobLembretesRascunho } from './src/services/pending-agendamento-reminder.service';
+import { getAutoConclusaoConfig, validarAutoConclusaoConfig } from './src/config/auto-conclusao';
+import { iniciarJobAutoConclusao } from './src/services/auto-conclusao-agendamento.service';
 import { getGoogleCalendarConfig } from './src/google-calendar/config';
 import { GoogleCalendarAdapter } from './src/google-calendar/google-calendar.adapter';
 import { iniciarReconciliacaoGoogleAgenda } from './src/google-calendar/sync.scheduler';
@@ -39,11 +41,13 @@ const app = Fastify({
     logger: true,
 });
 let stopPendingBookingReminder: (() => void) | undefined;
+let stopAutoConclusao: (() => void) | undefined;
 let stopGoogleCalendarWorker: (() => Promise<void>) | undefined;
 let stopGoogleCalendarReconciliation: (() => Promise<void>) | undefined;
 
 app.addHook('onClose', async () => {
     stopPendingBookingReminder?.();
+    stopAutoConclusao?.();
     await Promise.all([
         stopGoogleCalendarWorker?.(),
         stopGoogleCalendarReconciliation?.(),
@@ -121,10 +125,14 @@ const port = Number(process.env.PORT ?? 3333);
 const start = async (): Promise<void> => {
     try {
         validarAgendamentoConfig();
+        validarAutoConclusaoConfig();
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
         app.log.info({ nodeVersion: process.version }, 'node.runtime');
         stopPendingBookingReminder = iniciarJobLembretesRascunho();
+        if (getAutoConclusaoConfig().enabled) {
+            stopAutoConclusao = iniciarJobAutoConclusao();
+        }
 
         const googleCalendarConfig = getGoogleCalendarConfig((message) =>
             app.log.error(message),

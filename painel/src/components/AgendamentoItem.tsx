@@ -71,6 +71,7 @@ export function AgendamentoItem({
     const podeCancelar = podeCancelarAgendamento(
         agendamento.status,
         agendamento.concluido,
+        agendamento.estornavel,
     );
     const podeEditar = agendamento.status !== 'CANCELADO';
     const ehAgendamentoDePacote = Boolean(agendamento.pacoteClienteId);
@@ -188,6 +189,20 @@ export function AgendamentoItem({
                                     </>
                                 )}
                         </div>
+                        {agendamento.concluidoPor === 'AUTOMATICO' && (
+                            <span className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-[var(--color-success)]">
+                                <CheckCircle2
+                                    aria-hidden="true"
+                                    className="h-3.5 w-3.5"
+                                />
+                                Concluído automaticamente
+                            </span>
+                        )}
+                        {agendamento.autoConclusaoPendente && (
+                            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                                Pendente de conclusão automática
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
@@ -332,11 +347,13 @@ export function AgendamentoItem({
                         </h2>
 
                         <p className="text-sm text-[var(--color-text-secondary)]">
-                            Tem certeza que deseja cancelar o agendamento de{' '}
+                            {agendamento.estornavel
+                                ? 'Ao cancelar este agendamento, 1 crédito será devolvido ao pacote de '
+                                : 'Tem certeza que deseja cancelar o agendamento de '}
                             <span className="font-semibold text-[var(--color-text-primary)]">
                                 {agendamento.cliente.nome}
                             </span>
-                            ?
+                            {agendamento.estornavel ? '.' : '?'}
                         </p>
                         <label className="flex items-start gap-3 text-sm text-[var(--color-text-secondary)]">
                             <input
@@ -394,7 +411,11 @@ export function AgendamentoItem({
                                 onClick={() => void confirmarCancelamento()}
                                 disabled={cancelando}
                             >
-                                {cancelando ? 'Cancelando...' : 'Sim, cancelar'}
+                                                                {cancelando
+                                                                        ? 'Cancelando...'
+                                                                        : agendamento.estornavel
+                                                                            ? 'Sim, cancelar e estornar crédito'
+                                                                            : 'Sim, cancelar'}
                             </Button>
                             <Button
                                 variant="ghost"

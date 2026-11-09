@@ -1,5 +1,11 @@
-import { OrigemAgendamento, Prisma, StatusAgendamento } from '@prisma/client';
+import {
+    OrigemAgendamento,
+    OrigemConclusaoAgendamento,
+    Prisma,
+    StatusAgendamento,
+} from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AppError } from '../lib/app-error';
 
 const notificationMock = vi.hoisted(() => ({
     enviarNotificacaoWhatsApp: vi.fn(),
@@ -28,6 +34,8 @@ vi.mock('../repositories/agendamento.repository', () => ({
     atualizar: vi.fn(),
     cancelar: vi.fn(),
     concluirComPacote: vi.fn(),
+    estornarConclusaoAutomatica: vi.fn(),
+    listarParaConclusaoAutomatica: vi.fn(),
     atualizarPacoteClienteId: vi.fn(),
     contarAtivosPorClienteId: vi.fn(),
     contarAtivosPorServicoId: vi.fn(),
@@ -185,6 +193,7 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-07-20T12:00:00Z'));
     vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
     vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
+    vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
     vi.clearAllMocks();
     googleSyncMock.state.idsEnfileirados.length = 0;
     notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
@@ -1061,6 +1070,25 @@ describe('agendamento.service.criar', () => {
 });
 
 describe('agendamento.service.cancelar', () => {
+    it('marca conclusão automática como estornável com flag desligada', () => {
+        vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+        vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
+        const agora = new Date();
+
+        expect(
+            agendamentoService.obterEstadoConclusao(
+                {
+                    ...agendamentoAtual,
+                    pacoteClienteId: 'pacote-cliente-1',
+                    concluido: true,
+                    concluidoEm: new Date(agora.getTime() - 60 * 60 * 1000),
+                    concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+                },
+                agora,
+            ),
+        ).toMatchObject({ estornavel: true });
+    });
+
     it('altera status para CANCELADO sem deletar registro', async () => {
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
             ...agendamentoAtual,
@@ -1095,6 +1123,88 @@ describe('agendamento.service.cancelar', () => {
             statusCode: 409,
         });
         expect(agendamentoRepository.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('estorna conclusão automática dentro da janela', async () => {
+        vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+        vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: true,
+            concluidoEm: new Date('2026-07-20T11:00:00Z'),
+            concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+        });
+        vi.mocked(
+            agendamentoRepository.estornarConclusaoAutomatica,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CANCELADO,
+            concluido: false,
+        });
+
+        await agendamentoService.cancelar('agendamento-1');
+
+        expect(
+            agendamentoRepository.estornarConclusaoAutomatica,
+        ).toHaveBeenCalledWith('agendamento-1', expect.any(Date), 48);
+        expect(agendamentoRepository.cancelar).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['manual', OrigemConclusaoAgendamento.MANUAL, '2026-07-20T11:00:00Z'],
+        [
+            'fora da janela',
+            OrigemConclusaoAgendamento.AUTOMATICO,
+            '2026-07-18T11:59:59Z',
+        ],
+    ] as const)(
+        'mantém bloqueio para conclusão %s',
+        async (_label, concluidoPor, concluidoEm) => {
+            vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+            vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
+            vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+                concluidoPor,
+                concluidoEm: new Date(concluidoEm),
+            });
+
+            await expect(
+                agendamentoService.cancelar('agendamento-1'),
+            ).rejects.toMatchObject({
+                message: 'Agendamento concluído não pode ser cancelado.',
+                statusCode: 409,
+            });
+            expect(
+                agendamentoRepository.estornarConclusaoAutomatica,
+            ).not.toHaveBeenCalled();
+        },
+    );
+
+    it('repassa bloqueio quando cliente já tem outro pacote ativo', async () => {
+        vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+        vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: true,
+            concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+            concluidoEm: new Date('2026-07-20T11:00:00Z'),
+        });
+        vi.mocked(
+            agendamentoRepository.estornarConclusaoAutomatica,
+        ).mockRejectedValue(
+            new AppError(
+                'Não é possível estornar: cliente já possui outro pacote ativo.',
+                409,
+            ),
+        );
+
+        await expect(
+            agendamentoService.cancelar('agendamento-1'),
+        ).rejects.toThrow('cliente já possui outro pacote ativo');
     });
 });
 
@@ -1227,6 +1337,42 @@ describe('agendamento.service.atualizar', () => {
             message: 'Agendamento concluído não pode ser cancelado.',
             statusCode: 409,
         });
+        expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
+    });
+
+    it('permite PUT CANCELADO e estorna conclusão automática com flag desligada', async () => {
+        vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+        vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: true,
+            concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+            concluidoEm: new Date(),
+        });
+        vi.mocked(
+            agendamentoRepository.estornarConclusaoAutomatica,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            status: StatusAgendamento.CANCELADO,
+            concluido: false,
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                status: StatusAgendamento.CANCELADO,
+            }),
+        ).resolves.toMatchObject({
+            status: StatusAgendamento.CANCELADO,
+            concluido: false,
+        });
+
+        expect(
+            agendamentoRepository.estornarConclusaoAutomatica,
+        ).toHaveBeenCalledOnce();
         expect(agendamentoRepository.atualizar).not.toHaveBeenCalled();
     });
 
@@ -2028,6 +2174,7 @@ describe('agendamento.service.concluir', () => {
             status: 'ATIVO',
         } as never);
         vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            estado: 'CONCLUIDO',
             agendamento: {
                 ...agendamentoAtual,
                 pacoteClienteId: 'pacote-cliente-1',
@@ -2045,8 +2192,38 @@ describe('agendamento.service.concluir', () => {
             'agendamento-1',
             'pacote-cliente-1',
             servicoBase.id,
+            OrigemConclusaoAgendamento.MANUAL,
+            expect.any(Date),
         );
         expect(resultado).toMatchObject({ concluido: true });
+    });
+
+    it('rejeita estado de conclusão ausente no retorno do repository', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            concluido: false,
+        });
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            agendamento: {
+                ...agendamentoAtual,
+                pacoteClienteId: 'pacote-cliente-1',
+                concluido: true,
+            },
+            pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+        } as never);
+
+        await expect(
+            agendamentoService.concluir('agendamento-1'),
+        ).rejects.toMatchObject({
+            message:
+                'Estado de conclusão inválido retornado pelo repository: undefined.',
+            statusCode: 500,
+        });
     });
 
     it('enfileira id após repository concluir com sucesso', async () => {
@@ -2060,6 +2237,7 @@ describe('agendamento.service.concluir', () => {
             status: 'ATIVO',
         } as never);
         vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            estado: 'CONCLUIDO',
             agendamento: {
                 ...agendamentoAtual,
                 pacoteClienteId: 'pacote-cliente-1',
@@ -2098,6 +2276,7 @@ describe('agendamento.service.concluir', () => {
             { id: 'irmao-falhou' },
         ] as never);
         const resultadoRepository = (id: string) => ({
+            estado: 'CONCLUIDO' as const,
             agendamento: {
                 ...agendamentoAtual,
                 id,
@@ -2135,6 +2314,7 @@ describe('agendamento.service.concluir', () => {
             status: 'ATIVO',
         } as never);
         vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            estado: 'CONCLUIDO',
             agendamento: {
                 ...agendamentoAtual,
                 pacoteClienteId: 'pacote-cliente-1',
@@ -2162,6 +2342,7 @@ describe('agendamento.service.concluir', () => {
             status: 'ATIVO',
         } as never);
         vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            estado: 'CONCLUIDO',
             agendamento: {
                 ...agendamentoAtual,
                 pacoteClienteId: 'pacote-cliente-1',
@@ -2187,6 +2368,7 @@ describe('agendamento.service.concluir', () => {
             status: 'ATIVO',
         } as never);
         vi.mocked(agendamentoRepository.concluirComPacote).mockResolvedValue({
+            estado: 'CONCLUIDO',
             agendamento: {
                 ...agendamentoAtual,
                 status: StatusAgendamento.CONCLUIDO,

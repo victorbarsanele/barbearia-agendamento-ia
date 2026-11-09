@@ -39,6 +39,8 @@ vi.mock('./numero-ignorado-whatsapp.service', () => ({
     numeroEstaIgnorado: mocks.numeroEstaIgnorado,
 }));
 
+const AGORA_TESTE = new Date('2026-11-06T12:00:00Z');
+
 function makeAppointment(
     overrides: Partial<AgendamentoParaLembrete> = {},
 ): AgendamentoParaLembrete {
@@ -299,12 +301,12 @@ describe('enviarLembreteAgendamento', () => {
     it('blocks ignored, out-of-allowlist, inactive, and past appointments', async () => {
         mocks.numeroEstaIgnorado.mockResolvedValueOnce(true);
         await expect(
-            enviarLembreteAgendamento('agendamento-1'),
+            enviarLembreteAgendamento('agendamento-1', AGORA_TESTE),
         ).rejects.toMatchObject({ details: { motivo: 'NUMERO_IGNORADO' } });
 
         vi.stubEnv('WHATSAPP_ALLOWLIST', '5511888888888');
         await expect(
-            enviarLembreteAgendamento('agendamento-1'),
+            enviarLembreteAgendamento('agendamento-1', AGORA_TESTE),
         ).rejects.toMatchObject({ details: { motivo: 'FORA_DA_ALLOWLIST' } });
 
         vi.stubEnv('WHATSAPP_ALLOWLIST', '');
@@ -312,7 +314,7 @@ describe('enviarLembreteAgendamento', () => {
             makeAppointment({ status: StatusAgendamento.CANCELADO }),
         );
         await expect(
-            enviarLembreteAgendamento('agendamento-1'),
+            enviarLembreteAgendamento('agendamento-1', AGORA_TESTE),
         ).rejects.toMatchObject({
             details: { motivo: 'AGENDAMENTO_NAO_ATIVO' },
         });
@@ -323,7 +325,7 @@ describe('enviarLembreteAgendamento', () => {
             }),
         );
         await expect(
-            enviarLembreteAgendamento('agendamento-1'),
+            enviarLembreteAgendamento('agendamento-1', AGORA_TESTE),
         ).rejects.toMatchObject({
             details: { motivo: 'AGENDAMENTO_NAO_ATIVO' },
         });

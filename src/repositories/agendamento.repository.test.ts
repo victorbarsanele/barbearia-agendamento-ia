@@ -1,8 +1,12 @@
+import { OrigemConclusaoAgendamento, StatusAgendamento } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import prisma from '../lib/prisma';
 import {
     atualizarUsosAnteriores,
+    atualizarComNumeroNoPacote,
+    atualizarPacoteClienteId,
     concluirComPacote,
+    estornarConclusaoAutomatica,
 } from './agendamento.repository';
 
 vi.mock('../lib/prisma', () => ({
@@ -21,10 +25,17 @@ type PrismaTransactionMock = {
     };
     pacoteCliente: {
         findUnique: ReturnType<typeof vi.fn>;
+        findFirst: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
+        updateMany: ReturnType<typeof vi.fn>;
+        findUniqueOrThrow: ReturnType<typeof vi.fn>;
     };
     agendamento: {
         count: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>;
+        updateMany: ReturnType<typeof vi.fn>;
+        findUnique: ReturnType<typeof vi.fn>;
+        findUniqueOrThrow: ReturnType<typeof vi.fn>;
     };
 };
 
@@ -36,11 +47,16 @@ function configurarTransacao(saldoExistente: { id: string } | null) {
         pacoteClienteServico: {
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
             findUnique: vi.fn().mockResolvedValue(saldoExistente),
-            update: vi.fn(),
+            update: vi.fn().mockResolvedValue({}),
             count: vi.fn().mockResolvedValue(1),
         },
         pacoteCliente: {
             findUnique: vi.fn(),
+            findFirst: vi.fn().mockResolvedValue(null),
+            findUniqueOrThrow: vi
+                .fn()
+                .mockResolvedValue({ id: 'pacote-cliente-1', status: 'ATIVO' }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
             update: vi.fn().mockResolvedValue({
                 id: 'pacote-cliente-1',
                 status: 'ATIVO',
@@ -48,8 +64,19 @@ function configurarTransacao(saldoExistente: { id: string } | null) {
         },
         agendamento: {
             count: vi.fn().mockResolvedValue(0),
+            update: vi.fn().mockResolvedValue({ id: 'agendamento-1' }),
+            updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+            findUnique: vi
+                .fn()
+                .mockResolvedValue({ status: StatusAgendamento.AGENDADO }),
+            findUniqueOrThrow: vi
+                .fn()
+                .mockResolvedValue({ id: 'agendamento-1' }),
         },
     };
+    tx.$queryRaw.mockResolvedValue([
+        { id: 'saldo-1', quantidadeRestante: saldoExistente ? 0 : 1 },
+    ]);
 
     transaction.mockImplementation(async (callback) => callback(tx));
     return tx;
@@ -62,38 +89,169 @@ describe('agendamento.repository.concluirComPacote', () => {
 
     it('retorna 404 quando PacoteClienteServico não existe para pacoteClienteId e servicoId', async () => {
         const tx = configurarTransacao(null);
+        tx.$queryRaw.mockResolvedValueOnce([]);
 
         await expect(
-            concluirComPacote('agendamento-1', 'pacote-cliente-1', 'servico-1'),
+            concluirComPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+                'servico-1',
+                OrigemConclusaoAgendamento.MANUAL,
+                new Date('2026-07-20T12:00:00Z'),
+            ),
         ).rejects.toMatchObject({
             name: 'AppError',
             message: 'Pacote do cliente não encontrado.',
             statusCode: 404,
         });
 
-        expect(tx.pacoteClienteServico.findUnique).toHaveBeenCalledWith({
-            where: {
-                pacoteClienteId_servicoId: {
-                    pacoteClienteId: 'pacote-cliente-1',
-                    servicoId: 'servico-1',
-                },
-            },
-            select: { id: true },
-        });
+        expect(tx.agendamento.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.pacoteClienteServico.update).not.toHaveBeenCalled();
     });
 
     it('retorna 400 quando PacoteClienteServico existe com quantidadeRestante zerada', async () => {
         const tx = configurarTransacao({ id: 'pacote-cliente-servico-1' });
+        tx.$queryRaw.mockResolvedValueOnce([
+            { id: 'saldo-1', quantidadeRestante: 0 },
+        ]);
 
         await expect(
-            concluirComPacote('agendamento-1', 'pacote-cliente-1', 'servico-1'),
+            concluirComPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+                'servico-1',
+                OrigemConclusaoAgendamento.MANUAL,
+                new Date('2026-07-20T12:00:00Z'),
+            ),
         ).rejects.toMatchObject({
             name: 'AppError',
             message: 'Pacote do cliente está esgotado.',
             statusCode: 400,
         });
 
-        expect(tx.pacoteClienteServico.findUnique).toHaveBeenCalled();
+        expect(tx.pacoteClienteServico.update).not.toHaveBeenCalled();
+    });
+
+    it('job ignora saldo esgotado sem debitar ou manter claim', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw.mockResolvedValueOnce([
+            { id: 'saldo-1', quantidadeRestante: 0 },
+        ]);
+
+        await expect(
+            concluirComPacote(
+                'agendamento-1',
+                'pacote-cliente-1',
+                'servico-1',
+                OrigemConclusaoAgendamento.AUTOMATICO,
+                new Date('2026-07-20T12:00:00Z'),
+            ),
+        ).resolves.toMatchObject({ estado: 'SALDO_ESGOTADO' });
+
+        expect(tx.agendamento.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.pacoteClienteServico.update).not.toHaveBeenCalled();
+    });
+
+    it('bloqueia estorno antes de alterar dados quando existe outro pacote ativo', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([
+                {
+                    clienteId: 'cliente-1',
+                    pacoteClienteId: 'pacote-cliente-1',
+                    servicoId: 'servico-1',
+                    status: StatusAgendamento.AGENDADO,
+                    concluido: true,
+                    concluidoEm: new Date('2026-07-20T11:00:00Z'),
+                    concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+                },
+            ])
+            .mockResolvedValueOnce([]);
+        tx.pacoteCliente.findFirst.mockResolvedValue({ id: 'outro-pacote' });
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).rejects.toMatchObject({
+            message:
+                'Não é possível estornar: cliente já possui outro pacote ativo.',
+            statusCode: 409,
+        });
+
+        expect(tx.agendamento.updateMany).not.toHaveBeenCalled();
+        expect(tx.pacoteClienteServico.update).not.toHaveBeenCalled();
+    });
+
+    it('devolve crédito e reativa pacote finalizado ao estornar', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([
+                {
+                    clienteId: 'cliente-1',
+                    pacoteClienteId: 'pacote-cliente-1',
+                    servicoId: 'servico-1',
+                    status: StatusAgendamento.AGENDADO,
+                    concluido: true,
+                    concluidoEm: new Date('2026-07-20T11:00:00Z'),
+                    concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+                },
+            ])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                {
+                    id: 'saldo-1',
+                    quantidadeTotal: 4,
+                    usosAnteriores: 0,
+                    quantidadeRestante: 0,
+                },
+            ]);
+        tx.agendamento.findUniqueOrThrow.mockResolvedValue({
+            id: 'agendamento-1',
+            status: StatusAgendamento.CANCELADO,
+            concluido: false,
+        });
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).resolves.toMatchObject({
+            id: 'agendamento-1',
+            status: StatusAgendamento.CANCELADO,
+            concluido: false,
+        });
+
+        expect(tx.agendamento.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                data: expect.objectContaining({
+                    status: StatusAgendamento.CANCELADO,
+                    concluido: false,
+                    concluidoEm: null,
+                    concluidoPor: null,
+                    numeroNoPacote: null,
+                }),
+            }),
+        );
+        expect(tx.pacoteClienteServico.update).toHaveBeenCalledWith({
+            where: { id: 'saldo-1' },
+            data: { quantidadeRestante: { increment: 1 } },
+        });
+        expect(tx.pacoteCliente.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    id: 'pacote-cliente-1',
+                    status: 'FINALIZADO',
+                },
+                data: { status: 'ATIVO' },
+            }),
+        );
     });
 });
 
@@ -202,6 +360,81 @@ describe('agendamento.repository.atualizarUsosAnteriores', () => {
             expect.objectContaining({
                 data: { status: 'FINALIZADO' },
             }),
+        );
+    });
+});
+
+describe('ordem de locks de agendamento', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('trava agendamento antes de reservar saldo durante remarcação', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ id: 'agendamento-1' }])
+            .mockResolvedValueOnce([{ quantidadeTotal: 4, usosAnteriores: 0 }])
+            .mockResolvedValueOnce([]);
+
+        await atualizarComNumeroNoPacote(
+            'agendamento-1',
+            {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
+                dataHoraFim: new Date('2026-07-20T13:30:00Z'),
+                status: StatusAgendamento.AGENDADO,
+            },
+            'pacote-cliente-1',
+            'servico-1',
+            null,
+            StatusAgendamento.AGENDADO,
+        );
+
+        const sql = tx.$queryRaw.mock.calls.map(
+            ([query]) => (query as { sql: string }).sql,
+        );
+        expect(sql[0]).toContain('FROM "agendamentos"');
+        expect(sql[0]).toContain('FOR UPDATE');
+        expect(sql[1]).toContain('FROM "pacotes_clientes_servicos"');
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+            tx.$queryRaw.mock.invocationCallOrder[1],
+        );
+        expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+            tx.agendamento.update.mock.invocationCallOrder[0],
+        );
+    });
+
+    it('trava agendamento antes de reservar saldo ao vincular pacote', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([
+                {
+                    id: 'agendamento-1',
+                    pacoteClienteId: 'pacote-cliente-antigo',
+                    servicoId: 'servico-1',
+                    status: StatusAgendamento.AGENDADO,
+                    numeroNoPacote: null,
+                },
+            ])
+            .mockResolvedValueOnce([{ quantidadeTotal: 4, usosAnteriores: 0 }])
+            .mockResolvedValueOnce([]);
+
+        await atualizarPacoteClienteId('agendamento-1', 'pacote-cliente-novo');
+
+        const sql = tx.$queryRaw.mock.calls.map(
+            ([query]) => (query as { sql: string }).sql,
+        );
+        expect(sql[0]).toContain('FROM "agendamentos"');
+        expect(sql[0]).toContain('FOR UPDATE');
+        expect(sql[1]).toContain('FROM "pacotes_clientes_servicos"');
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+            tx.$queryRaw.mock.invocationCallOrder[1],
+        );
+        expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
+            tx.agendamento.update.mock.invocationCallOrder[0],
         );
     });
 });

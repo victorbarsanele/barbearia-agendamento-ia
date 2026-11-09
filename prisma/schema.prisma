@@ -18,6 +18,11 @@ enum OrigemAgendamento {
   WHATSAPP_IA
 }
 
+enum OrigemConclusaoAgendamento {
+  MANUAL
+  AUTOMATICO
+}
+
 enum StatusPacoteCliente {
   ATIVO
   FINALIZADO
@@ -117,6 +122,8 @@ model Agendamento {
   dataHoraFim     DateTime          @db.Timestamptz(3)
   status          StatusAgendamento @default(AGENDADO)
   concluido       Boolean           @default(false)
+  concluidoEm     DateTime?         @db.Timestamptz(3)
+  concluidoPor    OrigemConclusaoAgendamento?
   createdAt       DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
 

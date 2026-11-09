@@ -1,4 +1,8 @@
-import { OrigemAgendamento, StatusAgendamento } from '@prisma/client';
+import {
+    OrigemAgendamento,
+    OrigemConclusaoAgendamento,
+    StatusAgendamento,
+} from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
@@ -993,6 +997,8 @@ describe('agendamento.repository integração concorrência', () => {
             primeiro.id,
             pacoteCliente.id,
             entidades.servicoId,
+            OrigemConclusaoAgendamento.MANUAL,
+            new Date('2026-08-11T13:30:00.000Z'),
         );
 
         await expect(
@@ -1006,6 +1012,8 @@ describe('agendamento.repository integração concorrência', () => {
             segundo.id,
             pacoteCliente.id,
             segundoServico.id,
+            OrigemConclusaoAgendamento.MANUAL,
+            new Date('2026-08-11T14:45:00.000Z'),
         );
 
         await expect(
@@ -1014,5 +1022,120 @@ describe('agendamento.repository integração concorrência', () => {
                 select: { status: true },
             }),
         ).resolves.toMatchObject({ status: 'FINALIZADO' });
+    });
+
+    it('job e clique manual concorrentes debitam exatamente um crédito', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        const inicio = new Date('2026-10-12T13:00:00.000Z');
+        const agendamento = await agendamentoRepository.criar({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
+            pacoteClienteId: pacoteCliente.id,
+            dataHoraInicio: inicio,
+            dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            status: StatusAgendamento.AGENDADO,
+        });
+
+        const resultados = await Promise.allSettled([
+            agendamentoRepository.concluirComPacote(
+                agendamento.id,
+                pacoteCliente.id,
+                entidades.servicoId,
+                OrigemConclusaoAgendamento.MANUAL,
+                new Date('2026-10-12T13:30:00.000Z'),
+            ),
+            agendamentoRepository.concluirComPacote(
+                agendamento.id,
+                pacoteCliente.id,
+                entidades.servicoId,
+                OrigemConclusaoAgendamento.AUTOMATICO,
+                new Date('2026-10-12T13:30:00.000Z'),
+            ),
+        ]);
+
+        expect(
+            resultados.some((resultado) => resultado.status === 'fulfilled'),
+        ).toBe(true);
+        await expect(
+            prisma.pacoteClienteServico.findUnique({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: pacoteCliente.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { quantidadeRestante: true },
+            }),
+        ).resolves.toMatchObject({ quantidadeRestante: 3 });
+        await expect(
+            prisma.agendamento.findUnique({
+                where: { id: agendamento.id },
+                select: { concluido: true },
+            }),
+        ).resolves.toMatchObject({ concluido: true });
+    });
+
+    it('serializa remarcação com reserva contra conclusão automática no mesmo agendamento', async () => {
+        const pacoteCliente = await criarPacoteComQuatroUsos();
+        const inicio = new Date('2035-01-02T13:00:00.000Z');
+        const agendamento = await agendamentoRepository.criar({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
+            pacoteClienteId: pacoteCliente.id,
+            dataHoraInicio: inicio,
+            dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            status: StatusAgendamento.AGENDADO,
+        });
+        const novoInicio = new Date('2035-01-02T14:00:00.000Z');
+        const aPartirDe = new Date('2035-01-01T00:00:00.000Z');
+        const corte = new Date('2035-01-03T00:00:00.000Z');
+
+        const resultados = await Promise.allSettled([
+            agendamentoRepository.atualizarComNumeroNoPacote(
+                agendamento.id,
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    dataHoraInicio: novoInicio,
+                    dataHoraFim: new Date(novoInicio.getTime() + 30 * 60_000),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                pacoteCliente.id,
+                entidades.servicoId,
+                null,
+                StatusAgendamento.AGENDADO,
+            ),
+            agendamentoRepository.concluirComPacote(
+                agendamento.id,
+                pacoteCliente.id,
+                entidades.servicoId,
+                OrigemConclusaoAgendamento.AUTOMATICO,
+                new Date('2035-01-02T14:30:00.000Z'),
+                { aPartirDe, corte },
+            ),
+        ]);
+
+        expect(
+            resultados.every((resultado) => resultado.status === 'fulfilled'),
+        ).toBe(true);
+        await expect(
+            prisma.pacoteClienteServico.findUnique({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: pacoteCliente.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { quantidadeRestante: true },
+            }),
+        ).resolves.toMatchObject({ quantidadeRestante: 3 });
+        await expect(
+            prisma.agendamento.findUnique({
+                where: { id: agendamento.id },
+                select: { concluido: true },
+            }),
+        ).resolves.toMatchObject({ concluido: true });
     });
 });

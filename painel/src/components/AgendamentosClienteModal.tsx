@@ -239,12 +239,15 @@ export function AgendamentosClienteModal({
                                     {podeCancelarAgendamento(
                                         agendamento.status,
                                         agendamento.concluido,
+                                        agendamento.estornavel,
                                     ) &&
                                         (confirmandoRemocaoId ===
                                         agendamento.id ? (
                                             <>
                                                 <span className="self-center text-xs text-[var(--color-text-secondary)]">
-                                                    Tem certeza?
+                                                    {agendamento.estornavel
+                                                        ? 'O crédito será devolvido ao pacote.'
+                                                        : 'Tem certeza?'}
                                                 </span>
                                                 <Button
                                                     type="button"
@@ -263,7 +266,9 @@ export function AgendamentosClienteModal({
                                                     {removendoId ===
                                                     agendamento.id
                                                         ? 'Removendo...'
-                                                        : 'Sim, remover'}
+                                                                                                                : agendamento.estornavel
+                                                                                                                    ? 'Sim, remover e estornar'
+                                                                                                                    : 'Sim, remover'}
                                                 </Button>
                                                 <Button
                                                     type="button"

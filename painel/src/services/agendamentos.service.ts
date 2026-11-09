@@ -24,6 +24,10 @@ export interface Agendamento {
     totalServicoNoPacote: number | null;
     loteId: string | null;
     concluido: boolean;
+    concluidoEm: string | null;
+    concluidoPor: 'MANUAL' | 'AUTOMATICO' | null;
+    estornavel: boolean;
+    autoConclusaoPendente: boolean;
     ultimoLembrete?: UltimoLembreteAgendamento | null;
     cliente: {
         id: string;
