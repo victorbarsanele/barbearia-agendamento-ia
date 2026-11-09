@@ -325,8 +325,11 @@ export async function desvincularCliente(pacoteClienteId: string) {
         );
     }
 
-    return pacoteClienteRepository.atualizarStatus(
-        pacoteClienteId,
-        StatusPacoteCliente.CANCELADO,
-    );
+    const pacoteCancelado =
+        await pacoteClienteRepository.cancelarSeAtivo(pacoteClienteId);
+    if (!pacoteCancelado) {
+        throw new AppError('Pacote já não está ativo.', 409);
+    }
+
+    return pacoteCancelado;
 }

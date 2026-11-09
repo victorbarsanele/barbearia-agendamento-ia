@@ -16,6 +16,7 @@ vi.mock('../repositories/pacoteCliente.repository', () => ({
     buscarAtivoPorClienteId: vi.fn(),
     buscarPorId: vi.fn(),
     atualizarStatus: vi.fn(),
+    cancelarSeAtivo: vi.fn(),
     transacionar: vi.fn(),
 }));
 
@@ -542,7 +543,7 @@ describe('pacote.service.desvincularCliente', () => {
         vi.mocked(
             agendamentoRepository.contarPendentesPorPacoteClienteId,
         ).mockResolvedValue(0);
-        vi.mocked(pacoteClienteRepository.atualizarStatus).mockResolvedValue({
+        vi.mocked(pacoteClienteRepository.cancelarSeAtivo).mockResolvedValue({
             id: 'pacote-cliente-1',
             status: 'CANCELADO',
             quantidadeRestante: 3,
@@ -551,10 +552,33 @@ describe('pacote.service.desvincularCliente', () => {
         const resultado =
             await pacoteService.desvincularCliente('pacote-cliente-1');
 
-        expect(pacoteClienteRepository.atualizarStatus).toHaveBeenCalledWith(
+        expect(pacoteClienteRepository.cancelarSeAtivo).toHaveBeenCalledWith(
             'pacote-cliente-1',
-            'CANCELADO',
         );
         expect(resultado).toMatchObject({ status: 'CANCELADO' });
+    });
+
+    it('não sobrescreve pacote finalizado durante corrida com job', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+        } as never);
+        vi.mocked(
+            agendamentoRepository.contarPendentesPorPacoteClienteId,
+        ).mockResolvedValue(0);
+        vi.mocked(pacoteClienteRepository.cancelarSeAtivo).mockResolvedValue(
+            null,
+        );
+
+        await expect(
+            pacoteService.desvincularCliente('pacote-cliente-1'),
+        ).rejects.toMatchObject({
+            message: 'Pacote já não está ativo.',
+            statusCode: 409,
+        });
+        expect(pacoteClienteRepository.cancelarSeAtivo).toHaveBeenCalledWith(
+            'pacote-cliente-1',
+        );
+        expect(pacoteClienteRepository.atualizarStatus).not.toHaveBeenCalled();
     });
 });

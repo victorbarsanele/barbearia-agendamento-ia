@@ -2291,8 +2291,12 @@ describe('agendamento.service.concluir', () => {
             .mockRejectedValueOnce(new Error('repository failure'));
         vi.spyOn(console, 'error').mockImplementation(() => {});
 
-        await agendamentoService.concluir('agendamento-1', true);
+        const agora = new Date('2026-07-20T12:00:00Z');
+        await agendamentoService.concluir('agendamento-1', true, agora);
 
+        expect(
+            agendamentoRepository.listarSiblingsEditaveisDoLote,
+        ).toHaveBeenCalledWith('lote-1', 'agendamento-1', agora);
         expect(googleSyncMock.state.idsEnfileirados).toEqual([
             'agendamento-1',
             'irmao-concluido',
