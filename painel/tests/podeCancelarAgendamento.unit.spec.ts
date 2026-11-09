@@ -20,3 +20,15 @@ test('permite agendamento agendado não concluído', () => {
 test('permite agendamento confirmado não concluído', () => {
     expect(podeCancelarAgendamento('CONFIRMADO', false)).toBe(true);
 });
+
+test('permite estornar conclusão automática quando DTO autoriza', () => {
+    expect(podeCancelarAgendamento('AGENDADO', true, true)).toBe(true);
+});
+
+test('não permite cancelar conclusão sem autorização de estorno', () => {
+    expect(podeCancelarAgendamento('AGENDADO', true, false)).toBe(false);
+});
+
+test('não permite estornar agendamento já cancelado', () => {
+    expect(podeCancelarAgendamento('CANCELADO', true, true)).toBe(false);
+});

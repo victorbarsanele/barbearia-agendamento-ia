@@ -152,3 +152,123 @@ test('posiciona selo sem colisão ou overflow em mobile e desktop', async ({
         }
     }
 });
+
+test('exibe conclusão automática e confirma estorno autorizado pelo DTO', async ({
+    page,
+}) => {
+    await page.clock.install({ time: new Date('2026-11-05T15:00:00.000Z') });
+    const agendamentoAutomatico = {
+        ...criarAgendamento(
+            'automatico',
+            'PAINEL',
+            'Cliente com pacote',
+            '13:00',
+        ),
+        pacoteClienteId: 'pacote-cliente-1',
+        concluido: true,
+        concluidoEm: '2026-11-05T13:30:00.000Z',
+        concluidoPor: 'AUTOMATICO',
+        estornavel: true,
+        autoConclusaoPendente: false,
+    };
+    const agendamentoPendente = {
+        ...criarAgendamento(
+            'pendente',
+            null,
+            'Cliente com pacote pendente',
+            '13:30',
+        ),
+        pacoteClienteId: 'pacote-cliente-2',
+        concluido: false,
+        concluidoEm: null,
+        concluidoPor: null,
+        estornavel: false,
+        autoConclusaoPendente: true,
+    };
+    let cancelado = false;
+    let requisicoesDelete = 0;
+
+    await page.route('**/api/**', async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+
+        if (url.pathname === '/api/auth/me') {
+            await route.fulfill({
+                status: 200,
+                json: { username: 'e2e', role: 'admin' },
+            });
+            return;
+        }
+
+        if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/agendamentos'
+        ) {
+            await route.fulfill({
+                status: 200,
+                json: [
+                    cancelado
+                        ? {
+                              ...agendamentoAutomatico,
+                              status: 'CANCELADO',
+                              concluido: false,
+                              concluidoEm: null,
+                              concluidoPor: null,
+                              estornavel: false,
+                          }
+                        : agendamentoAutomatico,
+                    agendamentoPendente,
+                ],
+            });
+            return;
+        }
+
+        if (
+            request.method() === 'DELETE' &&
+            url.pathname === '/api/agendamentos/automatico'
+        ) {
+            requisicoesDelete += 1;
+            cancelado = true;
+            await route.fulfill({
+                status: 200,
+                json: {
+                    ...agendamentoAutomatico,
+                    status: 'CANCELADO',
+                    concluido: false,
+                    concluidoEm: null,
+                    concluidoPor: null,
+                    estornavel: false,
+                },
+            });
+            return;
+        }
+
+        await route.fulfill({
+            status: 404,
+            json: { message: 'Rota não prevista pelo teste.' },
+        });
+    });
+
+    await page.goto('/');
+
+    const card = page
+        .getByRole('listitem')
+        .filter({ has: page.getByText('Cliente com pacote', { exact: true }) });
+    await expect(card.getByText('Concluído automaticamente')).toBeVisible();
+    await expect(
+        page
+            .getByRole('listitem')
+            .filter({ hasText: 'Cliente com pacote pendente' })
+            .getByText('Pendente de conclusão automática'),
+    ).toBeVisible();
+    await card.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(
+        page.getByText('1 crédito será devolvido ao pacote'),
+    ).toBeVisible();
+    await page
+        .getByRole('button', { name: 'Sim, cancelar e estornar crédito' })
+        .click();
+
+    await expect.poll(() => requisicoesDelete).toBe(1);
+    await expect(card.getByText('CANCELADO')).toBeVisible();
+});
