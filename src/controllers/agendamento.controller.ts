@@ -72,6 +72,23 @@ function handleError(error: unknown, reply: FastifyReply): void {
     }
 }
 
+function complementarAgendamento<
+    T extends {
+        pacoteClienteId: string | null;
+        status: StatusAgendamento;
+        concluido: boolean;
+        concluidoEm?: Date | null;
+        concluidoPor?: import('@prisma/client').OrigemConclusaoAgendamento | null;
+        dataHoraInicio: Date;
+        dataHoraFim: Date;
+    },
+>(agendamento: T) {
+    return {
+        ...agendamento,
+        ...agendamentoService.obterEstadoConclusao(agendamento),
+    };
+}
+
 export async function criar(
     request: FastifyRequest<{ Body: CriarAgendamentoBody }>,
     reply: FastifyReply,
@@ -88,7 +105,7 @@ export async function criar(
                 request.body.permitirForaDoExpediente === true,
             origem: 'PAINEL',
         });
-        void reply.status(201).send(agendamento);
+        void reply.status(201).send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -100,7 +117,7 @@ export async function listarTodos(
 ): Promise<void> {
     try {
         const agendamentos = await agendamentoService.listarTodos();
-        void reply.send(agendamentos);
+        void reply.send(agendamentos.map(complementarAgendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -114,7 +131,7 @@ export async function buscarPorId(
         const agendamento = await agendamentoService.buscarPorId(
             request.params.id,
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -149,7 +166,7 @@ export async function atualizar(
                 origem: 'PAINEL',
             },
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -168,7 +185,7 @@ export async function cancelar(
             request.body?.notificarCliente === true,
             request.body?.aplicarParaLote === true,
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -186,7 +203,7 @@ export async function concluir(
             request.params.id,
             request.body?.aplicarParaLote === true,
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -234,7 +251,7 @@ export async function vincularPacote(
             request.params.id,
             request.body.pacoteClienteId,
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }
@@ -248,7 +265,7 @@ export async function desvincularPacote(
         const agendamento = await agendamentoService.desvincularPacote(
             request.params.id,
         );
-        void reply.send(agendamento);
+        void reply.send(complementarAgendamento(agendamento));
     } catch (error) {
         handleError(error, reply);
     }

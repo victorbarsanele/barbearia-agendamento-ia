@@ -1,6 +1,16 @@
-import { OrigemAgendamento, Prisma, StatusAgendamento } from '@prisma/client';
+import {
+    OrigemAgendamento,
+    OrigemConclusaoAgendamento,
+    Prisma,
+    StatusAgendamento,
+} from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
 import { getAgendamentoConfig } from '../config/agendamento';
+import {
+    calcularCorteAutoConclusao,
+    estaDentroDaJanelaEstorno,
+    getAutoConclusaoConfig,
+} from '../config/auto-conclusao';
 import { AppError } from '../lib/app-error';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
@@ -1219,6 +1229,13 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
 
         if (
             data.status === StatusAgendamento.CANCELADO &&
+            ehConclusaoAutomaticaEstornavel(agendamentoExistente, new Date())
+        ) {
+            return cancelar(id, data.notificarCliente === true);
+        }
+
+        if (
+            data.status === StatusAgendamento.CANCELADO &&
             isAgendamentoConcluido(agendamentoExistente)
         ) {
             throw new AppError(
@@ -1345,14 +1362,24 @@ export async function cancelar(
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
+        let agendamentoCancelado: agendamentoRepository.AgendamentoComRelacoes;
         if (isAgendamentoConcluido(agendamento)) {
-            throw new AppError(
-                'Agendamento concluído não pode ser cancelado.',
-                409,
-            );
+            if (!ehConclusaoAutomaticaEstornavel(agendamento, new Date())) {
+                throw new AppError(
+                    'Agendamento concluído não pode ser cancelado.',
+                    409,
+                );
+            }
+            const config = getAutoConclusaoConfig();
+            agendamentoCancelado =
+                await agendamentoRepository.estornarConclusaoAutomatica(
+                    id,
+                    new Date(),
+                    config.janelaEstornoHoras,
+                );
+        } else {
+            agendamentoCancelado = await agendamentoRepository.cancelar(id);
         }
-
-        const agendamentoCancelado = await agendamentoRepository.cancelar(id);
 
         if (notificarCliente) {
             try {
@@ -1461,9 +1488,94 @@ async function concluirInterno(id: string) {
         id,
         agendamento.pacoteClienteId,
         agendamento.servicoId,
+        OrigemConclusaoAgendamento.MANUAL,
+        new Date(),
     );
 
+    switch (resultado.estado) {
+        case 'CONCLUIDO':
+            break;
+        case 'IGNORADO':
+            throw new AppError('Agendamento já está concluído.', 409);
+        case 'SALDO_ESGOTADO':
+            throw new AppError('Pacote do cliente está esgotado.', 400);
+        default: {
+            const estadoInvalido: never = resultado.estado;
+            throw new AppError(
+                `Estado de conclusão inválido retornado pelo repository: ${String(estadoInvalido)}.`,
+                500,
+            );
+        }
+    }
+
     return { agendamento, resultado };
+}
+
+function ehConclusaoAutomaticaEstornavel(
+    agendamento: {
+        pacoteClienteId?: string | null;
+        status: StatusAgendamento;
+        concluido: boolean;
+        concluidoEm?: Date | null;
+        concluidoPor?: OrigemConclusaoAgendamento | null;
+    },
+    agora: Date,
+): boolean {
+    const config = getAutoConclusaoConfig();
+    return (
+        Boolean(agendamento.pacoteClienteId) &&
+        agendamento.concluido &&
+        agendamento.status !== StatusAgendamento.CANCELADO &&
+        agendamento.concluidoPor === OrigemConclusaoAgendamento.AUTOMATICO &&
+        estaDentroDaJanelaEstorno(
+            agendamento.concluidoEm ?? null,
+            agora,
+            config.janelaEstornoHoras,
+        )
+    );
+}
+
+export async function concluirAutomaticamente(
+    agendamento: { id: string; pacoteClienteId: string; servicoId: string },
+    agora: Date,
+    aPartirDe: Date,
+    corte: Date,
+) {
+    return agendamentoRepository.concluirComPacote(
+        agendamento.id,
+        agendamento.pacoteClienteId,
+        agendamento.servicoId,
+        OrigemConclusaoAgendamento.AUTOMATICO,
+        agora,
+        { aPartirDe, corte },
+    );
+}
+
+export function obterEstadoConclusao(
+    agendamento: {
+        pacoteClienteId: string | null;
+        status: StatusAgendamento;
+        concluido: boolean;
+        concluidoEm?: Date | null;
+        concluidoPor?: OrigemConclusaoAgendamento | null;
+        dataHoraInicio: Date;
+        dataHoraFim: Date;
+    },
+    agora = new Date(),
+) {
+    const config = getAutoConclusaoConfig();
+    return {
+        concluidoEm: agendamento.concluidoEm,
+        concluidoPor: agendamento.concluidoPor,
+        estornavel: ehConclusaoAutomaticaEstornavel(agendamento, agora),
+        autoConclusaoPendente:
+            config.enabled &&
+            Boolean(agendamento.pacoteClienteId) &&
+            !agendamento.concluido &&
+            agendamento.status !== StatusAgendamento.CANCELADO &&
+            agendamento.dataHoraInicio >= config.aPartirDe! &&
+            agendamento.dataHoraFim < agora,
+    };
 }
 
 export async function concluir(id: string, aplicarParaLote = false) {

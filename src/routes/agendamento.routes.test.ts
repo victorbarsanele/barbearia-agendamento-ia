@@ -13,6 +13,12 @@ const serviceMocks = vi.hoisted(() => ({
     criarLote: vi.fn(),
     vincularPacote: vi.fn(),
     desvincularPacote: vi.fn(),
+    obterEstadoConclusao: vi.fn(() => ({
+        concluidoEm: null,
+        concluidoPor: null,
+        estornavel: false,
+        autoConclusaoPendente: false,
+    })),
 }));
 
 vi.mock('../services/agendamento.service', () => serviceMocks);
@@ -49,6 +55,10 @@ describe('POST /agendamentos', () => {
         });
 
         expect(response.statusCode).toBe(201);
+        expect(response.json()).toMatchObject({
+            estornavel: false,
+            autoConclusaoPendente: false,
+        });
         expect(agendamentoService.criar).toHaveBeenCalledWith({
             clienteId: 'cliente-1',
             servicoId: 'servico-1',
