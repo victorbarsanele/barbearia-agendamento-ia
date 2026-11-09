@@ -1,5 +1,5 @@
 import { OrigemConclusaoAgendamento, StatusAgendamento } from '@prisma/client';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import prisma from '../lib/prisma';
 import {
     atualizarUsosAnteriores,
@@ -23,12 +23,15 @@ type PrismaTransactionMock = {
     pacoteClienteServico: {
         updateMany: ReturnType<typeof vi.fn>;
         findUnique: ReturnType<typeof vi.fn>;
+        findMany: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
+        createMany: ReturnType<typeof vi.fn>;
         count: ReturnType<typeof vi.fn>;
     };
     pacoteCliente: {
         findUnique: ReturnType<typeof vi.fn>;
         findFirst: ReturnType<typeof vi.fn>;
+        createMany: ReturnType<typeof vi.fn>;
         update: ReturnType<typeof vi.fn>;
         updateMany: ReturnType<typeof vi.fn>;
         findUniqueOrThrow: ReturnType<typeof vi.fn>;
@@ -50,12 +53,22 @@ function configurarTransacao(saldoExistente: { id: string } | null) {
         pacoteClienteServico: {
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
             findUnique: vi.fn().mockResolvedValue(saldoExistente),
+            findMany: vi
+                .fn()
+                .mockResolvedValue([
+                    { servicoId: 'servico-1', quantidadeTotal: 4 },
+                ]),
             update: vi.fn().mockResolvedValue({}),
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
             count: vi.fn().mockResolvedValue(1),
         },
         pacoteCliente: {
-            findUnique: vi.fn(),
+            findUnique: vi.fn().mockResolvedValue({
+                clienteId: 'cliente-1',
+                pacoteId: 'pacote-1',
+            }),
             findFirst: vi.fn().mockResolvedValue(null),
+            createMany: vi.fn().mockResolvedValue({ count: 1 }),
             findUniqueOrThrow: vi
                 .fn()
                 .mockResolvedValue({ id: 'pacote-cliente-1', status: 'ATIVO' }),
@@ -255,6 +268,181 @@ describe('agendamento.repository.concluirComPacote', () => {
                 data: { status: 'ATIVO' },
             }),
         );
+    });
+});
+
+describe('agendamento.repository.concluirComPacote renovação automática', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'false');
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        vi.restoreAllMocks();
+    });
+
+    it('renova com snapshot de serviços e zera usos anteriores', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        const concluidoEm = new Date('2026-07-20T12:00:00Z');
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ id: 'cliente-1' }])
+            .mockResolvedValueOnce([{ id: 'saldo-1', quantidadeRestante: 1 }]);
+        tx.pacoteCliente.findUnique
+            .mockResolvedValueOnce({
+                clienteId: 'cliente-1',
+                pacoteId: 'pacote-1',
+            })
+            .mockResolvedValueOnce({ id: 'pacote-cliente-novo' });
+        tx.pacoteClienteServico.findMany.mockResolvedValue([
+            {
+                servicoId: 'servico-1',
+                quantidadeTotal: 4,
+                usosAnteriores: 3,
+            },
+            {
+                servicoId: 'servico-2',
+                quantidadeTotal: 2,
+                usosAnteriores: 1,
+            },
+        ]);
+        tx.pacoteClienteServico.count.mockResolvedValue(0);
+
+        const resultado = await concluirComPacote(
+            'agendamento-1',
+            'pacote-cliente-antigo',
+            'servico-1',
+            OrigemConclusaoAgendamento.MANUAL,
+            concluidoEm,
+        );
+
+        expect(resultado.renovacao).toEqual({
+            criada: true,
+            pacoteClienteId: 'pacote-cliente-novo',
+        });
+        expect(tx.pacoteCliente.createMany).toHaveBeenCalledWith({
+            data: [
+                {
+                    clienteId: 'cliente-1',
+                    pacoteId: 'pacote-1',
+                    renovadoDeId: 'pacote-cliente-antigo',
+                    dataInicio: concluidoEm,
+                    status: 'ATIVO',
+                },
+            ],
+            skipDuplicates: true,
+        });
+        expect(tx.pacoteClienteServico.createMany).toHaveBeenCalledWith({
+            data: [
+                {
+                    pacoteClienteId: 'pacote-cliente-novo',
+                    servicoId: 'servico-1',
+                    quantidadeTotal: 4,
+                    usosAnteriores: 0,
+                    quantidadeRestante: 4,
+                },
+                {
+                    pacoteClienteId: 'pacote-cliente-novo',
+                    servicoId: 'servico-2',
+                    quantidadeTotal: 2,
+                    usosAnteriores: 0,
+                    quantidadeRestante: 2,
+                },
+            ],
+        });
+        const sql = tx.$queryRaw.mock.calls.map(
+            ([query]) => (query as { sql: string }).sql,
+        );
+        expect(sql[0]).toContain('FROM "clientes"');
+        expect(sql[1]).toContain('FROM "pacotes_clientes_servicos"');
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+            tx.agendamento.updateMany.mock.invocationCallOrder[0],
+        );
+    });
+
+    it.each([
+        ['flag desligada', false, null, null, 'FLAG_DESLIGADA'],
+        [
+            'outro vínculo ativo',
+            true,
+            { id: 'ativo' },
+            null,
+            'OUTRO_PACOTE_ATIVO',
+        ],
+        ['sem serviços', true, null, [], 'CICLO_SEM_SERVICOS'],
+        ['já renovado', true, null, null, 'JA_RENOVADO'],
+    ])(
+        '%s não impede conclusão nem cria ciclo',
+        async (_, habilitada, ativo, servicos, motivo) => {
+            vi.stubEnv(
+                'RENOVACAO_AUTOMATICA_ENABLED',
+                habilitada ? 'true' : 'false',
+            );
+            const tx = configurarTransacao({ id: 'saldo-1' });
+            tx.$queryRaw
+                .mockReset()
+                .mockResolvedValueOnce([{ id: 'cliente-1' }])
+                .mockResolvedValueOnce([
+                    { id: 'saldo-1', quantidadeRestante: 1 },
+                ]);
+            tx.pacoteCliente.findUnique.mockResolvedValue({
+                clienteId: 'cliente-1',
+                pacoteId: 'pacote-1',
+            });
+            tx.pacoteCliente.findFirst.mockResolvedValue(ativo);
+            tx.pacoteClienteServico.findMany.mockResolvedValue(
+                servicos ?? [{ servicoId: 'servico-1', quantidadeTotal: 4 }],
+            );
+            tx.pacoteCliente.createMany.mockResolvedValue({
+                count: motivo === 'JA_RENOVADO' ? 0 : 1,
+            });
+            tx.pacoteClienteServico.count.mockResolvedValue(0);
+
+            const resultado = await concluirComPacote(
+                'agendamento-1',
+                'pacote-cliente-antigo',
+                'servico-1',
+                OrigemConclusaoAgendamento.MANUAL,
+                new Date('2026-07-20T12:00:00Z'),
+            );
+
+            expect(resultado.estado).toBe('CONCLUIDO');
+            expect(resultado.renovacao).toEqual({ criada: false, motivo });
+            expect(tx.pacoteCliente.createMany).toHaveBeenCalledTimes(
+                motivo === 'FLAG_DESLIGADA' ||
+                    motivo === 'OUTRO_PACOTE_ATIVO' ||
+                    motivo === 'CICLO_SEM_SERVICOS'
+                    ? 0
+                    : 1,
+            );
+        },
+    );
+
+    it('flag ligada mantém conclusão normal enquanto ainda há saldo', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ id: 'cliente-1' }])
+            .mockResolvedValueOnce([{ id: 'saldo-1', quantidadeRestante: 2 }]);
+        tx.pacoteClienteServico.count.mockResolvedValue(1);
+
+        const resultado = await concluirComPacote(
+            'agendamento-1',
+            'pacote-cliente-antigo',
+            'servico-1',
+            OrigemConclusaoAgendamento.MANUAL,
+            new Date('2026-07-20T12:00:00Z'),
+        );
+
+        expect(resultado.estado).toBe('CONCLUIDO');
+        expect(resultado.renovacao).toEqual({
+            criada: false,
+            motivo: 'SALDO_RESTANTE',
+        });
+        expect(tx.pacoteCliente.createMany).not.toHaveBeenCalled();
     });
 });
 

@@ -223,12 +223,15 @@ model PacoteCliente {
   id           String                @id @default(cuid())
   clienteId    String
   pacoteId     String
+  renovadoDeId String?               @unique
   dataInicio   DateTime              @db.Timestamptz(3)
   status       StatusPacoteCliente   @default(ATIVO)
   createdAt    DateTime              @default(now()) @db.Timestamptz(3)
 
   cliente      Cliente               @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   pacote       Pacote                @relation(fields: [pacoteId], references: [id], onDelete: Restrict)
+  renovadoDe   PacoteCliente?        @relation("RenovacaoPacoteCliente", fields: [renovadoDeId], references: [id], onDelete: Restrict)
+  renovacao    PacoteCliente?        @relation("RenovacaoPacoteCliente")
   agendamentos Agendamento[]
   servicos     PacoteClienteServico[]
 

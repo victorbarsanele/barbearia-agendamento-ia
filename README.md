@@ -95,6 +95,7 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Estado de escalonamento persistido em PostgreSQL.
 - Idempotência por ID de mensagem com ACK antecipado; deduplicação só ocorre quando ID existe.
 - Lock `FOR UPDATE` na numeração de pacote.
+- Renovação automática de pacote, quando habilitada, trava na ordem agendamento, cliente e saldo; criação de vínculo trava cliente antes do saldo.
 - Snapshot de `precoUnitario` no agendamento preserva valor histórico usado nos relatórios.
 - Reativação usa reserva transacional com `SELECT ... FOR UPDATE` na linha do cliente. Opt-out persistido é tratado antes do takeover; status `ENTREGUE` não regride após reconciliação por webhook.
 - Guardrails determinísticos: validação de nome, filtro de IDs internos na saída e guarda de bloqueio total. Se consulta da guarda falhar, sistema trata como indisponibilidade, não como bloqueio garantido.
@@ -108,6 +109,8 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 Use `.env.example` como base. Produção deve definir `WHATSAPP_PROVIDER=ycloud` explicitamente; detalhes de obrigatoriedade, defaults e validação estão em [docs/ENV.md](docs/ENV.md).
 
 Variáveis essenciais: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, credenciais de painel e configurações YCloud (`YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER`, `BARBER_PHONE`).
+
+`RENOVACAO_AUTOMATICA_ENABLED` controla renovação de pacotes (padrão `false`). Com `true`, esgotar saldo cria novo ciclo na mesma transação, copiando serviços e quantidades do ciclo anterior, zerando `usosAnteriores` e sem vincular agendamentos. Isso registra o ciclo; não processa cobrança.
 
 O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local. Backend continua como fonte da verdade.
 

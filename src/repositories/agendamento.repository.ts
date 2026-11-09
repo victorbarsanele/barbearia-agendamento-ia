@@ -687,12 +687,116 @@ export async function concluirComPacote(
     estado: 'CONCLUIDO' | 'IGNORADO' | 'SALDO_ESGOTADO';
     agendamento: AgendamentoComRelacoes;
     pacoteCliente: PacoteCliente;
+    renovacao: { criada: boolean; pacoteClienteId?: string; motivo?: string };
 }> {
     class ConclusaoSemSaldo extends Error {}
     class PacoteInativo extends Error {}
 
+    const renovacaoAutomaticaHabilitada =
+        process.env.RENOVACAO_AUTOMATICA_ENABLED === 'true';
+
+    function registrarRenovacaoIgnorada(motivo: string) {
+        console.info(
+            JSON.stringify({
+                evento: 'renovacao_automatica_pacote_ignorada',
+                motivo,
+            }),
+        );
+        return { criada: false, motivo };
+    }
+
+    async function criarRenovacaoNaTransacao(
+        tx: Transacao,
+        cicloAnterior: { clienteId: string; pacoteId: string } | null,
+    ): Promise<{
+        criada: boolean;
+        pacoteClienteId?: string;
+        motivo?: string;
+    }> {
+        if (!renovacaoAutomaticaHabilitada) {
+            return registrarRenovacaoIgnorada('FLAG_DESLIGADA');
+        }
+        if (!cicloAnterior) {
+            return registrarRenovacaoIgnorada('CICLO_ANTERIOR_INDISPONIVEL');
+        }
+
+        const outroAtivo = await tx.pacoteCliente.findFirst({
+            where: {
+                clienteId: cicloAnterior.clienteId,
+                status: StatusPacoteCliente.ATIVO,
+                id: { not: pacoteClienteId },
+            },
+            select: { id: true },
+        });
+        if (outroAtivo) {
+            return registrarRenovacaoIgnorada('OUTRO_PACOTE_ATIVO');
+        }
+
+        const servicos = await tx.pacoteClienteServico.findMany({
+            where: { pacoteClienteId },
+            orderBy: { servicoId: 'asc' },
+            select: { servicoId: true, quantidadeTotal: true },
+        });
+        if (servicos.length === 0) {
+            return registrarRenovacaoIgnorada('CICLO_SEM_SERVICOS');
+        }
+
+        // skipDuplicates uses ON CONFLICT, keeping PostgreSQL transaction usable.
+        const criado = await tx.pacoteCliente.createMany({
+            data: [
+                {
+                    clienteId: cicloAnterior.clienteId,
+                    pacoteId: cicloAnterior.pacoteId,
+                    renovadoDeId: pacoteClienteId,
+                    dataInicio: concluidoEm,
+                    status: StatusPacoteCliente.ATIVO,
+                },
+            ],
+            skipDuplicates: true,
+        });
+        if (criado.count === 0) {
+            return registrarRenovacaoIgnorada('JA_RENOVADO');
+        }
+
+        const novoCiclo = await tx.pacoteCliente.findUnique({
+            where: { renovadoDeId: pacoteClienteId },
+            select: { id: true },
+        });
+        if (!novoCiclo) {
+            throw new AppError('Ciclo renovado não encontrado.', 500);
+        }
+
+        await tx.pacoteClienteServico.createMany({
+            data: servicos.map((servico) => ({
+                pacoteClienteId: novoCiclo.id,
+                servicoId: servico.servicoId,
+                quantidadeTotal: servico.quantidadeTotal,
+                usosAnteriores: 0,
+                quantidadeRestante: servico.quantidadeTotal,
+            })),
+        });
+
+        return { criada: true, pacoteClienteId: novoCiclo.id };
+    }
+
     try {
         return await prisma.$transaction(async (tx) => {
+            let cicloAnterior: { clienteId: string; pacoteId: string } | null =
+                null;
+            if (renovacaoAutomaticaHabilitada) {
+                cicloAnterior = await tx.pacoteCliente.findUnique({
+                    where: { id: pacoteClienteId },
+                    select: { clienteId: true, pacoteId: true },
+                });
+                if (cicloAnterior) {
+                    await tx.$queryRaw(Prisma.sql`
+                        SELECT "id" FROM "clientes"
+                        WHERE "id" = ${cicloAnterior.clienteId}
+                        FOR UPDATE
+                    `);
+                }
+            }
+
             const claim = await tx.agendamento.updateMany({
                 where: {
                     id: agendamentoId,
@@ -719,6 +823,10 @@ export async function concluirComPacote(
                         estado: 'IGNORADO' as const,
                         agendamento: null as never,
                         pacoteCliente: null as never,
+                        renovacao: {
+                            criada: false,
+                            motivo: 'CONCLUSAO_IGNORADA',
+                        },
                     };
                 }
 
@@ -785,6 +893,11 @@ export async function concluirComPacote(
                 );
             }
 
+            const renovacao =
+                saldosRestantes === 0
+                    ? await criarRenovacaoNaTransacao(tx, cicloAnterior)
+                    : { criada: false, motivo: 'SALDO_RESTANTE' };
+
             const agendamento = await tx.agendamento.findUniqueOrThrow({
                 where: { id: agendamentoId },
                 include: includeRelacoes,
@@ -793,7 +906,12 @@ export async function concluirComPacote(
                 where: { id: pacoteClienteId },
             });
 
-            return { estado: 'CONCLUIDO' as const, agendamento, pacoteCliente };
+            return {
+                estado: 'CONCLUIDO' as const,
+                agendamento,
+                pacoteCliente,
+                renovacao,
+            };
         });
     } catch (error) {
         if (error instanceof ConclusaoSemSaldo) {
@@ -801,6 +919,7 @@ export async function concluirComPacote(
                 estado: 'SALDO_ESGOTADO',
                 agendamento: null as never,
                 pacoteCliente: null as never,
+                renovacao: { criada: false, motivo: 'SALDO_ESGOTADO' },
             };
         }
         if (error instanceof PacoteInativo) {
@@ -808,6 +927,7 @@ export async function concluirComPacote(
                 estado: 'IGNORADO',
                 agendamento: null as never,
                 pacoteCliente: null as never,
+                renovacao: { criada: false, motivo: 'PACOTE_INATIVO' },
             };
         }
         throw error;

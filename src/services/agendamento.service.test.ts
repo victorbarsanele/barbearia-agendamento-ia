@@ -2184,6 +2184,7 @@ describe('agendamento.service.concluir', () => {
                 id: 'pacote-cliente-1',
                 status: 'ATIVO',
             } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         const resultado = await agendamentoService.concluir('agendamento-1');
@@ -2244,6 +2245,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await agendamentoService.concluir('agendamento-1');
@@ -2284,6 +2286,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
         vi.mocked(agendamentoRepository.concluirComPacote)
             .mockResolvedValueOnce(resultadoRepository('agendamento-1'))
@@ -2325,6 +2328,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
         vi.mocked(enfileirarSincronizacao).mockRejectedValueOnce(
             new Error('outbox unavailable'),
@@ -2353,6 +2357,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await agendamentoService.concluir('agendamento-1');
@@ -2380,6 +2385,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await expect(

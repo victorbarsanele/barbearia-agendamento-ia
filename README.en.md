@@ -95,6 +95,7 @@ During appointments, the barber was losing time by manually answering scheduling
 - Escalation state persisted in PostgreSQL.
 - Message-ID idempotency with early ACK; deduplication applies only when an ID exists.
 - `FOR UPDATE` lock for package usage numbering.
+- When enabled, automatic package renewal locks in this order: appointment, customer, then balance; package-link creation locks the customer before the balance.
 - `precoUnitario` snapshot on each appointment preserves historical value used in reports.
 - Reactivation uses a transactional reservation with `SELECT ... FOR UPDATE` on the customer row. Persisted opt-out is handled before takeover; `ENTREGUE` status never regresses after webhook reconciliation.
 - Deterministic guardrails: customer-name validation, internal-ID filtering on outbound messages, and full-block guard. If the guard query fails, the system treats it as unavailable, not as a guaranteed block.
@@ -108,6 +109,8 @@ During appointments, the barber was losing time by manually answering scheduling
 Use `.env.example` as a starting point. Production must explicitly set `WHATSAPP_PROVIDER=ycloud`; required variables, defaults, and validation rules are documented in [docs/ENV.en.md](docs/ENV.en.md).
 
 Essential variables: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, dashboard credentials, and YCloud settings (`YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER`, `BARBER_PHONE`).
+
+`RENOVACAO_AUTOMATICA_ENABLED` controls package renewal (default `false`). When `true`, exhausting the balance creates a new cycle in the same transaction, copying services and quantities from the previous cycle, resetting `usosAnteriores` to zero, and leaving appointments unlinked. This records the cycle; it does not process payment.
 
 The dashboard calls `GET /configuracao-agendamento` (JWT cookie authentication) to get `minAntecedenciaMinutos` and apply the local cutoff. The backend remains the source of truth.
 
