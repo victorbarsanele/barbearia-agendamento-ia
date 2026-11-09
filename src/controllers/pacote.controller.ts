@@ -1,6 +1,7 @@
 import { FastifyReply, FastifyRequest } from 'fastify';
 import { AppError } from '../lib/app-error';
 import * as pacoteService from '../services/pacote.service';
+import { obterRenovadoEm } from '../utils/renovado-em';
 
 interface CriarPacoteBody {
     nome: string;
@@ -138,7 +139,17 @@ export async function buscarAtivoPorCliente(
         const pacoteCliente = await pacoteService.buscarAtivoPorCliente(
             request.params.clienteId,
         );
-        void reply.send(pacoteCliente);
+        void reply.send(
+            pacoteCliente
+                ? {
+                      ...pacoteCliente,
+                      renovadoEm: obterRenovadoEm(
+                          pacoteCliente.renovadoDeId,
+                          pacoteCliente.dataInicio,
+                      ),
+                  }
+                : null,
+        );
     } catch (error) {
         handleError(error, reply);
     }
