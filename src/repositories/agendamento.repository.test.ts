@@ -7,11 +7,14 @@ import {
     atualizarPacoteClienteId,
     concluirComPacote,
     estornarConclusaoAutomatica,
+    listarParaConclusaoAutomatica,
+    listarSiblingsEditaveisDoLote,
 } from './agendamento.repository';
 
 vi.mock('../lib/prisma', () => ({
     default: {
         $transaction: vi.fn(),
+        agendamento: { findMany: vi.fn() },
     },
 }));
 
@@ -435,6 +438,64 @@ describe('ordem de locks de agendamento', () => {
         );
         expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
             tx.agendamento.update.mock.invocationCallOrder[0],
+        );
+    });
+});
+
+describe('agendamento.repository.listarParaConclusaoAutomatica', () => {
+    it('filtra vínculos não ativos antes de ordenar e limitar candidatos', async () => {
+        const findMany = vi.mocked(prisma.agendamento.findMany);
+        findMany.mockResolvedValue([
+            {
+                id: 'ativo-mais-antigo',
+                pacoteClienteId: 'pc-ativo-1',
+                servicoId: 'servico-1',
+            },
+        ] as never);
+
+        await expect(
+            listarParaConclusaoAutomatica(
+                new Date('2026-07-20T00:00:00Z'),
+                new Date('2026-07-21T00:00:00Z'),
+                1,
+            ),
+        ).resolves.toEqual([
+            {
+                id: 'ativo-mais-antigo',
+                pacoteClienteId: 'pc-ativo-1',
+                servicoId: 'servico-1',
+            },
+        ]);
+        expect(findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    pacoteCliente: { is: { status: 'ATIVO' } },
+                }),
+                orderBy: [{ dataHoraFim: 'asc' }, { id: 'asc' }],
+                take: 1,
+            }),
+        );
+    });
+});
+
+describe('agendamento.repository.listarSiblingsEditaveisDoLote', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('limita irmãos aos que já terminaram quando recebe horário de corte', async () => {
+        const corte = new Date('2026-07-20T12:00:00Z');
+        vi.mocked(prisma.agendamento.findMany).mockResolvedValue([] as never);
+
+        await listarSiblingsEditaveisDoLote('lote-1', 'origem-1', corte);
+
+        expect(prisma.agendamento.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    loteId: 'lote-1',
+                    dataHoraFim: { lte: corte },
+                }),
+            }),
         );
     });
 });

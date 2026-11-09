@@ -95,3 +95,17 @@ export async function atualizarStatus(
         data: { status },
     });
 }
+
+export async function cancelarSeAtivo(
+    id: string,
+): Promise<PacoteCliente | null> {
+    return prisma.$transaction(async (tx) => {
+        const resultado = await tx.pacoteCliente.updateMany({
+            where: { id, status: StatusPacoteCliente.ATIVO },
+            data: { status: StatusPacoteCliente.CANCELADO },
+        });
+        if (resultado.count !== 1) return null;
+
+        return tx.pacoteCliente.findUniqueOrThrow({ where: { id } });
+    });
+}

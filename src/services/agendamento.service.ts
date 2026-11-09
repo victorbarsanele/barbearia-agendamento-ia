@@ -1425,15 +1425,22 @@ async function propagarStatusParaLote(
     idOrigem: string,
     aplicarParaLote: boolean,
     aplicar: (siblingId: string) => Promise<unknown>,
+    dataHoraFimAte?: Date,
 ): Promise<string[]> {
     if (!aplicarParaLote) {
         return [];
     }
 
-    const siblings = await agendamentoRepository.listarSiblingsEditaveisDoLote(
-        loteId,
-        idOrigem,
-    );
+    const siblings = dataHoraFimAte
+        ? await agendamentoRepository.listarSiblingsEditaveisDoLote(
+              loteId,
+              idOrigem,
+              dataHoraFimAte,
+          )
+        : await agendamentoRepository.listarSiblingsEditaveisDoLote(
+              loteId,
+              idOrigem,
+          );
 
     const afetados: string[] = [];
     for (const sibling of siblings) {
@@ -1452,7 +1459,7 @@ async function propagarStatusParaLote(
     return afetados;
 }
 
-async function concluirInterno(id: string) {
+async function concluirInterno(id: string, agora = new Date()) {
     const agendamento = await agendamentoRepository.buscarPorId(id);
 
     if (!agendamento) {
@@ -1489,7 +1496,7 @@ async function concluirInterno(id: string) {
         agendamento.pacoteClienteId,
         agendamento.servicoId,
         OrigemConclusaoAgendamento.MANUAL,
-        new Date(),
+        agora,
     );
 
     switch (resultado.estado) {
@@ -1578,9 +1585,13 @@ export function obterEstadoConclusao(
     };
 }
 
-export async function concluir(id: string, aplicarParaLote = false) {
+export async function concluir(
+    id: string,
+    aplicarParaLote = false,
+    agora = new Date(),
+) {
     try {
-        const { agendamento, resultado } = await concluirInterno(id);
+        const { agendamento, resultado } = await concluirInterno(id, agora);
 
         const agendamentosAfetados = agendamento.loteId
             ? await propagarStatusParaLote(
@@ -1588,8 +1599,9 @@ export async function concluir(id: string, aplicarParaLote = false) {
                   id,
                   aplicarParaLote,
                   async (siblingId) => {
-                      await concluirInterno(siblingId);
+                      await concluirInterno(siblingId, agora);
                   },
+                  agora,
               )
             : [];
 

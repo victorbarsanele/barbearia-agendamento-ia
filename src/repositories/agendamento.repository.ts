@@ -534,6 +534,7 @@ export async function cancelar(id: string): Promise<AgendamentoComRelacoes> {
 export async function listarSiblingsEditaveisDoLote(
     loteId: string,
     ignorarAgendamentoId: string,
+    dataHoraFimAte?: Date,
 ): Promise<AgendamentoComRelacoes[]> {
     try {
         return await prisma.agendamento.findMany({
@@ -547,6 +548,9 @@ export async function listarSiblingsEditaveisDoLote(
                     ],
                 },
                 concluido: false,
+                ...(dataHoraFimAte
+                    ? { dataHoraFim: { lte: dataHoraFimAte } }
+                    : {}),
             },
             include: includeRelacoes,
         });
@@ -818,6 +822,7 @@ export async function listarParaConclusaoAutomatica(
     const candidatos = await prisma.agendamento.findMany({
         where: {
             pacoteClienteId: { not: null },
+            pacoteCliente: { is: { status: StatusPacoteCliente.ATIVO } },
             concluido: false,
             status: { not: StatusAgendamento.CANCELADO },
             dataHoraInicio: { gte: aPartirDe },
