@@ -9,6 +9,7 @@ import {
     estornarConclusaoAutomatica,
     listarParaConclusaoAutomatica,
     listarSiblingsEditaveisDoLote,
+    reservarNumeroNoPacoteOportunistaNaTransacao,
 } from './agendamento.repository';
 
 vi.mock('../lib/prisma', () => ({
@@ -627,6 +628,59 @@ describe('ordem de locks de agendamento', () => {
         expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
             tx.agendamento.update.mock.invocationCallOrder[0],
         );
+    });
+});
+
+describe('agendamento.repository reserva oportunista de pacote', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('retorna null quando não há número livre', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ quantidadeTotal: 1, usosAnteriores: 0 }])
+            .mockResolvedValueOnce([{ numeroNoPacote: 1 }]);
+
+        await expect(
+            reservarNumeroNoPacoteOportunistaNaTransacao(
+                tx as never,
+                'pacote-cliente-1',
+                'servico-1',
+            ),
+        ).resolves.toBeNull();
+
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('reserva primeiro número livre', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ quantidadeTotal: 3, usosAnteriores: 0 }])
+            .mockResolvedValueOnce([{ numeroNoPacote: 1 }]);
+
+        await expect(
+            reservarNumeroNoPacoteOportunistaNaTransacao(
+                tx as never,
+                'pacote-cliente-1',
+                'servico-1',
+            ),
+        ).resolves.toBe(2);
+    });
+
+    it('propaga erro quando linha de saldo não existe', async () => {
+        const tx = configurarTransacao(null);
+        tx.$queryRaw.mockReset().mockResolvedValueOnce([]);
+
+        await expect(
+            reservarNumeroNoPacoteOportunistaNaTransacao(
+                tx as never,
+                'pacote-cliente-1',
+                'servico-1',
+            ),
+        ).rejects.toMatchObject({ statusCode: 404 });
     });
 });
 

@@ -10,6 +10,7 @@ import {
     getAgendamentoConfig,
     getConfirmacaoAgendamentoConfig,
 } from '../config/agendamento';
+import { getVinculoAutomaticoWhatsappEnabled } from '../config/vinculo-automatico-whatsapp';
 import {
     DIAS_SEMANA,
     dataMaisProximaComDiaDaSemana,
@@ -2211,6 +2212,7 @@ type ResultadoCriacaoAgendamento =
               servico: string;
               dataHoraInicio: string;
               status: string;
+              pacote?: { numero: number; total: number };
           };
       }
     | {
@@ -2318,9 +2320,22 @@ async function criarAgendamentoInterno(
             dataHoraInicio: args.dataHoraInicio,
             origem: 'GEMINI' as const,
         };
-        const agendamento = options
-            ? await agendamentoService.criar(dadosAgendamento, options)
-            : await agendamentoService.criar(dadosAgendamento);
+        let agendamento: Awaited<ReturnType<typeof agendamentoService.criar>>;
+        let pacote: { numero: number; total: number } | undefined;
+        if (getVinculoAutomaticoWhatsappEnabled()) {
+            const resultado = options
+                ? await agendamentoService.criarComResultado(
+                      dadosAgendamento,
+                      options,
+                  )
+                : await agendamentoService.criarComResultado(dadosAgendamento);
+            agendamento = resultado.agendamento;
+            pacote = resultado.pacote;
+        } else {
+            agendamento = options
+                ? await agendamentoService.criar(dadosAgendamento, options)
+                : await agendamentoService.criar(dadosAgendamento);
+        }
 
         return {
             tipo: 'sucesso',
@@ -2334,6 +2349,7 @@ async function criarAgendamentoInterno(
                     new Date(agendamento.dataHoraInicio),
                 ),
                 status: agendamento.status,
+                ...(pacote ? { pacote } : {}),
             },
         };
     } catch (error) {
@@ -2654,6 +2670,7 @@ type ResultadoConfirmacaoTool = {
     foraDoHorizonte?: true;
     data?: string;
     horizonteAte?: string;
+    pacote?: { numero: number; total: number };
 };
 
 function logConfirmacao(
@@ -2889,6 +2906,7 @@ async function confirmarAgendamentoTool(
             sucesso: true,
             mensagem: `Agendamento confirmado: ${agendamento.servico}, ${diaSemana}, ${data}, ${hora}.`,
             rascunhoRestaurado: false,
+            ...(agendamento.pacote ? { pacote: agendamento.pacote } : {}),
         };
     }
 
@@ -3114,7 +3132,9 @@ async function tentarAtalhoConfirmacao(
 
     let resposta: string;
     if (resultado.sucesso) {
-        resposta = resultado.mensagem;
+        resposta = resultado.pacote
+            ? `${resultado.mensagem} Uso ${resultado.pacote.numero} de ${resultado.pacote.total} do pacote.`
+            : resultado.mensagem;
     } else if (
         resultado.mensagem ===
         'Esse horário foi reservado por outro cliente. Escolha outro horário para continuar.'

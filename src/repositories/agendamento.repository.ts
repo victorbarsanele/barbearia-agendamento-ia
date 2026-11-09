@@ -31,6 +31,7 @@ interface SalvarAgendamentoData {
     origem: OrigemAgendamento;
     precoUnitario?: Prisma.Decimal | null;
     pacoteClienteId?: string | null;
+    numeroNoPacote?: number | null;
     loteId?: string | null;
     dataHoraInicio: Date;
     dataHoraFim: Date;
@@ -147,12 +148,15 @@ export async function criar(
     }
 }
 
-async function reservarNumeroNoPacote(
+async function encontrarNumeroNoPacote(
     tx: Transacao,
     pacoteClienteId: string,
     servicoId: string,
     ignorarAgendamentoId?: string,
-): Promise<number> {
+): Promise<{
+    numero: number | null;
+    usosRestantes: number;
+}> {
     // Chamadores de linhas existentes travam Agendamento antes; slot novo ainda não tem linha.
     const saldos = await tx.$queryRaw<
         { quantidadeTotal: number; usosAnteriores: number }[]
@@ -192,14 +196,67 @@ async function reservarNumeroNoPacote(
         numero += 1
     ) {
         if (!ocupadosSet.has(numero)) {
-            return numero;
+            return {
+                numero,
+                usosRestantes: saldo.quantidadeTotal - saldo.usosAnteriores,
+            };
         }
     }
 
+    return {
+        numero: null,
+        usosRestantes: saldo.quantidadeTotal - saldo.usosAnteriores,
+    };
+}
+
+async function reservarNumeroNoPacote(
+    tx: Transacao,
+    pacoteClienteId: string,
+    servicoId: string,
+    ignorarAgendamentoId?: string,
+): Promise<number> {
+    const resultado = await encontrarNumeroNoPacote(
+        tx,
+        pacoteClienteId,
+        servicoId,
+        ignorarAgendamentoId,
+    );
+    if (resultado.numero !== null) {
+        return resultado.numero;
+    }
+
     throw new AppError(
-        `Todos os ${saldo.quantidadeTotal - saldo.usosAnteriores} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
+        `Todos os ${resultado.usosRestantes} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
         400,
     );
+}
+
+export async function reservarNumeroNoPacoteOportunistaNaTransacao(
+    tx: Transacao,
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<number | null> {
+    const resultado = await encontrarNumeroNoPacote(
+        tx,
+        pacoteClienteId,
+        servicoId,
+    );
+    return resultado.numero;
+}
+
+export async function criarNaTransacao(
+    tx: Transacao,
+    data: SalvarAgendamentoData,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await tx.agendamento.create({ data, include: includeRelacoes });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
+        throw error;
+    }
 }
 
 export async function criarComNumeroNoPacote(

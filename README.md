@@ -96,6 +96,7 @@ Durante atendimentos, o barbeiro perdia tempo respondendo manualmente mensagens 
 - Idempotência por ID de mensagem com ACK antecipado; deduplicação só ocorre quando ID existe.
 - Lock `FOR UPDATE` na numeração de pacote.
 - Renovação automática de pacote, quando habilitada, trava na ordem agendamento, cliente e saldo; criação de vínculo trava cliente antes do saldo.
+- Vínculo automático WhatsApp no Gemini trava cliente, depois saldo do serviço, depois insere agendamento; sem elegibilidade, cria agendamento avulso.
 - Snapshot de `precoUnitario` no agendamento preserva valor histórico usado nos relatórios.
 - Reativação usa reserva transacional com `SELECT ... FOR UPDATE` na linha do cliente. Opt-out persistido é tratado antes do takeover; status `ENTREGUE` não regride após reconciliação por webhook.
 - Guardrails determinísticos: validação de nome, filtro de IDs internos na saída e guarda de bloqueio total. Se consulta da guarda falhar, sistema trata como indisponibilidade, não como bloqueio garantido.
@@ -111,6 +112,8 @@ Use `.env.example` como base. Produção deve definir `WHATSAPP_PROVIDER=ycloud`
 Variáveis essenciais: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, credenciais de painel e configurações YCloud (`YCLOUD_API_KEY`, `YCLOUD_WEBHOOK_SECRET`, `YCLOUD_FROM_NUMBER`, `BARBER_PHONE`).
 
 `RENOVACAO_AUTOMATICA_ENABLED` controla renovação de pacotes (padrão `false`). Com `true`, esgotar saldo cria novo ciclo na mesma transação, copiando serviços e quantidades do ciclo anterior, zerando `usosAnteriores` e sem vincular agendamentos. Isso registra o ciclo; não processa cobrança.
+
+`VINCULO_AUTOMATICO_WHATSAPP_ENABLED` aceita somente `true` ou `false` (padrão `false`). Com `true`, a confirmação do Gemini tenta vincular ao ciclo ativo se serviço e número estiverem disponíveis; caso contrário, cria agendamento avulso. A preparação do resumo não decide nem promete vínculo.
 
 O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local. Backend continua como fonte da verdade.
 

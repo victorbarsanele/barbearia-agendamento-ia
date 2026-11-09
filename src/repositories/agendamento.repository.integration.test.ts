@@ -47,6 +47,7 @@ let entidades: EntidadesTeste;
 
 beforeEach(async () => {
     vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'false');
+    vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'false');
     const sufixo = Date.now().toString();
     const cliente = await prisma.cliente.create({
         data: {
@@ -293,6 +294,15 @@ async function criarCicloComSaldos(
     return ciclo;
 }
 
+function criarAgendamentoGemini(dataHoraInicio: Date) {
+    return agendamentoService.criarComResultado({
+        clienteId: entidades.clienteId,
+        servicoId: entidades.servicoId,
+        dataHoraInicio: dataHoraInicio.toISOString(),
+        origem: 'GEMINI',
+    });
+}
+
 describe('agendamento.repository integração concorrência', () => {
     it('reverte pacote, saldo, lote e primeiro slot quando segundo slot conflita', async () => {
         const pacoteId = await criarPacoteCatalogo(2);
@@ -374,6 +384,142 @@ describe('agendamento.repository integração concorrência', () => {
                 },
             }),
         ).resolves.toBe(0);
+    });
+
+    it('vincula Gemini quando flag ligada e serviço tem saldo', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 3,
+                usosAnteriores: 0,
+                quantidadeRestante: 3,
+            },
+        ]);
+
+        const resultado = await criarAgendamentoGemini(horarioUnico());
+
+        expect(resultado.pacote).toEqual({ numero: 1, total: 3 });
+        expect(resultado.agendamento).toMatchObject({
+            origem: OrigemAgendamento.WHATSAPP_IA,
+            pacoteClienteId: entidades.pacoteClienteId,
+            numeroNoPacote: 1,
+        });
+    });
+
+    it('flag desligada mantém Gemini avulso e flag ligada não altera painel', async () => {
+        await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 2,
+                usosAnteriores: 0,
+                quantidadeRestante: 2,
+            },
+        ]);
+
+        const gemini = await criarAgendamentoGemini(horarioUnico());
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        const painel = await agendamentoService.criar({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            dataHoraInicio: horarioUnico(2).toISOString(),
+            origem: 'PAINEL',
+        });
+
+        expect(gemini.pacote).toBeUndefined();
+        expect(gemini.agendamento.pacoteClienteId).toBeNull();
+        expect(painel.pacoteClienteId).toBeNull();
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: { not: null },
+                },
+            }),
+        ).resolves.toBe(0);
+    });
+
+    it('serializa duas criações concorrentes disputando último número', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 1,
+                usosAnteriores: 0,
+                quantidadeRestante: 1,
+            },
+        ]);
+
+        const resultados = await Promise.all([
+            criarAgendamentoGemini(horarioUnico()),
+            criarAgendamentoGemini(horarioUnico(2)),
+        ]);
+
+        expect(resultados.filter((item) => item.pacote)).toHaveLength(1);
+        expect(resultados.find((item) => item.pacote)?.pacote).toEqual({
+            numero: 1,
+            total: 1,
+        });
+        await expect(
+            prisma.agendamento.count({
+                where: { clienteId: entidades.clienteId },
+            }),
+        ).resolves.toBe(2);
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: { not: null },
+                    numeroNoPacote: 1,
+                },
+            }),
+        ).resolves.toBe(1);
+    });
+
+    it('não converte conflito real de horário em criação avulsa', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 2,
+                usosAnteriores: 0,
+                quantidadeRestante: 2,
+            },
+        ]);
+        const inicio = horarioUnico();
+        await criarAgendamentoGemini(inicio);
+
+        await expect(criarAgendamentoGemini(inicio)).rejects.toMatchObject({
+            statusCode: 409,
+        });
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    pacoteClienteId: null,
+                },
+            }),
+        ).resolves.toBe(0);
+    });
+
+    it('cancelamento libera número para próxima criação Gemini', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 1,
+                usosAnteriores: 0,
+                quantidadeRestante: 1,
+            },
+        ]);
+        const primeiro = await criarAgendamentoGemini(horarioUnico());
+
+        await agendamentoService.cancelar(primeiro.agendamento.id);
+        const seguinte = await criarAgendamentoGemini(horarioUnico(2));
+
+        expect(primeiro.pacote?.numero).toBe(1);
+        expect(seguinte.pacote).toEqual({ numero: 1, total: 1 });
+        expect(seguinte.agendamento.numeroNoPacote).toBe(1);
     });
 
     it('cria 20 slots atômicos com numeração contínua dentro do timeout', async () => {

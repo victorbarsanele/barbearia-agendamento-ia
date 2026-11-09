@@ -6,6 +6,7 @@ import {
 } from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
 import { getAgendamentoConfig } from '../config/agendamento';
+import { getVinculoAutomaticoWhatsappEnabled } from '../config/vinculo-automatico-whatsapp';
 import {
     calcularCorteAutoConclusao,
     estaDentroDaJanelaEstorno,
@@ -64,6 +65,18 @@ interface CriarAgendamentoData {
 
 interface ValidarAntecedenciaOptions {
     minAntecedenciaMinutos?: number;
+}
+
+export enum MotivoFallbackVinculoAutomaticoWhatsapp {
+    SEM_CICLO = 'SEM_CICLO',
+    SERVICO_FORA_DO_PACOTE = 'SERVICO_FORA_DO_PACOTE',
+    SEM_SALDO = 'SEM_SALDO',
+    SEM_NUMERO_LIVRE = 'SEM_NUMERO_LIVRE',
+}
+
+export interface ResultadoCriacaoAgendamento {
+    agendamento: agendamentoRepository.AgendamentoComRelacoes;
+    pacote?: { numero: number; total: number };
 }
 
 interface SlotLote {
@@ -714,10 +727,108 @@ export async function validarDisponibilidade(
     return { dataHoraInicio, dataHoraFim };
 }
 
-export async function criar(
+function registrarFallbackVinculoAutomaticoWhatsapp(
+    motivo: MotivoFallbackVinculoAutomaticoWhatsapp,
+): void {
+    console.info(
+        JSON.stringify({
+            evento: 'vinculo_automatico_whatsapp_fallback',
+            motivo,
+        }),
+    );
+}
+
+async function criarComVinculoAutomaticoWhatsappNaTransacao(
+    tx: Prisma.TransactionClient,
+    dados: Parameters<typeof agendamentoRepository.criarNaTransacao>[1],
+): Promise<ResultadoCriacaoAgendamento> {
+    const clienteExiste = await clienteRepository.bloquearParaCriacaoDePacote(
+        tx,
+        dados.clienteId,
+    );
+    if (!clienteExiste) {
+        throw new AppError('Cliente não encontrado.', 404);
+    }
+
+    const pacoteCliente = await pacoteClienteRepository.buscarAtivoPorClienteId(
+        dados.clienteId,
+        tx,
+    );
+    if (!pacoteCliente) {
+        registrarFallbackVinculoAutomaticoWhatsapp(
+            MotivoFallbackVinculoAutomaticoWhatsapp.SEM_CICLO,
+        );
+        return {
+            agendamento: await agendamentoRepository.criarNaTransacao(tx, {
+                ...dados,
+                pacoteClienteId: null,
+                numeroNoPacote: null,
+            }),
+        };
+    }
+
+    const saldoServico = pacoteCliente.servicos.find(
+        (item) => item.servicoId === dados.servicoId,
+    );
+    if (!saldoServico) {
+        registrarFallbackVinculoAutomaticoWhatsapp(
+            MotivoFallbackVinculoAutomaticoWhatsapp.SERVICO_FORA_DO_PACOTE,
+        );
+        return {
+            agendamento: await agendamentoRepository.criarNaTransacao(tx, {
+                ...dados,
+                pacoteClienteId: null,
+                numeroNoPacote: null,
+            }),
+        };
+    }
+
+    if (saldoServico.quantidadeRestante <= 0) {
+        registrarFallbackVinculoAutomaticoWhatsapp(
+            MotivoFallbackVinculoAutomaticoWhatsapp.SEM_SALDO,
+        );
+        return {
+            agendamento: await agendamentoRepository.criarNaTransacao(tx, {
+                ...dados,
+                pacoteClienteId: null,
+                numeroNoPacote: null,
+            }),
+        };
+    }
+
+    const numero =
+        await agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao(
+            tx,
+            pacoteCliente.id,
+            dados.servicoId,
+        );
+    if (numero === null) {
+        registrarFallbackVinculoAutomaticoWhatsapp(
+            MotivoFallbackVinculoAutomaticoWhatsapp.SEM_NUMERO_LIVRE,
+        );
+        return {
+            agendamento: await agendamentoRepository.criarNaTransacao(tx, {
+                ...dados,
+                pacoteClienteId: null,
+                numeroNoPacote: null,
+            }),
+        };
+    }
+
+    return {
+        agendamento: await agendamentoRepository.criarNaTransacao(tx, {
+            ...dados,
+            pacoteClienteId: pacoteCliente.id,
+            numeroNoPacote: numero,
+        }),
+        pacote: { numero, total: saldoServico.quantidadeTotal },
+    };
+}
+
+async function criarComResultadoInterno(
     data: CriarAgendamentoData,
     options: ValidarAntecedenciaOptions = {},
-) {
+): Promise<ResultadoCriacaoAgendamento> {
     try {
         if (data.pacoteId && data.pacoteClienteId) {
             throw new AppError(
@@ -766,17 +877,30 @@ export async function criar(
             status: StatusAgendamento.AGENDADO,
         };
 
-        const agendamento = data.pacoteId
-            ? await criarComPacoteDoCatalogo(dados, data.pacoteId)
+        const resultado = data.pacoteId
+            ? {
+                  agendamento: await criarComPacoteDoCatalogo(
+                      dados,
+                      data.pacoteId,
+                  ),
+              }
             : data.pacoteClienteId
-              ? await agendamentoRepository.criarComNumeroNoPacote(
-                    dados,
-                    data.pacoteClienteId,
-                    data.servicoId,
-                )
-              : await agendamentoRepository.criar(dados);
-        await enfileirarSemFalhar([agendamento.id]);
-        return agendamento;
+              ? {
+                    agendamento:
+                        await agendamentoRepository.criarComNumeroNoPacote(
+                            dados,
+                            data.pacoteClienteId,
+                            data.servicoId,
+                        ),
+                }
+              : data.origem === 'GEMINI' &&
+                  getVinculoAutomaticoWhatsappEnabled()
+                ? await pacoteClienteRepository.transacionar((tx) =>
+                      criarComVinculoAutomaticoWhatsappNaTransacao(tx, dados),
+                  )
+                : { agendamento: await agendamentoRepository.criar(dados) };
+        await enfileirarSemFalhar([resultado.agendamento.id]);
+        return resultado;
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -784,6 +908,21 @@ export async function criar(
 
         throw new AppError('Erro ao criar agendamento.', 500);
     }
+}
+
+export async function criarComResultado(
+    data: CriarAgendamentoData,
+    options: ValidarAntecedenciaOptions = {},
+): Promise<ResultadoCriacaoAgendamento> {
+    return criarComResultadoInterno(data, options);
+}
+
+export async function criar(
+    data: CriarAgendamentoData,
+    options: ValidarAntecedenciaOptions = {},
+): Promise<agendamentoRepository.AgendamentoComRelacoes> {
+    const resultado = await criarComResultadoInterno(data, options);
+    return resultado.agendamento;
 }
 
 export async function simularLote(data: LoteAgendamentoData) {
