@@ -1,4 +1,8 @@
-import { OrigemConclusaoAgendamento, StatusAgendamento } from '@prisma/client';
+import {
+    OrigemConclusaoAgendamento,
+    StatusAgendamento,
+    StatusPacoteCliente,
+} from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import prisma from '../lib/prisma';
 import {
@@ -99,6 +103,56 @@ function configurarTransacao(saldoExistente: { id: string } | null) {
     return tx;
 }
 
+function configurarEstorno(
+    tx: PrismaTransactionMock,
+    renovacao: { id: string; status: StatusPacoteCliente } | null,
+    saldosRenovacao: {
+        quantidadeTotal: number;
+        quantidadeRestante: number;
+    }[] = [],
+    agendamentosRenovacao = 0,
+    clienteIdAgendamento = 'cliente-1',
+) {
+    tx.agendamento.findUnique.mockResolvedValueOnce({
+        clienteId: 'cliente-1',
+    });
+    tx.pacoteCliente.findUnique.mockReset();
+    tx.pacoteCliente.findUnique.mockResolvedValueOnce(renovacao);
+    tx.$queryRaw
+        .mockReset()
+        .mockResolvedValueOnce([{ id: 'cliente-1' }])
+        .mockResolvedValueOnce([
+            {
+                clienteId: clienteIdAgendamento,
+                pacoteClienteId: 'pacote-cliente-1',
+                servicoId: 'servico-1',
+                status: StatusAgendamento.AGENDADO,
+                concluido: true,
+                concluidoEm: new Date('2026-07-20T11:00:00Z'),
+                concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
+            },
+        ]);
+
+    if (renovacao?.status === StatusPacoteCliente.ATIVO) {
+        tx.$queryRaw.mockResolvedValueOnce(saldosRenovacao);
+        tx.agendamento.count.mockResolvedValueOnce(agendamentosRenovacao);
+        tx.pacoteCliente.findUnique.mockResolvedValueOnce({
+            status: renovacao.status,
+        });
+    }
+
+    if (renovacao?.status !== StatusPacoteCliente.FINALIZADO) {
+        tx.$queryRaw.mockResolvedValueOnce([
+            {
+                id: 'saldo-1',
+                quantidadeTotal: 4,
+                usosAnteriores: 0,
+                quantidadeRestante: 0,
+            },
+        ]);
+    }
+}
+
 describe('agendamento.repository.concluirComPacote', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -171,20 +225,7 @@ describe('agendamento.repository.concluirComPacote', () => {
 
     it('bloqueia estorno antes de alterar dados quando existe outro pacote ativo', async () => {
         const tx = configurarTransacao({ id: 'saldo-1' });
-        tx.$queryRaw
-            .mockReset()
-            .mockResolvedValueOnce([
-                {
-                    clienteId: 'cliente-1',
-                    pacoteClienteId: 'pacote-cliente-1',
-                    servicoId: 'servico-1',
-                    status: StatusAgendamento.AGENDADO,
-                    concluido: true,
-                    concluidoEm: new Date('2026-07-20T11:00:00Z'),
-                    concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
-                },
-            ])
-            .mockResolvedValueOnce([]);
+        configurarEstorno(tx, null);
         tx.pacoteCliente.findFirst.mockResolvedValue({ id: 'outro-pacote' });
 
         await expect(
@@ -205,28 +246,7 @@ describe('agendamento.repository.concluirComPacote', () => {
 
     it('devolve crédito e reativa pacote finalizado ao estornar', async () => {
         const tx = configurarTransacao({ id: 'saldo-1' });
-        tx.$queryRaw
-            .mockReset()
-            .mockResolvedValueOnce([
-                {
-                    clienteId: 'cliente-1',
-                    pacoteClienteId: 'pacote-cliente-1',
-                    servicoId: 'servico-1',
-                    status: StatusAgendamento.AGENDADO,
-                    concluido: true,
-                    concluidoEm: new Date('2026-07-20T11:00:00Z'),
-                    concluidoPor: OrigemConclusaoAgendamento.AUTOMATICO,
-                },
-            ])
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([
-                {
-                    id: 'saldo-1',
-                    quantidadeTotal: 4,
-                    usosAnteriores: 0,
-                    quantidadeRestante: 0,
-                },
-            ]);
+        configurarEstorno(tx, null);
         tx.agendamento.findUniqueOrThrow.mockResolvedValue({
             id: 'agendamento-1',
             status: StatusAgendamento.CANCELADO,
@@ -269,6 +289,168 @@ describe('agendamento.repository.concluirComPacote', () => {
                 data: { status: 'ATIVO' },
             }),
         );
+
+        const sql = tx.$queryRaw.mock.calls.map(
+            ([query]) => (query as { sql: string }).sql,
+        );
+        expect(sql[0]).toContain('FROM "clientes"');
+        expect(sql[1]).toContain('FROM "agendamentos"');
+        expect(sql[2]).toContain('FROM "pacotes_clientes_servicos"');
+    });
+
+    it('cancela renovação ativa sem uso e reativa ciclo anterior', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(
+            tx,
+            { id: 'renovacao-1', status: StatusPacoteCliente.ATIVO },
+            [{ quantidadeTotal: 3, quantidadeRestante: 3 }],
+        );
+
+        await estornarConclusaoAutomatica(
+            'agendamento-1',
+            new Date('2026-07-20T12:00:00Z'),
+            48,
+        );
+
+        expect(tx.pacoteCliente.updateMany).toHaveBeenNthCalledWith(1, {
+            where: {
+                id: 'renovacao-1',
+                renovadoDeId: 'pacote-cliente-1',
+                status: StatusPacoteCliente.ATIVO,
+            },
+            data: {
+                status: StatusPacoteCliente.CANCELADO,
+                renovadoDeId: null,
+            },
+        });
+        expect(tx.pacoteCliente.updateMany).toHaveBeenNthCalledWith(
+            2,
+            expect.objectContaining({
+                where: {
+                    id: 'pacote-cliente-1',
+                    status: StatusPacoteCliente.FINALIZADO,
+                },
+                data: { status: StatusPacoteCliente.ATIVO },
+            }),
+        );
+
+        const sql = tx.$queryRaw.mock.calls.map(
+            ([query]) => (query as { sql: string }).sql,
+        );
+        expect(sql[0]).toContain('FROM "clientes"');
+        expect(sql[1]).toContain('FROM "agendamentos"');
+        expect(sql[2]).toContain('FROM "pacotes_clientes_servicos"');
+        expect(sql[3]).toContain('FROM "pacotes_clientes_servicos"');
+    });
+
+    it('bloqueia estorno quando renovação consumiu saldo', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(
+            tx,
+            { id: 'renovacao-1', status: StatusPacoteCliente.ATIVO },
+            [{ quantidadeTotal: 3, quantidadeRestante: 2 }],
+        );
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).rejects.toMatchObject({
+            message:
+                'Não é possível estornar: a renovação já possui uso ou agendamento vinculado não cancelado. Desfaça a renovação antes de estornar.',
+            statusCode: 409,
+        });
+        expect(tx.agendamento.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('bloqueia estorno quando renovação tem agendamento não cancelado', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(
+            tx,
+            { id: 'renovacao-1', status: StatusPacoteCliente.ATIVO },
+            [{ quantidadeTotal: 3, quantidadeRestante: 3 }],
+            1,
+        );
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).rejects.toMatchObject({ statusCode: 409 });
+        expect(tx.agendamento.count).toHaveBeenCalledWith({
+            where: {
+                pacoteClienteId: 'renovacao-1',
+                status: { not: StatusAgendamento.CANCELADO },
+            },
+        });
+    });
+
+    it('permite renovação cancelada e preserva renovadoDeId', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(tx, {
+            id: 'renovacao-1',
+            status: StatusPacoteCliente.CANCELADO,
+        });
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).resolves.toBeDefined();
+
+        expect(tx.pacoteCliente.updateMany).toHaveBeenCalledOnce();
+        expect(tx.pacoteCliente.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    id: 'pacote-cliente-1',
+                    status: StatusPacoteCliente.FINALIZADO,
+                },
+            }),
+        );
+    });
+
+    it('bloqueia estorno quando renovação está finalizada', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(tx, {
+            id: 'renovacao-1',
+            status: StatusPacoteCliente.FINALIZADO,
+        });
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).rejects.toMatchObject({
+            message: 'Não é possível estornar: a renovação já foi finalizada.',
+            statusCode: 409,
+        });
+        expect(tx.pacoteCliente.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('aborta se cliente do agendamento mudou após pré-leitura', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        configurarEstorno(tx, null, [], 0, 'cliente-2');
+
+        await expect(
+            estornarConclusaoAutomatica(
+                'agendamento-1',
+                new Date('2026-07-20T12:00:00Z'),
+                48,
+            ),
+        ).rejects.toMatchObject({
+            message:
+                'Não é possível estornar: cliente do agendamento mudou durante a operação. Tente novamente.',
+            statusCode: 409,
+        });
+        expect(tx.pacoteCliente.findUnique).not.toHaveBeenCalled();
     });
 });
 
