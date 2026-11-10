@@ -207,6 +207,41 @@ describe('relatorio.repository.listarSaldoPacotes integração', () => {
         expect(resultado.totalAtivos).toBe(baseline.totalAtivos + 1);
     });
 
+    it('mantém ciclo arquivado nos relatórios de saldo e atendimentos', async () => {
+        const cliente = await criarCliente();
+        const servico = await criarServico();
+        const ciclo = await criarPacoteCliente({
+            clienteId: cliente.id,
+            servicos: [{ servicoId: servico.id, total: 3, restante: 2 }],
+        });
+        await prisma.pacote.update({
+            where: { id: ciclo.pacoteId },
+            data: { arquivadoEm: agora },
+        });
+
+        const inicio = dataLocalHaDias(1);
+        await criarAgendamento({
+            clienteId: cliente.id,
+            servicoId: servico.id,
+            pacoteClienteId: ciclo.id,
+            inicio,
+            concluido: true,
+        });
+
+        expect(itemDo(await consultar(), ciclo.id)).toBeDefined();
+        const atendimentos = await relatorioRepository.agregarAtendimentos(
+            new Date(inicio.getTime() - 60_000),
+            new Date(inicio.getTime() + 60 * 60_000),
+            agora,
+        );
+        expect(atendimentos).toContainEqual(
+            expect.objectContaining({
+                servicoId: servico.id,
+                quantidadePacote: 1,
+            }),
+        );
+    });
+
     it('retorna renovadoEm em São Paulo e null para ciclo não renovado', async () => {
         const clienteRenovado = await criarCliente();
         const clienteNormal = await criarCliente();

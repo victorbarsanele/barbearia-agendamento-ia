@@ -23,6 +23,10 @@ interface PacoteParams {
     id: string;
 }
 
+interface ListarPacotesQuery {
+    situacao?: pacoteService.SituacaoPacote;
+}
+
 interface VincularPacoteBody {
     clienteId: string;
     pacoteId: string;
@@ -47,7 +51,9 @@ interface PacoteClienteServicoParams extends PacoteClienteParams {
 
 function handleError(error: unknown, reply: FastifyReply): void {
     if (error instanceof AppError) {
-        void reply.status(error.statusCode).send({ message: error.message });
+        void reply
+            .status(error.statusCode)
+            .send({ message: error.message, ...(error.details ?? {}) });
     } else {
         void reply.status(500).send({ message: 'Erro interno do servidor.' });
     }
@@ -66,12 +72,36 @@ export async function criar(
 }
 
 export async function listarTodos(
-    _request: FastifyRequest,
+    request: FastifyRequest<{ Querystring: ListarPacotesQuery }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
-        const pacotes = await pacoteService.listarTodos();
+        const pacotes = await pacoteService.listarTodos(request.query.situacao);
         void reply.send(pacotes);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function arquivar(
+    request: FastifyRequest<{ Params: PacoteParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const pacote = await pacoteService.arquivarPorId(request.params.id);
+        void reply.send(pacote);
+    } catch (error) {
+        handleError(error, reply);
+    }
+}
+
+export async function desarquivar(
+    request: FastifyRequest<{ Params: PacoteParams }>,
+    reply: FastifyReply,
+): Promise<void> {
+    try {
+        const pacote = await pacoteService.desarquivarPorId(request.params.id);
+        void reply.send(pacote);
     } catch (error) {
         handleError(error, reply);
     }

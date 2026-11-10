@@ -23,6 +23,12 @@ vi.mock('../lib/prisma', () => ({
     },
 }));
 
+vi.mock('./pacote.repository', () => ({
+    bloquearParaCriacaoNaTransacao: vi.fn(),
+}));
+
+import * as pacoteRepository from './pacote.repository';
+
 type PrismaTransactionMock = {
     $queryRaw: ReturnType<typeof vi.fn>;
     pacoteClienteServico: {
@@ -458,6 +464,9 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
     beforeEach(() => {
         vi.clearAllMocks();
         vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'false');
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockResolvedValue({ id: 'pacote-1', arquivadoEm: null });
     });
 
     afterEach(() => {
@@ -478,6 +487,7 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
                 clienteId: 'cliente-1',
                 pacoteId: 'pacote-1',
             })
+            .mockResolvedValueOnce(null)
             .mockResolvedValueOnce({ id: 'pacote-cliente-novo' });
         tx.pacoteClienteServico.findMany.mockResolvedValue([
             {
@@ -517,6 +527,9 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
             ],
             skipDuplicates: true,
         });
+        expect(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).toHaveBeenCalledWith(tx, 'pacote-1');
         expect(tx.pacoteClienteServico.createMany).toHaveBeenCalledWith({
             data: [
                 {
@@ -574,6 +587,14 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
                 clienteId: 'cliente-1',
                 pacoteId: 'pacote-1',
             });
+            if (motivo === 'JA_RENOVADO') {
+                tx.pacoteCliente.findUnique
+                    .mockResolvedValueOnce({
+                        clienteId: 'cliente-1',
+                        pacoteId: 'pacote-1',
+                    })
+                    .mockResolvedValueOnce({ id: 'renovacao-existente' });
+            }
             tx.pacoteCliente.findFirst.mockResolvedValue(ativo);
             tx.pacoteClienteServico.findMany.mockResolvedValue(
                 servicos ?? [{ servicoId: 'servico-1', quantidadeTotal: 4 }],
@@ -596,12 +617,77 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
             expect(tx.pacoteCliente.createMany).toHaveBeenCalledTimes(
                 motivo === 'FLAG_DESLIGADA' ||
                     motivo === 'OUTRO_PACOTE_ATIVO' ||
-                    motivo === 'CICLO_SEM_SERVICOS'
+                    motivo === 'CICLO_SEM_SERVICOS' ||
+                    motivo === 'JA_RENOVADO'
                     ? 0
                     : 1,
             );
         },
     );
+
+    it('conclui ciclo arquivado sem renovar e registra evento seguro', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ id: 'cliente-1' }])
+            .mockResolvedValueOnce([{ id: 'saldo-1', quantidadeRestante: 1 }]);
+        tx.pacoteCliente.findUnique
+            .mockResolvedValueOnce({
+                clienteId: 'cliente-1',
+                pacoteId: 'pacote-1',
+            })
+            .mockResolvedValueOnce(null);
+        tx.pacoteClienteServico.findMany.mockResolvedValue([
+            { servicoId: 'servico-1', quantidadeTotal: 4 },
+        ]);
+        tx.pacoteClienteServico.count.mockResolvedValue(0);
+        tx.pacoteCliente.findUniqueOrThrow.mockResolvedValue({
+            id: 'pacote-cliente-antigo',
+            status: StatusPacoteCliente.FINALIZADO,
+        });
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockResolvedValue({
+            id: 'pacote-1',
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
+        });
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        const resultado = await concluirComPacote(
+            'agendamento-1',
+            'pacote-cliente-antigo',
+            'servico-1',
+            OrigemConclusaoAgendamento.AUTOMATICO,
+            new Date('2026-07-20T12:00:00Z'),
+        );
+
+        expect(resultado.estado).toBe('CONCLUIDO');
+        expect(resultado.pacoteCliente.status).toBe('FINALIZADO');
+        expect(resultado.renovacao).toEqual({
+            criada: false,
+            motivo: 'PACOTE_ARQUIVADO',
+        });
+        expect(tx.pacoteCliente.createMany).not.toHaveBeenCalled();
+        expect(tx.pacoteCliente.updateMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    id: 'pacote-cliente-antigo',
+                    status: StatusPacoteCliente.ATIVO,
+                },
+                data: { status: StatusPacoteCliente.FINALIZADO },
+            }),
+        );
+        expect(log).toHaveBeenCalledWith(
+            JSON.stringify({
+                evento: 'renovacao_ignorada_pacote_arquivado',
+                pacoteId: 'pacote-1',
+                pacoteClienteId: 'pacote-cliente-antigo',
+                quantidadeServicos: 1,
+            }),
+        );
+        expect(JSON.stringify(log.mock.calls)).not.toContain('cliente-1');
+    });
 
     it('flag ligada mantém conclusão normal enquanto ainda há saldo', async () => {
         vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');

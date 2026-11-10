@@ -54,6 +54,57 @@ function dataLocalHaDias(agora: Date, dias: number, hora = '12:00'): Date {
     return fromZonedTime(`${chaveVisita}T${hora}:00`, TIME_ZONE);
 }
 
+async function horariosLivresParaAgendamento(
+    agora: Date,
+    quantidade: number,
+): Promise<Date[]> {
+    const duracaoEmMilissegundos = 30 * 60 * 1000;
+
+    for (let dias = 40; dias <= 180; dias += 1) {
+        const inicioDoDia = dataLocalHaDias(agora, dias, '00:00');
+        const inicioDoProximoDia = dataLocalHaDias(agora, dias - 1, '00:00');
+        const existentes = await prisma.agendamento.findMany({
+            where: {
+                status: { not: StatusAgendamento.CANCELADO },
+                dataHoraInicio: { lt: inicioDoProximoDia },
+                dataHoraFim: { gt: inicioDoDia },
+            },
+            select: { dataHoraInicio: true, dataHoraFim: true },
+        });
+        const horariosLivres: Date[] = [];
+
+        for (
+            let minutoDoDia = 8 * 60;
+            minutoDoDia <= 20 * 60;
+            minutoDoDia += 30
+        ) {
+            const hora = `${String(Math.floor(minutoDoDia / 60)).padStart(2, '0')}:${String(minutoDoDia % 60).padStart(2, '0')}`;
+            const inicio = dataLocalHaDias(agora, dias, hora);
+            const fim = new Date(inicio.getTime() + duracaoEmMilissegundos);
+            const conflitaComExistente = existentes.some(
+                (agendamento) =>
+                    inicio < agendamento.dataHoraFim &&
+                    fim > agendamento.dataHoraInicio,
+            );
+            const conflitaComSelecionado = horariosLivres.some(
+                (horario) =>
+                    inicio <
+                        new Date(horario.getTime() + duracaoEmMilissegundos) &&
+                    fim > horario,
+            );
+
+            if (!conflitaComExistente && !conflitaComSelecionado) {
+                horariosLivres.push(inicio);
+                if (horariosLivres.length === quantidade) {
+                    return horariosLivres;
+                }
+            }
+        }
+    }
+
+    throw new Error('Não foi possível encontrar horários livres para o teste.');
+}
+
 async function criarAgendamento(data: {
     clienteId: string;
     servicoId: string;
@@ -473,6 +524,57 @@ describe('relatorio.repository.listarClientesInativos integração', () => {
             resultado.itens.find((item) => item.clienteId === cliente.id)
                 ?.pacoteAtivoComSaldo,
         ).toBe(esperado);
+    });
+
+    it('mantém sinal de saldo positivo para ciclo ativo de pacote arquivado', async () => {
+        const clienteArquivado = await criarCliente(
+            'Ciclo de pacote arquivado',
+        );
+        const clienteNormal = await criarCliente('Ciclo de pacote ativo');
+        const servico = await criarServico();
+        const cicloArquivado = await criarPacoteCliente({
+            clienteId: clienteArquivado.id,
+            servicoId: servico.id,
+            status: StatusPacoteCliente.ATIVO,
+            quantidadeRestante: 2,
+        });
+        await criarPacoteCliente({
+            clienteId: clienteNormal.id,
+            servicoId: servico.id,
+            status: StatusPacoteCliente.ATIVO,
+            quantidadeRestante: 2,
+        });
+        const { pacoteId } = await prisma.pacoteCliente.findUniqueOrThrow({
+            where: { id: cicloArquivado.id },
+            select: { pacoteId: true },
+        });
+        await prisma.pacote.update({
+            where: { id: pacoteId },
+            data: { arquivadoEm: agoraPadrao },
+        });
+        const [horarioArquivado, horarioNormal] =
+            await horariosLivresParaAgendamento(agoraPadrao, 2);
+        for (const [cliente, inicio] of [
+            [clienteArquivado, horarioArquivado],
+            [clienteNormal, horarioNormal],
+        ] as const) {
+            await criarAgendamento({
+                clienteId: cliente.id,
+                servicoId: servico.id,
+                inicio,
+            });
+        }
+
+        const itens = (await consultar()).itens;
+        const resultadoArquivado = itens.find(
+            (item) => item.clienteId === clienteArquivado.id,
+        );
+        const resultadoNormal = itens.find(
+            (item) => item.clienteId === clienteNormal.id,
+        );
+
+        expect(resultadoArquivado?.pacoteAtivoComSaldo).toBe(true);
+        expect(resultadoNormal?.pacoteAtivoComSaldo).toBe(true);
     });
 
     it('retorna última visita, serviço por desempate de id e total de visitas', async () => {

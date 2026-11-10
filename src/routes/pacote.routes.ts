@@ -41,7 +41,55 @@ export async function pacoteRoutes(app: FastifyInstance): Promise<void> {
         pacoteController.criar,
     );
 
-    app.get('/pacotes', pacoteController.listarTodos);
+    app.get(
+        '/pacotes',
+        {
+            schema: {
+                querystring: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                        situacao: {
+                            type: 'string',
+                            enum: ['ativos', 'arquivados', 'todos'],
+                            default: 'ativos',
+                        },
+                    },
+                },
+            },
+        },
+        pacoteController.listarTodos,
+    );
+
+    app.post(
+        '/pacotes/:id/arquivar',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: { id: { type: 'string', minLength: 1 } },
+                },
+            },
+        },
+        pacoteController.arquivar,
+    );
+
+    app.post(
+        '/pacotes/:id/desarquivar',
+        {
+            schema: {
+                params: {
+                    type: 'object',
+                    required: ['id'],
+                    additionalProperties: false,
+                    properties: { id: { type: 'string', minLength: 1 } },
+                },
+            },
+        },
+        pacoteController.desarquivar,
+    );
 
     app.post(
         '/pacotes/vincular',

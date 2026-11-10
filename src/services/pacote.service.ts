@@ -115,8 +115,10 @@ export async function criar(data: {
     });
 }
 
-export async function listarTodos() {
-    return pacoteRepository.listarTodos();
+export type SituacaoPacote = pacoteRepository.SituacaoPacote;
+
+export async function listarTodos(situacao: SituacaoPacote = 'ativos') {
+    return pacoteRepository.listarTodos(situacao);
 }
 
 export async function buscarPorId(id: string) {
@@ -156,26 +158,47 @@ export async function listarLiberadosParaGemini() {
     return pacoteRepository.listarLiberadosParaGemini();
 }
 
-export async function excluirPorId(id: string): Promise<void> {
-    const existente = await pacoteRepository.buscarPorId(id);
-    if (!existente) {
+export async function arquivarPorId(id: string) {
+    const pacote = await pacoteRepository.arquivarPorId(id);
+    if (!pacote) {
         throw new AppError('Pacote não encontrado.', 404);
     }
 
-    const clientesVinculados =
-        await pacoteRepository.contarClientesVinculados(id);
-    if (clientesVinculados > 0) {
-        throw new AppError(
-            'Não é possível excluir pacote com clientes vinculados.',
-            409,
-        );
+    return pacote;
+}
+
+export async function desarquivarPorId(id: string) {
+    const pacote = await pacoteRepository.desarquivarPorId(id);
+    if (!pacote) {
+        throw new AppError('Pacote não encontrado.', 404);
     }
 
+    return pacote;
+}
+
+export async function excluirPorId(id: string): Promise<void> {
     try {
-        await pacoteRepository.excluirPorId(id);
+        const resultado = await pacoteRepository.excluirPorId(id);
+        if (resultado.tipo === 'nao-encontrado') {
+            throw new AppError('Pacote não encontrado.', 404);
+        }
+        if (resultado.tipo === 'ciclo-ativo') {
+            throw new AppError(
+                'Não é possível excluir pacote: há clientes com ciclo ativo. Arquive o pacote.',
+                409,
+                { code: 'PACOTE_COM_CICLO_ATIVO' },
+            );
+        }
+        if (resultado.tipo === 'historico') {
+            throw new AppError(
+                'Pacote tem histórico de vendas. Arquive em vez de excluir.',
+                409,
+                { code: 'PACOTE_COM_HISTORICO' },
+            );
+        }
     } catch (error) {
+        if (error instanceof AppError) throw error;
         if (isForeignKeyConflict(error)) {
-            // check acima já cobre o único vínculo de negócio real (PacoteCliente)
             throw new AppError('Não foi possível excluir o pacote.', 409);
         }
 
@@ -188,16 +211,6 @@ export async function vincularCliente(data: {
     pacoteId: string;
     usosAnteriores?: { servicoId: string; usosAnteriores: number }[];
 }) {
-    const cliente = await clienteRepository.buscarPorId(data.clienteId);
-    if (!cliente) {
-        throw new AppError('Cliente não encontrado.', 404);
-    }
-
-    const pacote = await pacoteRepository.buscarPorId(data.pacoteId);
-    if (!pacote) {
-        throw new AppError('Pacote não encontrado.', 404);
-    }
-
     return pacoteClienteRepository.transacionar(async (tx) => {
         const clienteBloqueado =
             await clienteRepository.bloquearParaCriacaoDePacote(
@@ -215,6 +228,30 @@ export async function vincularCliente(data: {
             );
         if (ativoExistente) {
             throw new AppError('Cliente já possui um pacote ativo.', 409);
+        }
+
+        const pacoteBloqueado =
+            await pacoteRepository.bloquearParaCriacaoNaTransacao(
+                tx,
+                data.pacoteId,
+            );
+        if (!pacoteBloqueado) {
+            throw new AppError('Pacote não encontrado.', 404);
+        }
+        if (pacoteBloqueado.arquivadoEm !== null) {
+            throw new AppError(
+                'Pacote arquivado não pode gerar novo ciclo.',
+                409,
+                { code: 'PACOTE_ARQUIVADO' },
+            );
+        }
+
+        const pacote = await tx.pacote.findUnique({
+            where: { id: data.pacoteId },
+            include: { servicos: true },
+        });
+        if (!pacote) {
+            throw new AppError('Pacote não encontrado.', 404);
         }
 
         const usosAnteriores = new Map(

@@ -95,7 +95,7 @@ afterEach(async () => {
         await prisma.pacoteServico.deleteMany({
             where: { pacoteId: entidades.pacoteId },
         });
-        await prisma.pacote.delete({ where: { id: entidades.pacoteId } });
+        await prisma.pacote.deleteMany({ where: { id: entidades.pacoteId } });
     }
 
     await prisma.loteAgendamento.deleteMany({
@@ -304,6 +304,188 @@ function criarAgendamentoGemini(dataHoraInicio: Date) {
 }
 
 describe('agendamento.repository integração concorrência', () => {
+    it('conclui ciclo arquivado sem renovação e permite estorno posterior', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const ciclo = await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 1,
+                usosAnteriores: 0,
+                quantidadeRestante: 1,
+            },
+        ]);
+        await pacoteService.arquivarPorId(entidades.pacoteId!);
+        const inicio = new Date('2040-03-01T13:00:00.000Z');
+        const agendamento = await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: ciclo.id,
+                dataHoraInicio: inicio,
+                dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            },
+        });
+
+        const conclusao = await agendamentoRepository.concluirComPacote(
+            agendamento.id,
+            ciclo.id,
+            entidades.servicoId,
+            OrigemConclusaoAgendamento.AUTOMATICO,
+            new Date(inicio.getTime() + 30 * 60_000),
+        );
+
+        expect(conclusao.renovacao.criada).toBe(false);
+        await expect(
+            prisma.pacoteCliente.findUniqueOrThrow({ where: { id: ciclo.id } }),
+        ).resolves.toMatchObject({ status: 'FINALIZADO' });
+        await expect(
+            prisma.pacoteCliente.count({ where: { renovadoDeId: ciclo.id } }),
+        ).resolves.toBe(0);
+
+        await expect(
+            agendamentoRepository.estornarConclusaoAutomatica(
+                agendamento.id,
+                new Date(inicio.getTime() + 60 * 60_000),
+                48,
+            ),
+        ).resolves.toMatchObject({ status: StatusAgendamento.CANCELADO });
+        await expect(
+            prisma.pacoteCliente.findUniqueOrThrow({ where: { id: ciclo.id } }),
+        ).resolves.toMatchObject({ status: 'ATIVO' });
+        await expect(
+            prisma.pacote.findUniqueOrThrow({
+                where: { id: entidades.pacoteId },
+                select: { arquivadoEm: true },
+            }),
+        ).resolves.toMatchObject({ arquivadoEm: expect.any(Date) });
+    });
+
+    it('serializa arquivamento concorrente com renovação sem criar ciclo após o arquivo', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const ciclo = await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 1,
+                usosAnteriores: 0,
+                quantidadeRestante: 1,
+            },
+        ]);
+        const inicio = new Date('2040-03-02T13:00:00.000Z');
+        const agendamento = await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                pacoteClienteId: ciclo.id,
+                dataHoraInicio: inicio,
+                dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            },
+        });
+
+        const [arquivamento, conclusao] = await Promise.all([
+            pacoteService.arquivarPorId(entidades.pacoteId!),
+            agendamentoRepository.concluirComPacote(
+                agendamento.id,
+                ciclo.id,
+                entidades.servicoId,
+                OrigemConclusaoAgendamento.AUTOMATICO,
+                new Date(inicio.getTime() + 30 * 60_000),
+            ),
+        ]);
+
+        expect(arquivamento.arquivadoEm).toBeInstanceOf(Date);
+        const renovacoes = await prisma.pacoteCliente.count({
+            where: { renovadoDeId: ciclo.id },
+        });
+        expect(renovacoes).toBe(conclusao.renovacao.criada ? 1 : 0);
+        expect(renovacoes).toBeLessThanOrEqual(1);
+    });
+
+    it('serializa arquivamento concorrente com venda avulsa do catálogo', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const inicio = new Date('2040-03-03T13:00:00.000Z');
+        const resultados = await Promise.allSettled([
+            pacoteService.arquivarPorId(pacoteId),
+            criarAgendamentoPeloServico(pacoteId, inicio),
+        ]);
+
+        expect(resultados[0]?.status).toBe('fulfilled');
+        if (resultados[1]?.status === 'fulfilled') {
+            const ciclo = await prisma.pacoteCliente.findFirstOrThrow({
+                where: { clienteId: entidades.clienteId, pacoteId },
+            });
+            expect(ciclo.status).toBe('ATIVO');
+        } else {
+            expect(resultados[1]?.reason).toMatchObject({
+                details: { code: 'PACOTE_ARQUIVADO' },
+            });
+            await expect(
+                prisma.pacoteCliente.count({
+                    where: { clienteId: entidades.clienteId, pacoteId },
+                }),
+            ).resolves.toBe(0);
+        }
+        await expect(
+            prisma.pacote.findUniqueOrThrow({
+                where: { id: pacoteId },
+                select: { arquivadoEm: true },
+            }),
+        ).resolves.toMatchObject({ arquivadoEm: expect.any(Date) });
+    });
+
+    it('serializa exclusão concorrente com venda de catálogo', async () => {
+        const pacoteId = await criarPacoteCatalogo(2);
+        const inicio = new Date('2040-03-04T13:00:00.000Z');
+        const resultados = await Promise.allSettled([
+            pacoteService.excluirPorId(pacoteId),
+            criarAgendamentoPeloServico(pacoteId, inicio),
+        ]);
+        const exclusao = resultados[0]!;
+        const venda = resultados[1]!;
+
+        if (exclusao.status === 'fulfilled') {
+            if (venda.status !== 'rejected') {
+                throw new Error(
+                    'Venda deveria falhar após exclusão do pacote.',
+                );
+            }
+            expect(venda.reason).toBeInstanceOf(AppError);
+            expect(venda.reason).toMatchObject({
+                name: 'AppError',
+                message: 'Pacote não encontrado.',
+                statusCode: 404,
+                details: undefined,
+            });
+            await expect(
+                prisma.pacote.findUnique({ where: { id: pacoteId } }),
+            ).resolves.toBeNull();
+            await expect(
+                prisma.pacoteCliente.count({
+                    where: { clienteId: entidades.clienteId, pacoteId },
+                }),
+            ).resolves.toBe(0);
+        } else {
+            if (venda.status !== 'fulfilled') {
+                throw new Error('Venda deveria vencer exclusão do pacote.');
+            }
+            expect(exclusao.reason).toBeInstanceOf(AppError);
+            expect(exclusao.reason).toMatchObject({
+                name: 'AppError',
+                message:
+                    'Não é possível excluir pacote: há clientes com ciclo ativo. Arquive o pacote.',
+                statusCode: 409,
+                details: { code: 'PACOTE_COM_CICLO_ATIVO' },
+            });
+            await expect(
+                prisma.pacote.findUnique({ where: { id: pacoteId } }),
+            ).resolves.toMatchObject({ id: pacoteId });
+            await expect(
+                prisma.pacoteCliente.count({
+                    where: { clienteId: entidades.clienteId, pacoteId },
+                }),
+            ).resolves.toBe(1);
+        }
+    });
+
     it('reverte pacote, saldo, lote e primeiro slot quando segundo slot conflita', async () => {
         const pacoteId = await criarPacoteCatalogo(2);
         const conflitoInicio = new Date('2035-01-02T11:00:00-03:00');
