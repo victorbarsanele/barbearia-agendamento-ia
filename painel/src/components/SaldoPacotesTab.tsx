@@ -11,6 +11,7 @@ import {
 import { formatarTelefoneCliente } from '../utils/clientesInativos';
 import { obterTelefoneWhatsApp } from '../utils/contatoRelatorio';
 import { formatarDataRelatorio } from '../utils/relatorios';
+import { obterRotuloSeloRenovacao } from '../utils/renovacaoPacote';
 import {
     formatarSaldoServico,
     formatarTextoUltimaVisita,
@@ -32,6 +33,17 @@ function mensagemDoErro(error: unknown): string {
     return error instanceof Error && error.message
         ? error.message
         : 'Não foi possível carregar o relatório.';
+}
+
+function SeloRenovacao({ renovadoEm }: { renovadoEm: string | null }) {
+    const rotulo = obterRotuloSeloRenovacao(renovadoEm);
+    if (!rotulo) return null;
+
+    return (
+        <span className="inline-flex max-w-full break-words rounded-[6px] bg-[var(--color-gold-muted)] px-2 py-1 text-xs font-semibold text-[var(--color-gold)]">
+            {rotulo}
+        </span>
+    );
 }
 
 function baixarCsv(relatorio: RelatorioSaldoPacotes): void {
@@ -382,10 +394,19 @@ export function SaldoPacotesTab() {
                                                         total
                                                     </p>
                                                 </td>
-                                                <td className="whitespace-nowrap px-3 py-3">
-                                                    {formatarDataRelatorio(
-                                                        item.dataInicio,
-                                                    )}
+                                                <td className="max-w-[200px] px-3 py-3">
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        <span className="whitespace-nowrap">
+                                                            {formatarDataRelatorio(
+                                                                item.dataInicio,
+                                                            )}
+                                                        </span>
+                                                        <SeloRenovacao
+                                                            renovadoEm={
+                                                                item.renovadoEm
+                                                            }
+                                                        />
+                                                    </div>
                                                 </td>
                                                 <td className="min-w-[170px] px-3 py-3">
                                                     {formatarTextoUltimaVisita(
@@ -449,10 +470,17 @@ export function SaldoPacotesTab() {
                                                     <dt className="text-xs text-[var(--color-text-secondary)]">
                                                         Início:
                                                     </dt>
-                                                    <dd>
-                                                        {formatarDataRelatorio(
-                                                            item.dataInicio,
-                                                        )}
+                                                    <dd className="mt-1 flex flex-wrap items-center gap-2 break-words">
+                                                        <span>
+                                                            {formatarDataRelatorio(
+                                                                item.dataInicio,
+                                                            )}
+                                                        </span>
+                                                        <SeloRenovacao
+                                                            renovadoEm={
+                                                                item.renovadoEm
+                                                            }
+                                                        />
                                                     </dd>
                                                 </div>
                                                 <div>

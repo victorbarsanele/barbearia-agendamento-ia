@@ -31,6 +31,7 @@ interface SalvarAgendamentoData {
     origem: OrigemAgendamento;
     precoUnitario?: Prisma.Decimal | null;
     pacoteClienteId?: string | null;
+    numeroNoPacote?: number | null;
     loteId?: string | null;
     dataHoraInicio: Date;
     dataHoraFim: Date;
@@ -147,12 +148,15 @@ export async function criar(
     }
 }
 
-async function reservarNumeroNoPacote(
+async function encontrarNumeroNoPacote(
     tx: Transacao,
     pacoteClienteId: string,
     servicoId: string,
     ignorarAgendamentoId?: string,
-): Promise<number> {
+): Promise<{
+    numero: number | null;
+    usosRestantes: number;
+}> {
     // Chamadores de linhas existentes travam Agendamento antes; slot novo ainda não tem linha.
     const saldos = await tx.$queryRaw<
         { quantidadeTotal: number; usosAnteriores: number }[]
@@ -192,14 +196,67 @@ async function reservarNumeroNoPacote(
         numero += 1
     ) {
         if (!ocupadosSet.has(numero)) {
-            return numero;
+            return {
+                numero,
+                usosRestantes: saldo.quantidadeTotal - saldo.usosAnteriores,
+            };
         }
     }
 
+    return {
+        numero: null,
+        usosRestantes: saldo.quantidadeTotal - saldo.usosAnteriores,
+    };
+}
+
+async function reservarNumeroNoPacote(
+    tx: Transacao,
+    pacoteClienteId: string,
+    servicoId: string,
+    ignorarAgendamentoId?: string,
+): Promise<number> {
+    const resultado = await encontrarNumeroNoPacote(
+        tx,
+        pacoteClienteId,
+        servicoId,
+        ignorarAgendamentoId,
+    );
+    if (resultado.numero !== null) {
+        return resultado.numero;
+    }
+
     throw new AppError(
-        `Todos os ${saldo.quantidadeTotal - saldo.usosAnteriores} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
+        `Todos os ${resultado.usosRestantes} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
         400,
     );
+}
+
+export async function reservarNumeroNoPacoteOportunistaNaTransacao(
+    tx: Transacao,
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<number | null> {
+    const resultado = await encontrarNumeroNoPacote(
+        tx,
+        pacoteClienteId,
+        servicoId,
+    );
+    return resultado.numero;
+}
+
+export async function criarNaTransacao(
+    tx: Transacao,
+    data: SalvarAgendamentoData,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await tx.agendamento.create({ data, include: includeRelacoes });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
+        throw error;
+    }
 }
 
 export async function criarComNumeroNoPacote(
@@ -687,12 +744,116 @@ export async function concluirComPacote(
     estado: 'CONCLUIDO' | 'IGNORADO' | 'SALDO_ESGOTADO';
     agendamento: AgendamentoComRelacoes;
     pacoteCliente: PacoteCliente;
+    renovacao: { criada: boolean; pacoteClienteId?: string; motivo?: string };
 }> {
     class ConclusaoSemSaldo extends Error {}
     class PacoteInativo extends Error {}
 
+    const renovacaoAutomaticaHabilitada =
+        process.env.RENOVACAO_AUTOMATICA_ENABLED === 'true';
+
+    function registrarRenovacaoIgnorada(motivo: string) {
+        console.info(
+            JSON.stringify({
+                evento: 'renovacao_automatica_pacote_ignorada',
+                motivo,
+            }),
+        );
+        return { criada: false, motivo };
+    }
+
+    async function criarRenovacaoNaTransacao(
+        tx: Transacao,
+        cicloAnterior: { clienteId: string; pacoteId: string } | null,
+    ): Promise<{
+        criada: boolean;
+        pacoteClienteId?: string;
+        motivo?: string;
+    }> {
+        if (!renovacaoAutomaticaHabilitada) {
+            return registrarRenovacaoIgnorada('FLAG_DESLIGADA');
+        }
+        if (!cicloAnterior) {
+            return registrarRenovacaoIgnorada('CICLO_ANTERIOR_INDISPONIVEL');
+        }
+
+        const outroAtivo = await tx.pacoteCliente.findFirst({
+            where: {
+                clienteId: cicloAnterior.clienteId,
+                status: StatusPacoteCliente.ATIVO,
+                id: { not: pacoteClienteId },
+            },
+            select: { id: true },
+        });
+        if (outroAtivo) {
+            return registrarRenovacaoIgnorada('OUTRO_PACOTE_ATIVO');
+        }
+
+        const servicos = await tx.pacoteClienteServico.findMany({
+            where: { pacoteClienteId },
+            orderBy: { servicoId: 'asc' },
+            select: { servicoId: true, quantidadeTotal: true },
+        });
+        if (servicos.length === 0) {
+            return registrarRenovacaoIgnorada('CICLO_SEM_SERVICOS');
+        }
+
+        // skipDuplicates uses ON CONFLICT, keeping PostgreSQL transaction usable.
+        const criado = await tx.pacoteCliente.createMany({
+            data: [
+                {
+                    clienteId: cicloAnterior.clienteId,
+                    pacoteId: cicloAnterior.pacoteId,
+                    renovadoDeId: pacoteClienteId,
+                    dataInicio: concluidoEm,
+                    status: StatusPacoteCliente.ATIVO,
+                },
+            ],
+            skipDuplicates: true,
+        });
+        if (criado.count === 0) {
+            return registrarRenovacaoIgnorada('JA_RENOVADO');
+        }
+
+        const novoCiclo = await tx.pacoteCliente.findUnique({
+            where: { renovadoDeId: pacoteClienteId },
+            select: { id: true },
+        });
+        if (!novoCiclo) {
+            throw new AppError('Ciclo renovado não encontrado.', 500);
+        }
+
+        await tx.pacoteClienteServico.createMany({
+            data: servicos.map((servico) => ({
+                pacoteClienteId: novoCiclo.id,
+                servicoId: servico.servicoId,
+                quantidadeTotal: servico.quantidadeTotal,
+                usosAnteriores: 0,
+                quantidadeRestante: servico.quantidadeTotal,
+            })),
+        });
+
+        return { criada: true, pacoteClienteId: novoCiclo.id };
+    }
+
     try {
         return await prisma.$transaction(async (tx) => {
+            let cicloAnterior: { clienteId: string; pacoteId: string } | null =
+                null;
+            if (renovacaoAutomaticaHabilitada) {
+                cicloAnterior = await tx.pacoteCliente.findUnique({
+                    where: { id: pacoteClienteId },
+                    select: { clienteId: true, pacoteId: true },
+                });
+                if (cicloAnterior) {
+                    await tx.$queryRaw(Prisma.sql`
+                        SELECT "id" FROM "clientes"
+                        WHERE "id" = ${cicloAnterior.clienteId}
+                        FOR UPDATE
+                    `);
+                }
+            }
+
             const claim = await tx.agendamento.updateMany({
                 where: {
                     id: agendamentoId,
@@ -719,6 +880,10 @@ export async function concluirComPacote(
                         estado: 'IGNORADO' as const,
                         agendamento: null as never,
                         pacoteCliente: null as never,
+                        renovacao: {
+                            criada: false,
+                            motivo: 'CONCLUSAO_IGNORADA',
+                        },
                     };
                 }
 
@@ -785,6 +950,11 @@ export async function concluirComPacote(
                 );
             }
 
+            const renovacao =
+                saldosRestantes === 0
+                    ? await criarRenovacaoNaTransacao(tx, cicloAnterior)
+                    : { criada: false, motivo: 'SALDO_RESTANTE' };
+
             const agendamento = await tx.agendamento.findUniqueOrThrow({
                 where: { id: agendamentoId },
                 include: includeRelacoes,
@@ -793,7 +963,12 @@ export async function concluirComPacote(
                 where: { id: pacoteClienteId },
             });
 
-            return { estado: 'CONCLUIDO' as const, agendamento, pacoteCliente };
+            return {
+                estado: 'CONCLUIDO' as const,
+                agendamento,
+                pacoteCliente,
+                renovacao,
+            };
         });
     } catch (error) {
         if (error instanceof ConclusaoSemSaldo) {
@@ -801,6 +976,7 @@ export async function concluirComPacote(
                 estado: 'SALDO_ESGOTADO',
                 agendamento: null as never,
                 pacoteCliente: null as never,
+                renovacao: { criada: false, motivo: 'SALDO_ESGOTADO' },
             };
         }
         if (error instanceof PacoteInativo) {
@@ -808,6 +984,7 @@ export async function concluirComPacote(
                 estado: 'IGNORADO',
                 agendamento: null as never,
                 pacoteCliente: null as never,
+                renovacao: { criada: false, motivo: 'PACOTE_INATIVO' },
             };
         }
         throw error;
@@ -845,6 +1022,24 @@ export async function estornarConclusaoAutomatica(
     janelaEstornoHoras: number,
 ): Promise<AgendamentoComRelacoes> {
     return prisma.$transaction(async (tx) => {
+        const preLeitura = await tx.agendamento.findUnique({
+            where: { id: agendamentoId },
+            select: { clienteId: true },
+        });
+        if (!preLeitura) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+        const clientes = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+            SELECT "id" FROM "clientes" WHERE "id" = ${preLeitura.clienteId} FOR UPDATE
+        `);
+        if (clientes.length === 0) {
+            throw new AppError(
+                'Não é possível estornar: cliente do agendamento não foi encontrado.',
+                404,
+            );
+        }
+
         const linhas = await tx.$queryRaw<
             {
                 clienteId: string;
@@ -866,6 +1061,12 @@ export async function estornarConclusaoAutomatica(
         if (!atual) {
             throw new AppError('Agendamento não encontrado.', 404);
         }
+        if (atual.clienteId !== preLeitura.clienteId) {
+            throw new AppError(
+                'Não é possível estornar: cliente do agendamento mudou durante a operação. Tente novamente.',
+                409,
+            );
+        }
         if (
             !atual.concluido ||
             atual.concluidoPor !== OrigemConclusaoAgendamento.AUTOMATICO ||
@@ -882,14 +1083,73 @@ export async function estornarConclusaoAutomatica(
             );
         }
 
-        await tx.$queryRaw(Prisma.sql`
-            SELECT "id" FROM "clientes" WHERE "id" = ${atual.clienteId} FOR UPDATE
-        `);
+        const renovacao = await tx.pacoteCliente.findUnique({
+            where: { renovadoDeId: atual.pacoteClienteId },
+            select: { id: true, status: true },
+        });
+        let renovacaoAprovadaParaCancelar: string | null = null;
+        if (renovacao?.status === StatusPacoteCliente.FINALIZADO) {
+            throw new AppError(
+                'Não é possível estornar: a renovação já foi finalizada.',
+                409,
+            );
+        }
+
+        if (renovacao?.status === StatusPacoteCliente.ATIVO) {
+            const saldosRenovacao = await tx.$queryRaw<
+                { quantidadeTotal: number; quantidadeRestante: number }[]
+            >(Prisma.sql`
+                SELECT "quantidadeTotal", "quantidadeRestante"
+                FROM "pacotes_clientes_servicos"
+                WHERE "pacoteClienteId" = ${renovacao.id}
+                ORDER BY "servicoId"
+                FOR UPDATE
+            `);
+            const agendamentosRenovacao = await tx.agendamento.count({
+                where: {
+                    pacoteClienteId: renovacao.id,
+                    status: { not: StatusAgendamento.CANCELADO },
+                },
+            });
+            const renovacaoAtual = await tx.pacoteCliente.findUnique({
+                where: { id: renovacao.id },
+                select: { status: true },
+            });
+
+            if (renovacaoAtual?.status === StatusPacoteCliente.FINALIZADO) {
+                throw new AppError(
+                    'Não é possível estornar: a renovação já foi finalizada.',
+                    409,
+                );
+            }
+            if (renovacaoAtual?.status === StatusPacoteCliente.ATIVO) {
+                const renovacaoTemUso = saldosRenovacao.some(
+                    (saldoRenovacao) =>
+                        saldoRenovacao.quantidadeRestante !==
+                        saldoRenovacao.quantidadeTotal,
+                );
+                if (renovacaoTemUso || agendamentosRenovacao > 0) {
+                    throw new AppError(
+                        'Não é possível estornar: a renovação já possui uso ou agendamento vinculado não cancelado. Desfaça a renovação antes de estornar.',
+                        409,
+                    );
+                }
+                renovacaoAprovadaParaCancelar = renovacao.id;
+            }
+        }
+
         const outroPacoteAtivo = await tx.pacoteCliente.findFirst({
             where: {
                 clienteId: atual.clienteId,
                 status: StatusPacoteCliente.ATIVO,
-                id: { not: atual.pacoteClienteId },
+                id: renovacaoAprovadaParaCancelar
+                    ? {
+                          notIn: [
+                              atual.pacoteClienteId,
+                              renovacaoAprovadaParaCancelar,
+                          ],
+                      }
+                    : { not: atual.pacoteClienteId },
             },
             select: { id: true },
         });
@@ -921,6 +1181,26 @@ export async function estornarConclusaoAutomatica(
                 servicoPacote.quantidadeTotal - servicoPacote.usosAnteriores
         ) {
             throw new AppError('Saldo do pacote não permite estorno.', 409);
+        }
+
+        if (renovacaoAprovadaParaCancelar) {
+            const renovacaoCancelada = await tx.pacoteCliente.updateMany({
+                where: {
+                    id: renovacaoAprovadaParaCancelar,
+                    renovadoDeId: atual.pacoteClienteId,
+                    status: StatusPacoteCliente.ATIVO,
+                },
+                data: {
+                    status: StatusPacoteCliente.CANCELADO,
+                    renovadoDeId: null,
+                },
+            });
+            if (renovacaoCancelada.count !== 1) {
+                throw new AppError(
+                    'Não é possível estornar: a renovação foi alterada durante a operação. Tente novamente.',
+                    409,
+                );
+            }
         }
 
         const cancelado = await tx.agendamento.updateMany({

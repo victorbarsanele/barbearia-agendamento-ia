@@ -21,6 +21,7 @@ const itensPadrao: ItemSaldoPacote[] = [
         telefone: '+55 (11) 99999-9999',
         pacoteNome: 'Pacote premium',
         dataInicio: '2026-01-02',
+        renovadoEm: null,
         ultimaVisita: '2026-02-01',
         semVisita: false,
         diasSemVir: 40,
@@ -46,6 +47,7 @@ const itensPadrao: ItemSaldoPacote[] = [
         telefone: '11 3333-4444',
         pacoteNome: 'Pacote barba',
         dataInicio: '2026-02-10',
+        renovadoEm: null,
         ultimaVisita: '2026-03-01',
         semVisita: false,
         diasSemVir: 12,
@@ -71,6 +73,7 @@ const itensPadrao: ItemSaldoPacote[] = [
         telefone: 'telefone inválido',
         pacoteNome: 'Pacote inicial',
         dataInicio: '2026-02-01',
+        renovadoEm: null,
         ultimaVisita: null,
         semVisita: true,
         diasSemVir: 5,
@@ -104,6 +107,34 @@ function relatorioPadrao(
         itens: itensPadrao,
         ...ajustes,
     };
+}
+
+function relatorioComRenovacao(): RelatorioSaldoPacotes {
+    return relatorioPadrao({
+        itens: itensPadrao.map((item) =>
+            item.pacoteClienteId === 'pc-ana'
+                ? { ...item, renovadoEm: '2026-03-02' }
+                : item,
+        ),
+    });
+}
+
+function relatorioComRenovacaoAusenteEVazia(): RelatorioSaldoPacotes {
+    const itens = itensPadrao.map((item) => ({ ...item }));
+    const itemSemCampo = itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    const itemComCampoVazio = itens.find(
+        (item) => item.pacoteClienteId === 'pc-bruno',
+    );
+
+    if (!itemSemCampo || !itemComCampoVazio) {
+        throw new Error('Itens de teste de renovação não encontrados.');
+    }
+
+    Reflect.deleteProperty(itemSemCampo, 'renovadoEm');
+    itemComCampoVazio.renovadoEm = '';
+    return relatorioPadrao({ itens });
 }
 
 async function interceptarApi(
@@ -691,6 +722,114 @@ test('desktop usa tabela semântica com colunas de saldo', async ({ page }) => {
     await expect(
         tabela.getByRole('columnheader', { name: 'Saldo por serviço' }),
     ).toBeVisible();
+});
+
+test('desktop mostra selo apenas em ciclo renovado', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await interceptarApi(page, async () => ({
+        status: 200,
+        body: relatorioComRenovacao(),
+    }));
+    await abrirPacotes(page);
+
+    const tabela = page.getByRole('table');
+    const ana = tabela.getByRole('row').filter({ hasText: 'Ana Silva' });
+    const bruno = tabela.getByRole('row').filter({ hasText: 'Bruno Lima' });
+
+    await expect(
+        ana.getByText('Renovado automaticamente', { exact: true }),
+    ).toBeVisible();
+    await expect(
+        bruno.getByText('Renovado automaticamente', { exact: true }),
+    ).toHaveCount(0);
+});
+
+test('desktop omite selo com renovadoEm ausente, null ou vazio', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const body = relatorioComRenovacaoAusenteEVazia();
+    const itemSemCampo = body.itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    expect(itemSemCampo).not.toHaveProperty('renovadoEm');
+    expect(
+        JSON.parse(JSON.stringify(body)).itens.find(
+            (item: ItemSaldoPacote) => item.pacoteClienteId === 'pc-ana',
+        ),
+    ).not.toHaveProperty('renovadoEm');
+    await interceptarApi(page, async () => ({ status: 200, body }));
+    await abrirPacotes(page);
+
+    const tabela = page.getByRole('table');
+    for (const nome of ['Ana Silva', 'Bruno Lima', 'Pacote inicial']) {
+        await expect(
+            tabela
+                .getByRole('row')
+                .filter({ hasText: nome })
+                .getByText('Renovado automaticamente', { exact: true }),
+        ).toHaveCount(0);
+    }
+});
+
+test('mobile 375px mostra selo só para renovado sem overflow horizontal', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await interceptarApi(page, async () => ({
+        status: 200,
+        body: relatorioComRenovacao(),
+    }));
+    await abrirPacotes(page);
+
+    const cards = page.getByTestId('saldo-pacote-card');
+    const ana = cards.filter({ hasText: 'Ana Silva' });
+    const bruno = cards.filter({ hasText: 'Bruno Lima' });
+    const selo = ana.getByText('Renovado automaticamente', { exact: true });
+
+    await expect(selo).toBeVisible();
+    await expect(
+        bruno.getByText('Renovado automaticamente', { exact: true }),
+    ).toHaveCount(0);
+
+    const caixaSelo = await selo.boundingBox();
+    expect(caixaSelo).not.toBeNull();
+    if (caixaSelo) {
+        expect(caixaSelo.x + caixaSelo.width).toBeLessThanOrEqual(375);
+    }
+
+    const larguras = await page.evaluate(() => ({
+        viewport: document.documentElement.clientWidth,
+        documento: document.documentElement.scrollWidth,
+    }));
+    expect(larguras.documento).toBeLessThanOrEqual(larguras.viewport);
+});
+
+test('mobile 375px omite selo com renovadoEm ausente, null ou vazio', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const body = relatorioComRenovacaoAusenteEVazia();
+    const itemSemCampo = body.itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    expect(itemSemCampo).not.toHaveProperty('renovadoEm');
+    expect(
+        JSON.parse(JSON.stringify(body)).itens.find(
+            (item: ItemSaldoPacote) => item.pacoteClienteId === 'pc-ana',
+        ),
+    ).not.toHaveProperty('renovadoEm');
+    await interceptarApi(page, async () => ({ status: 200, body }));
+    await abrirPacotes(page);
+
+    const cards = page.getByTestId('saldo-pacote-card');
+    for (const nome of ['Ana Silva', 'Bruno Lima', 'Pacote inicial']) {
+        await expect(
+            cards
+                .filter({ hasText: nome })
+                .getByText('Renovado automaticamente', { exact: true }),
+        ).toHaveCount(0);
+    }
 });
 
 test('CSV baixa com nome local, BOM, cabeçalho, telefone e saldos', async ({

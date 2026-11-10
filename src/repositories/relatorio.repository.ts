@@ -1,6 +1,7 @@
 import { Prisma, StatusAgendamento, StatusPacoteCliente } from '@prisma/client';
 import prisma from '../lib/prisma';
 import { TIME_ZONE } from '../services/horario-funcionamento';
+import { obterRenovadoEm } from '../utils/renovado-em';
 
 interface AgregadoRaw {
     servicoId: string;
@@ -263,6 +264,7 @@ export interface ItemSaldoPacote {
     telefone: string;
     pacoteNome: string;
     dataInicio: string;
+    renovadoEm: string | null;
     ultimaVisita: string | null;
     semVisita: boolean;
     diasSemVir: number;
@@ -299,6 +301,7 @@ interface SaldoPacoteRaw {
     telefone: string | null;
     pacoteNome: string | null;
     dataInicio: string | null;
+    renovadoDeId: string | null;
     ultimaVisita: string | null;
     semVisita: boolean | null;
     diasSemVir: number | null;
@@ -383,6 +386,7 @@ export async function listarSaldoPacotes(
                 c."telefone",
                 p."nome" AS "pacoteNome",
                 pc."dataInicio",
+                pc."renovadoDeId",
                 uv."ultimaVisita",
                 COALESCE(hc."temHorarioMarcado", FALSE) AS "temHorarioMarcado",
                 COALESCE(ap."aConcluir", 0) AS "aConcluir",
@@ -414,6 +418,7 @@ export async function listarSaldoPacotes(
                 c."telefone",
                 p."nome",
                 pc."dataInicio",
+                pc."renovadoDeId",
                 uv."ultimaVisita",
                 hc."temHorarioMarcado",
                 ap."aConcluir"
@@ -427,6 +432,7 @@ export async function listarSaldoPacotes(
                 "telefone",
                 "pacoteNome",
                 TO_CHAR("dataInicio" AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD') AS "dataInicio",
+                "renovadoDeId",
                 CASE
                     WHEN "ultimaVisita" IS NULL THEN NULL
                     ELSE TO_CHAR("ultimaVisita" AT TIME ZONE ${TIME_ZONE}, 'YYYY-MM-DD')
@@ -480,6 +486,7 @@ export async function listarSaldoPacotes(
             "limitados"."telefone",
             "limitados"."pacoteNome",
             "limitados"."dataInicio",
+            "limitados"."renovadoDeId",
             "limitados"."ultimaVisita",
             "limitados"."semVisita",
             "limitados"."diasSemVir",
@@ -526,6 +533,7 @@ export async function listarSaldoPacotes(
                 telefone: row.telefone,
                 pacoteNome: row.pacoteNome,
                 dataInicio: row.dataInicio,
+                renovadoEm: obterRenovadoEm(row.renovadoDeId, row.dataInicio),
                 ultimaVisita: row.ultimaVisita,
                 semVisita: row.semVisita,
                 diasSemVir: Number(row.diasSemVir),

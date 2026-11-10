@@ -56,20 +56,27 @@ async function criarPacoteCliente(data: {
     }>;
     status?: StatusPacoteCliente;
     dataInicio?: Date;
+    pacoteId?: string;
+    renovadoDeId?: string;
 }) {
-    const pacote = await prisma.pacote.create({
-        data: {
-            nome: uniqueName('Pacote saldo'),
-            duracaoDias: 30,
-            preco: '100.00',
-        },
-    });
-    pacoteIds.push(pacote.id);
+    const pacote = data.pacoteId
+        ? await prisma.pacote.findUniqueOrThrow({
+              where: { id: data.pacoteId },
+          })
+        : await prisma.pacote.create({
+              data: {
+                  nome: uniqueName('Pacote saldo'),
+                  duracaoDias: 30,
+                  preco: '100.00',
+              },
+          });
+    if (!data.pacoteId) pacoteIds.push(pacote.id);
 
     const pacoteCliente = await prisma.pacoteCliente.create({
         data: {
             clienteId: data.clienteId,
             pacoteId: pacote.id,
+            ...(data.renovadoDeId ? { renovadoDeId: data.renovadoDeId } : {}),
             dataInicio: data.dataInicio ?? dataLocalHaDias(30),
             status: data.status ?? StatusPacoteCliente.ATIVO,
             servicos: {
@@ -140,6 +147,13 @@ afterEach(async () => {
         });
     }
     if (pacoteClienteIds.length) {
+        await prisma.pacoteCliente.updateMany({
+            where: {
+                id: { in: pacoteClienteIds },
+                renovadoDeId: { not: null },
+            },
+            data: { renovadoDeId: null },
+        });
         await prisma.pacoteCliente.deleteMany({
             where: { id: { in: pacoteClienteIds } },
         });
@@ -191,6 +205,39 @@ describe('relatorio.repository.listarSaldoPacotes integração', () => {
         expect(itemDo(resultado, finalizado.id)).toBeUndefined();
         expect(itemDo(resultado, cancelado.id)).toBeUndefined();
         expect(resultado.totalAtivos).toBe(baseline.totalAtivos + 1);
+    });
+
+    it('retorna renovadoEm em São Paulo e null para ciclo não renovado', async () => {
+        const clienteRenovado = await criarCliente();
+        const clienteNormal = await criarCliente();
+        const servico = await criarServico();
+        const cicloAnterior = await criarPacoteCliente({
+            clienteId: clienteRenovado.id,
+            status: StatusPacoteCliente.FINALIZADO,
+            servicos: [{ servicoId: servico.id, total: 3, restante: 0 }],
+        });
+        const dataRenovacao = fromZonedTime('2080-10-10T23:30:00', TIME_ZONE);
+        const renovado = await criarPacoteCliente({
+            clienteId: clienteRenovado.id,
+            pacoteId: cicloAnterior.pacoteId,
+            renovadoDeId: cicloAnterior.id,
+            dataInicio: dataRenovacao,
+            servicos: [{ servicoId: servico.id, total: 3, restante: 3 }],
+        });
+        const normal = await criarPacoteCliente({
+            clienteId: clienteNormal.id,
+            dataInicio: dataRenovacao,
+            servicos: [{ servicoId: servico.id, total: 3, restante: 3 }],
+        });
+
+        const resultado = await consultar();
+
+        expect(itemDo(resultado, renovado.id)).toMatchObject({
+            renovadoEm: '2080-10-10',
+        });
+        expect(itemDo(resultado, normal.id)).toMatchObject({
+            renovadoEm: null,
+        });
     });
 
     it('agrega total, restante e agendados por serviço, sem contar cancelados ou concluídos', async () => {

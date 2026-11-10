@@ -26,8 +26,10 @@ vi.mock('../google-calendar/sync.service', () => googleSyncMock);
 
 vi.mock('../repositories/agendamento.repository', () => ({
     criar: vi.fn(),
+    criarNaTransacao: vi.fn(),
     criarComNumeroNoPacote: vi.fn(),
     criarComNumeroNoPacoteNaTransacao: vi.fn(),
+    reservarNumeroNoPacoteOportunistaNaTransacao: vi.fn(),
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
     buscarConflito: vi.fn(),
@@ -194,6 +196,7 @@ beforeEach(() => {
     vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
     vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
     vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+    vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'false');
     vi.clearAllMocks();
     googleSyncMock.state.idsEnfileirados.length = 0;
     notificationMock.enviarNotificacaoWhatsApp.mockResolvedValue(
@@ -1725,6 +1728,205 @@ describe('agendamento.service.atualizar', () => {
     });
 });
 
+describe('agendamento.service vínculo automático WhatsApp', () => {
+    const dadosGemini = {
+        clienteId: clienteBase.id,
+        servicoId: servicoBase.id,
+        dataHoraInicio: '2026-07-20T10:00:00-03:00',
+        origem: 'GEMINI' as const,
+    };
+
+    it('mantém Gemini avulso quando flag está desligada', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar(dadosGemini);
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledOnce();
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+
+    it('vincula serviço elegível e retorna número/total do saldo do ciclo', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeTotal: 3,
+                    quantidadeRestante: 2,
+                },
+            ],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+        ).mockResolvedValue(2);
+        vi.mocked(agendamentoRepository.criarNaTransacao).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 2,
+        });
+
+        const resultado =
+            await agendamentoService.criarComResultado(dadosGemini);
+
+        expect(resultado.pacote).toEqual({ numero: 2, total: 3 });
+        expect(resultado.agendamento).toMatchObject({
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 2,
+        });
+        expect(
+            vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(
+            vi.mocked(pacoteClienteRepository.buscarAtivoPorClienteId).mock
+                .invocationCallOrder[0]!,
+        );
+        expect(
+            vi.mocked(pacoteClienteRepository.buscarAtivoPorClienteId).mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(
+            vi.mocked(
+                agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+            ).mock.invocationCallOrder[0]!,
+        );
+        expect(
+            vi.mocked(
+                agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+            ).mock.invocationCallOrder[0],
+        ).toBeLessThan(
+            vi.mocked(agendamentoRepository.criarNaTransacao).mock
+                .invocationCallOrder[0]!,
+        );
+    });
+
+    it.each([
+        {
+            motivo: 'SEM_CICLO',
+            pacoteCliente: null,
+            reservaOportunista: false,
+        },
+        {
+            motivo: 'SERVICO_FORA_DO_PACOTE',
+            pacoteCliente: { id: 'pc-1', servicos: [] },
+            reservaOportunista: false,
+        },
+        {
+            motivo: 'SEM_SALDO',
+            pacoteCliente: {
+                id: 'pc-1',
+                servicos: [
+                    {
+                        servicoId: servicoBase.id,
+                        quantidadeTotal: 2,
+                        quantidadeRestante: 0,
+                    },
+                ],
+            },
+            reservaOportunista: false,
+        },
+        {
+            motivo: 'SEM_NUMERO_LIVRE',
+            pacoteCliente: {
+                id: 'pc-1',
+                servicos: [
+                    {
+                        servicoId: servicoBase.id,
+                        quantidadeTotal: 1,
+                        quantidadeRestante: 1,
+                    },
+                ],
+            },
+            reservaOportunista: true,
+        },
+    ])('faz fallback avulso por $motivo', async (caso) => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue(caso.pacoteCliente as never);
+        vi.mocked(
+            agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+        ).mockResolvedValue(null);
+        vi.mocked(agendamentoRepository.criarNaTransacao).mockResolvedValue(
+            agendamentoAtual,
+        );
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        const resultado =
+            await agendamentoService.criarComResultado(dadosGemini);
+
+        expect(resultado.pacote).toBeUndefined();
+        expect(agendamentoRepository.criarNaTransacao).toHaveBeenCalledOnce();
+        expect(
+            vi.mocked(agendamentoRepository.criarNaTransacao).mock
+                .calls[0]?.[1],
+        ).toMatchObject({
+            pacoteClienteId: null,
+            numeroNoPacote: null,
+        });
+        expect(
+            agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+        ).toHaveBeenCalledTimes(caso.reservaOportunista ? 1 : 0);
+        expect(log).toHaveBeenCalledWith(
+            JSON.stringify({
+                evento: 'vinculo_automatico_whatsapp_fallback',
+                motivo: caso.motivo,
+            }),
+        );
+        expect(String(log.mock.calls[0]?.[0])).not.toContain(clienteBase.id);
+        log.mockRestore();
+    });
+
+    it('não transforma conflito do INSERT em fallback avulso', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue({
+            id: 'pc-1',
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeTotal: 1,
+                    quantidadeRestante: 1,
+                },
+            ],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+        ).mockResolvedValue(1);
+        vi.mocked(agendamentoRepository.criarNaTransacao).mockRejectedValue(
+            new AppError('Já existe um agendamento nesse horário.', 409),
+        );
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        await expect(
+            agendamentoService.criarComResultado(dadosGemini),
+        ).rejects.toMatchObject({ statusCode: 409 });
+
+        expect(agendamentoRepository.criarNaTransacao).toHaveBeenCalledOnce();
+        expect(log).not.toHaveBeenCalled();
+        log.mockRestore();
+    });
+
+    it('não vincula origem do painel mesmo com flag ligada', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            ...dadosGemini,
+            origem: 'PAINEL',
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenCalledOnce();
+        expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+    });
+});
+
 describe('agendamento.service.criar com pacoteClienteId', () => {
     it('rejeita quando pacoteCliente informado não existe', async () => {
         vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue(null);
@@ -2184,6 +2386,7 @@ describe('agendamento.service.concluir', () => {
                 id: 'pacote-cliente-1',
                 status: 'ATIVO',
             } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         const resultado = await agendamentoService.concluir('agendamento-1');
@@ -2244,6 +2447,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await agendamentoService.concluir('agendamento-1');
@@ -2284,6 +2488,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
         vi.mocked(agendamentoRepository.concluirComPacote)
             .mockResolvedValueOnce(resultadoRepository('agendamento-1'))
@@ -2325,6 +2530,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
         vi.mocked(enfileirarSincronizacao).mockRejectedValueOnce(
             new Error('outbox unavailable'),
@@ -2353,6 +2559,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await agendamentoService.concluir('agendamento-1');
@@ -2380,6 +2587,7 @@ describe('agendamento.service.concluir', () => {
                 concluido: true,
             },
             pacoteCliente: { id: 'pacote-cliente-1', status: 'ATIVO' } as never,
+            renovacao: { criada: false, motivo: 'SALDO_RESTANTE' },
         });
 
         await expect(

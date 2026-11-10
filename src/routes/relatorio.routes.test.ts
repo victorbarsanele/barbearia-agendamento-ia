@@ -114,6 +114,7 @@ describe('GET /relatorios/atendimentos', () => {
                     telefone: '+55 (11) 99999-9999',
                     pacoteNome: 'Pacote mensal',
                     dataInicio: '2026-10-01',
+                    renovadoEm: '2026-10-01',
                     ultimaVisita: null,
                     semVisita: true,
                     diasSemVir: 10,
@@ -338,6 +339,7 @@ describe('GET /relatorios/atendimentos', () => {
             itens: [
                 {
                     telefone: '+55 (11) 99999-9999',
+                    renovadoEm: '2026-10-01',
                     ultimaVisita: null,
                     semVisita: true,
                     servicos: [{ total: 3, restante: 2, agendados: 1 }],

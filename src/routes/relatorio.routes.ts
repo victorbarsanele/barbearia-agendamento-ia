@@ -217,6 +217,7 @@ const respostaSaldoPacotesSchema = {
                     'telefone',
                     'pacoteNome',
                     'dataInicio',
+                    'renovadoEm',
                     'ultimaVisita',
                     'semVisita',
                     'diasSemVir',
@@ -234,6 +235,12 @@ const respostaSaldoPacotesSchema = {
                     telefone: { type: 'string' },
                     pacoteNome: { type: 'string' },
                     dataInicio: { type: 'string', format: 'date' },
+                    renovadoEm: {
+                        anyOf: [
+                            { type: 'string', format: 'date' },
+                            { type: 'null' },
+                        ],
+                    },
                     ultimaVisita: {
                         anyOf: [
                             { type: 'string', format: 'date' },

@@ -448,6 +448,7 @@ describe('relatorio.service.buscarSaldoPacotes', () => {
                     telefone: '5511999999999',
                     pacoteNome: 'Pacote',
                     dataInicio: '2026-10-01',
+                    renovadoEm: null,
                     ultimaVisita: null,
                     semVisita: true,
                     diasSemVir: 10,

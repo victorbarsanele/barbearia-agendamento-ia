@@ -52,6 +52,7 @@ vi.mock('../repositories/configuracaoAgenda.repository', () => ({
 vi.mock('./agendamento.service', () => ({
     TIME_ZONE: 'America/Sao_Paulo',
     criar: vi.fn(),
+    criarComResultado: vi.fn(),
     validarDisponibilidade: vi.fn(),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
@@ -196,6 +197,7 @@ beforeEach(() => {
     vi.setSystemTime(new Date('2026-07-21T12:00:00Z'));
     vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '60');
     vi.stubEnv('OFERTA_FOLGA_MINUTOS', '0');
+    vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'false');
     vi.clearAllMocks();
     vi.mocked(clienteRepository.buscarPorTelefone).mockResolvedValue(
         clienteBase,
@@ -328,6 +330,32 @@ describe('gemini.service confirmação explícita de novo agendamento', () => {
         expect(
             vi.mocked(agendamentoService.criar).mock.calls[0]?.[0],
         ).toMatchObject({ origem: 'GEMINI' });
+    });
+
+    it('retorna número e total do pacote na confirmação por atalho', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(agendamentoService.criarComResultado).mockResolvedValue({
+            agendamento: agendamentoAtivoProximo,
+            pacote: { numero: 2, total: 5 },
+        });
+        await __testables.prepararAgendamentoTool(
+            phone,
+            'message-shortcut-draft',
+            messageBase,
+            ['João Silva'],
+        );
+
+        const confirmado = await __testables.confirmarAgendamentoTool(
+            phone,
+            'message-shortcut-confirm',
+            'atalho',
+        );
+
+        expect(confirmado).toMatchObject({
+            sucesso: true,
+            pacote: { numero: 2, total: 5 },
+        });
+        expect(agendamentoService.criarComResultado).toHaveBeenCalledOnce();
     });
 
     it('usa telefone da sessão por padrão e valida telefone informado', async () => {
