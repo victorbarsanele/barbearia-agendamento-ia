@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
+import * as pacoteRepository from './pacote.repository';
 
 type AgendamentoBase = Prisma.AgendamentoGetPayload<{
     include: {
@@ -796,6 +797,33 @@ export async function concluirComPacote(
         });
         if (servicos.length === 0) {
             return registrarRenovacaoIgnorada('CICLO_SEM_SERVICOS');
+        }
+
+        const renovacaoExistente = await tx.pacoteCliente.findUnique({
+            where: { renovadoDeId: pacoteClienteId },
+            select: { id: true },
+        });
+        if (renovacaoExistente) {
+            return registrarRenovacaoIgnorada('JA_RENOVADO');
+        }
+
+        const pacote = await pacoteRepository.bloquearParaCriacaoNaTransacao(
+            tx,
+            cicloAnterior.pacoteId,
+        );
+        if (!pacote) {
+            throw new AppError('Pacote não encontrado durante renovação.', 500);
+        }
+        if (pacote.arquivadoEm !== null) {
+            console.info(
+                JSON.stringify({
+                    evento: 'renovacao_ignorada_pacote_arquivado',
+                    pacoteId: cicloAnterior.pacoteId,
+                    pacoteClienteId,
+                    quantidadeServicos: servicos.length,
+                }),
+            );
+            return { criada: false, motivo: 'PACOTE_ARQUIVADO' };
         }
 
         // skipDuplicates uses ON CONFLICT, keeping PostgreSQL transaction usable.

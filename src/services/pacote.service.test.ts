@@ -6,8 +6,10 @@ vi.mock('../repositories/pacote.repository', () => ({
     buscarPorId: vi.fn(),
     atualizar: vi.fn(),
     listarLiberadosParaGemini: vi.fn(),
+    bloquearParaCriacaoNaTransacao: vi.fn(),
+    arquivarPorId: vi.fn(),
+    desarquivarPorId: vi.fn(),
     excluirPorId: vi.fn(),
-    contarClientesVinculados: vi.fn(),
 }));
 
 vi.mock('../repositories/pacoteCliente.repository', () => ({
@@ -77,8 +79,19 @@ beforeEach(() => {
     vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
         true,
     );
+    vi.mocked(
+        pacoteRepository.bloquearParaCriacaoNaTransacao,
+    ).mockResolvedValue({ id: pacoteBase.id, arquivadoEm: null });
     vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
-        (operation) => operation({} as never),
+        (operation) =>
+            operation({
+                pacote: {
+                    findUnique: vi.fn().mockResolvedValue({
+                        ...pacoteBase,
+                        arquivadoEm: null,
+                    }),
+                },
+            } as never),
     );
 });
 
@@ -214,6 +227,26 @@ describe('pacote.service.vincularCliente', () => {
         },
     );
 
+    it('rejeita vínculo manual de pacote arquivado', async () => {
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockResolvedValue({
+            id: pacoteBase.id,
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
+        });
+
+        await expect(
+            pacoteService.vincularCliente({
+                clienteId: clienteBase.id,
+                pacoteId: pacoteBase.id,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'PACOTE_ARQUIVADO' },
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
     it('edita usosAnteriores pelo repository e retorna pacote atualizado', async () => {
         vi.mocked(
             agendamentoRepository.atualizarUsosAnteriores,
@@ -238,7 +271,9 @@ describe('pacote.service.vincularCliente', () => {
     });
 
     it('rejeita quando cliente não existe', async () => {
-        vi.mocked(clienteRepository.buscarPorId).mockResolvedValue(null);
+        vi.mocked(
+            clienteRepository.bloquearParaCriacaoDePacote,
+        ).mockResolvedValue(false);
 
         await expect(
             pacoteService.vincularCliente({
@@ -254,38 +289,98 @@ describe('pacote.service.vincularCliente', () => {
 });
 
 describe('pacote.service.excluirPorId', () => {
-    it('rejeita exclusão de pacote com clientes vinculados', async () => {
-        vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
-            pacoteBase as never,
-        );
-        vi.mocked(pacoteRepository.contarClientesVinculados).mockResolvedValue(
-            2,
-        );
+    it('retorna código específico quando há ciclo ativo', async () => {
+        vi.mocked(pacoteRepository.excluirPorId).mockResolvedValue({
+            tipo: 'ciclo-ativo',
+            quantidade: 1,
+        });
 
         await expect(
             pacoteService.excluirPorId(pacoteBase.id),
         ).rejects.toMatchObject({
-            name: 'AppError',
-            message: 'Não é possível excluir pacote com clientes vinculados.',
             statusCode: 409,
+            details: { code: 'PACOTE_COM_CICLO_ATIVO' },
         });
-
-        expect(pacoteRepository.excluirPorId).not.toHaveBeenCalled();
-    });
-
-    it('exclui pacote sem clientes vinculados', async () => {
-        vi.mocked(pacoteRepository.buscarPorId).mockResolvedValue(
-            pacoteBase as never,
-        );
-        vi.mocked(pacoteRepository.contarClientesVinculados).mockResolvedValue(
-            0,
-        );
-
-        await pacoteService.excluirPorId(pacoteBase.id);
 
         expect(pacoteRepository.excluirPorId).toHaveBeenCalledWith(
             pacoteBase.id,
         );
+    });
+
+    it('retorna código específico quando há apenas histórico', async () => {
+        vi.mocked(pacoteRepository.excluirPorId).mockResolvedValue({
+            tipo: 'historico',
+            quantidade: 2,
+        });
+
+        await expect(
+            pacoteService.excluirPorId(pacoteBase.id),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'PACOTE_COM_HISTORICO' },
+        });
+    });
+
+    it('exclui pacote sem vínculos', async () => {
+        vi.mocked(pacoteRepository.excluirPorId).mockResolvedValue({
+            tipo: 'excluido',
+        });
+
+        await expect(
+            pacoteService.excluirPorId(pacoteBase.id),
+        ).resolves.toBeUndefined();
+    });
+});
+
+describe('pacote.service.listarTodos', () => {
+    it.each(['ativos', 'arquivados', 'todos'] as const)(
+        'encaminha situação %s ao repository',
+        async (situacao) => {
+            await pacoteService.listarTodos(situacao);
+            expect(pacoteRepository.listarTodos).toHaveBeenCalledWith(situacao);
+        },
+    );
+});
+
+describe('pacote.service arquivamento', () => {
+    it('retorna pacote atualizado ao arquivar e desarquivar', async () => {
+        vi.mocked(pacoteRepository.arquivarPorId).mockResolvedValue(
+            pacoteBase as never,
+        );
+        vi.mocked(pacoteRepository.desarquivarPorId).mockResolvedValue(
+            pacoteBase as never,
+        );
+
+        await expect(pacoteService.arquivarPorId(pacoteBase.id)).resolves.toBe(
+            pacoteBase,
+        );
+        await expect(
+            pacoteService.desarquivarPorId(pacoteBase.id),
+        ).resolves.toBe(pacoteBase);
+    });
+
+    it('retorna 404 ao arquivar pacote inexistente', async () => {
+        vi.mocked(pacoteRepository.arquivarPorId).mockResolvedValue(null);
+
+        await expect(
+            pacoteService.arquivarPorId('pacote-inexistente'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote não encontrado.',
+            statusCode: 404,
+        });
+    });
+
+    it('retorna 404 ao desarquivar pacote inexistente', async () => {
+        vi.mocked(pacoteRepository.desarquivarPorId).mockResolvedValue(null);
+
+        await expect(
+            pacoteService.desarquivarPorId('pacote-inexistente'),
+        ).rejects.toMatchObject({
+            name: 'AppError',
+            message: 'Pacote não encontrado.',
+            statusCode: 404,
+        });
     });
 });
 

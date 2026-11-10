@@ -17,6 +17,7 @@ import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
+import * as pacoteRepository from '../repositories/pacote.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import { enfileirarSincronizacao } from '../google-calendar/sync.service';
@@ -621,10 +622,37 @@ async function resolverPacoteDoCatalogoNaTransacao(
         };
     }
 
-    const pacote = await tx.pacote.findUnique({
-        where: { id: pacoteId },
-        include: { servicos: true },
-    });
+    let pacote: Prisma.PacoteGetPayload<{ include: { servicos: true } }> | null;
+    if (criarSeAusente) {
+        const pacoteBloqueado =
+            await pacoteRepository.bloquearParaCriacaoNaTransacao(tx, pacoteId);
+        if (!pacoteBloqueado) {
+            throw new AppError('Pacote não encontrado.', 404);
+        }
+        if (pacoteBloqueado.arquivadoEm !== null) {
+            throw new AppError(
+                'Pacote arquivado não pode gerar novo ciclo.',
+                409,
+                { code: 'PACOTE_ARQUIVADO' },
+            );
+        }
+        pacote = await tx.pacote.findUnique({
+            where: { id: pacoteId },
+            include: { servicos: true },
+        });
+    } else {
+        pacote = await tx.pacote.findUnique({
+            where: { id: pacoteId },
+            include: { servicos: true },
+        });
+        if (pacote && pacote.arquivadoEm !== null) {
+            throw new AppError(
+                'Pacote arquivado não pode gerar novo ciclo.',
+                409,
+                { code: 'PACOTE_ARQUIVADO' },
+            );
+        }
+    }
     if (!pacote) {
         throw new AppError('Pacote não encontrado.', 404);
     }

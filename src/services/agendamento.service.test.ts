@@ -64,6 +64,10 @@ vi.mock('../repositories/cliente.repository', () => ({
     bloquearParaCriacaoDePacote: vi.fn(),
 }));
 
+vi.mock('../repositories/pacote.repository', () => ({
+    bloquearParaCriacaoNaTransacao: vi.fn(),
+}));
+
 vi.mock('../repositories/servico.repository', () => ({
     buscarPorId: vi.fn(),
 }));
@@ -90,6 +94,7 @@ import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
+import * as pacoteRepository from '../repositories/pacote.repository';
 import * as servicoRepository from '../repositories/servico.repository';
 import * as pacoteClienteRepository from '../repositories/pacoteCliente.repository';
 import * as horarioFuncionamentoRepository from '../repositories/horarioFuncionamento.repository';
@@ -211,6 +216,9 @@ beforeEach(() => {
     vi.mocked(clienteRepository.bloquearParaCriacaoDePacote).mockResolvedValue(
         true,
     );
+    vi.mocked(
+        pacoteRepository.bloquearParaCriacaoNaTransacao,
+    ).mockResolvedValue({ id: 'pacote-1', arquivadoEm: null });
     vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
         (operation) => operation(transacaoMock as never),
     );
@@ -1803,6 +1811,46 @@ describe('agendamento.service vínculo automático WhatsApp', () => {
         );
     });
 
+    it('vincula ciclo ativo de pacote arquivado sem checar catálogo', async () => {
+        vi.stubEnv('VINCULO_AUTOMATICO_WHATSAPP_ENABLED', 'true');
+        vi.mocked(
+            pacoteClienteRepository.buscarAtivoPorClienteId,
+        ).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            pacoteId: 'pacote-1',
+            status: 'ATIVO',
+            pacote: { arquivadoEm: new Date('2026-07-01T00:00:00Z') },
+            servicos: [
+                {
+                    servicoId: servicoBase.id,
+                    quantidadeTotal: 3,
+                    quantidadeRestante: 2,
+                },
+            ],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.reservarNumeroNoPacoteOportunistaNaTransacao,
+        ).mockResolvedValue(2);
+        vi.mocked(agendamentoRepository.criarNaTransacao).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 2,
+        });
+
+        const resultado =
+            await agendamentoService.criarComResultado(dadosGemini);
+
+        expect(resultado.pacote).toEqual({ numero: 2, total: 3 });
+        expect(resultado.agendamento).toMatchObject({
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 2,
+        });
+        expect(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).not.toHaveBeenCalled();
+        expect(transacaoMock.pacote.findUnique).not.toHaveBeenCalled();
+    });
+
     it.each([
         {
             motivo: 'SEM_CICLO',
@@ -2095,6 +2143,7 @@ describe('agendamento.service.criar com pacoteId', () => {
         );
         transacaoMock.pacote.findUnique.mockResolvedValue({
             id: 'pacote-1',
+            arquivadoEm: null,
             servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
         });
         vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
@@ -2159,6 +2208,7 @@ describe('agendamento.service.criar com pacoteId', () => {
             pacoteId: 'pacote-1',
             status: 'ATIVO',
             pacote: {
+                arquivadoEm: new Date('2026-07-01T00:00:00Z'),
                 servicos: [
                     {
                         servicoId: servicoBase.id,
@@ -2189,6 +2239,9 @@ describe('agendamento.service.criar com pacoteId', () => {
         });
 
         expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).not.toHaveBeenCalled();
         expect(transacaoMock.pacote.findUnique).not.toHaveBeenCalled();
         expect(
             agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
@@ -2223,6 +2276,7 @@ describe('agendamento.service.criar com pacoteId', () => {
     it('rejeita serviço ausente do pacote', async () => {
         transacaoMock.pacote.findUnique.mockResolvedValue({
             id: 'pacote-1',
+            arquivadoEm: null,
             servicos: [],
         });
 
@@ -2240,6 +2294,7 @@ describe('agendamento.service.criar com pacoteId', () => {
     it('rejeita quantidade zero no serviço do catálogo', async () => {
         transacaoMock.pacote.findUnique.mockResolvedValue({
             id: 'pacote-1',
+            arquivadoEm: null,
             servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 0 }],
         });
 
@@ -2253,6 +2308,29 @@ describe('agendamento.service.criar com pacoteId', () => {
             }),
         ).rejects.toMatchObject({ statusCode: 400 });
 
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
+    it('rejeita pacote arquivado antes de criar novo ciclo', async () => {
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockResolvedValue({
+            id: 'pacote-1',
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
+        });
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'PACOTE_ARQUIVADO' },
+        });
         expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
     });
 
@@ -3055,6 +3133,33 @@ describe('agendamento.service.criarLote', () => {
 });
 
 describe('agendamento.service.simularLote', () => {
+    it('rejeita pacote arquivado sem ciclo ativo e sem persistir', async () => {
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            id: 'pacote-1',
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
+            servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
+        } as never);
+
+        await expect(
+            agendamentoService.simularLote({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                origem: 'PAINEL',
+                slots: [{ data: '2026-07-21', horario: '10:00' }],
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'PACOTE_ARQUIVADO' },
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(loteAgendamentoRepository.criar).not.toHaveBeenCalled();
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+        expect(
+            agendamentoRepository.criarComNumeroNoPacoteNaTransacao,
+        ).not.toHaveBeenCalled();
+    });
+
     it('usa o mínimo configurado ao simular lote', async () => {
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
 
@@ -3138,6 +3243,7 @@ describe('agendamento.service lote com pacoteId', () => {
         pacoteServicoId = servicoBase.id,
     ) => ({
         id: 'pacote-1',
+        arquivadoEm: null,
         servicos: [{ servicoId: pacoteServicoId, quantidadeTotal }],
     });
 
@@ -3146,6 +3252,7 @@ describe('agendamento.service lote com pacoteId', () => {
         pacoteId,
         status: 'ATIVO',
         pacote: {
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
             servicos: [{ servicoId: servicoBase.id, quantidadeTotal: 3 }],
         },
         servicos: [
@@ -3175,7 +3282,10 @@ describe('agendamento.service lote com pacoteId', () => {
             servicoComPreco as never,
         );
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', '15');
-        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo());
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            ...pacoteCatalogo(),
+            arquivadoEm: null,
+        } as never);
         vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
             id: 'pacote-cliente-novo',
         } as never);
@@ -3247,7 +3357,10 @@ describe('agendamento.service lote com pacoteId', () => {
     });
 
     it('transforma excesso da capacidade de catálogo em conflito na simulação', async () => {
-        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo(1));
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            ...pacoteCatalogo(1),
+            arquivadoEm: null,
+        } as never);
 
         const resultado = await agendamentoService.simularLote({
             ...payloadComCatalogo,
@@ -3269,7 +3382,10 @@ describe('agendamento.service lote com pacoteId', () => {
     });
 
     it('rejeita criação quando slots excedem capacidade restante', async () => {
-        transacaoMock.pacote.findUnique.mockResolvedValue(pacoteCatalogo(1));
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            ...pacoteCatalogo(1),
+            arquivadoEm: null,
+        } as never);
         vi.mocked(pacoteClienteRepository.criarNaTransacao).mockResolvedValue({
             id: 'pacote-cliente-novo',
         } as never);
@@ -3291,9 +3407,10 @@ describe('agendamento.service lote com pacoteId', () => {
     });
 
     it('rejeita serviço fora do pacote', async () => {
-        transacaoMock.pacote.findUnique.mockResolvedValue(
-            pacoteCatalogo(3, 'outro-servico'),
-        );
+        transacaoMock.pacote.findUnique.mockResolvedValue({
+            ...pacoteCatalogo(3, 'outro-servico'),
+            arquivadoEm: null,
+        } as never);
 
         await expect(
             agendamentoService.criarLote(payloadComCatalogo),
@@ -3302,6 +3419,24 @@ describe('agendamento.service lote com pacoteId', () => {
             message: 'Este serviço não está incluso no pacote selecionado.',
         });
         expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+    });
+
+    it('rejeita lote de catálogo arquivado sem criar ciclo', async () => {
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockResolvedValue({
+            id: 'pacote-1',
+            arquivadoEm: new Date('2026-07-01T00:00:00Z'),
+        });
+
+        await expect(
+            agendamentoService.criarLote(payloadComCatalogo),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'PACOTE_ARQUIVADO' },
+        });
+        expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(loteAgendamentoRepository.criar).not.toHaveBeenCalled();
     });
 
     it('rejeita pacote ativo divergente', async () => {
@@ -3339,6 +3474,9 @@ describe('agendamento.service lote com pacoteId', () => {
             falhados: [],
         });
         expect(pacoteClienteRepository.criarNaTransacao).not.toHaveBeenCalled();
+        expect(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).not.toHaveBeenCalled();
         expect(loteAgendamentoRepository.criar).toHaveBeenCalledWith(
             expect.objectContaining({ pacoteClienteId: 'pacote-cliente-1' }),
             transacaoMock,

@@ -24,6 +24,12 @@ export interface CriarPacoteClienteData {
     dataInicio: Date;
 }
 
+/*
+ * `criarNaTransacao` caller must lock Pacote FOR SHARE and reject `arquivadoEm`
+ * in the same transaction. Sales/lots and manual link do so before calling it;
+ * renewal checks before direct `createMany` in agendamento.repository.ts.
+ * `criar` starts its own transaction and has no current production caller.
+ */
 export async function criarNaTransacao(
     tx: Prisma.TransactionClient,
     data: CriarPacoteClienteData,
