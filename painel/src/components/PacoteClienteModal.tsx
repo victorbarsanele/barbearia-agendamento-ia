@@ -12,6 +12,7 @@ import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
 import { ConfirmDialog } from './ConfirmDialog';
 import { formatPrecoNumberToInputBR } from '../utils/preco';
+import { formatarLinhaRenovacao } from '../utils/renovacaoPacote';
 import {
     montarPayloadUsosAnteriores,
     rotuloPrimeiroNumero,
@@ -31,14 +32,6 @@ function formatarDataEmBrasilia(isoDate: string): string {
         month: '2-digit',
         year: 'numeric',
     }).format(new Date(isoDate));
-}
-
-function calcularValidoAte(dataInicio: string, duracaoDias: number): string {
-    const inicio = new Date(dataInicio);
-    const validoAte = new Date(
-        inicio.getTime() + duracaoDias * 24 * 60 * 60 * 1000,
-    );
-    return formatarDataEmBrasilia(validoAte.toISOString());
 }
 
 interface LinhaUsoAnterior {
@@ -505,13 +498,13 @@ export function PacoteClienteModal({
                                 Início:{' '}
                                 {formatarDataEmBrasilia(pacoteAtivo.dataInicio)}
                             </p>
-                            <p className="text-sm text-[var(--color-text-secondary)]">
-                                Válido até (referência):{' '}
-                                {calcularValidoAte(
-                                    pacoteAtivo.dataInicio,
-                                    pacoteAtivo.pacote.duracaoDias,
-                                )}
-                            </p>
+                            {pacoteAtivo.renovadoEm !== null && (
+                                <p className="text-sm text-[var(--color-text-secondary)]">
+                                    {formatarLinhaRenovacao(
+                                        pacoteAtivo.renovadoEm,
+                                    )}
+                                </p>
+                            )}
 
                             <Button
                                 type="button"

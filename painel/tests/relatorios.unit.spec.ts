@@ -31,6 +31,10 @@ import {
     obterSituacaoPacote,
     validarDiasParado,
 } from '../src/utils/saldoPacotes.js';
+import {
+    formatarLinhaRenovacao,
+    obterRotuloSeloRenovacao,
+} from '../src/utils/renovacaoPacote.js';
 
 const clienteInativo: ItemClienteInativo = {
     clienteId: 'cliente-1',
@@ -54,6 +58,7 @@ const pacoteBase: ItemSaldoPacote = {
     telefone: '+55 (11) 99999-9999',
     pacoteNome: 'Pacote mensal',
     dataInicio: '2026-01-02',
+    renovadoEm: null,
     ultimaVisita: '2026-02-01',
     semVisita: false,
     diasSemVir: 40,
@@ -243,6 +248,20 @@ test.describe('helpers de relatórios', () => {
         expect(formatarDataRelatorio('data desconhecida')).toBe(
             'data desconhecida',
         );
+    });
+
+    test('formata linha de renovação com data calendário e omite null', () => {
+        expect(formatarLinhaRenovacao('2026-03-02')).toBe(
+            'Renovado automaticamente em 02/03/2026',
+        );
+        expect(formatarLinhaRenovacao(null)).toBeNull();
+    });
+
+    test('rotula selo apenas quando houver renovação', () => {
+        expect(obterRotuloSeloRenovacao('2026-03-02')).toBe(
+            'Renovado automaticamente',
+        );
+        expect(obterRotuloSeloRenovacao(null)).toBeNull();
     });
 
     test('calcula mês atual usando dia local de São Paulo, não dia UTC', () => {

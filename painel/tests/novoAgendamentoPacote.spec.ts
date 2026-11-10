@@ -81,6 +81,7 @@ function makeActivePackage(
         clienteId,
         pacoteId: pacote.id,
         dataInicio: '2026-01-01T12:00:00.000Z',
+        renovadoEm: null,
         status: 'ATIVO',
         createdAt: '2026-01-01T12:00:00.000Z',
         pacote,

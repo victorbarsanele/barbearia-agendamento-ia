@@ -6,6 +6,7 @@ export interface PacoteClienteAtivo {
     clienteId: string;
     pacoteId: string;
     dataInicio: string;
+    renovadoEm: string | null;
     status: 'ATIVO' | 'FINALIZADO' | 'CANCELADO';
     createdAt: string;
     pacote: Pacote;

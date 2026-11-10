@@ -123,6 +123,7 @@ export interface ItemSaldoPacote {
     telefone: string;
     pacoteNome: string;
     dataInicio: string;
+    renovadoEm: string | null;
     ultimaVisita: string | null;
     semVisita: boolean;
     diasSemVir: number;
