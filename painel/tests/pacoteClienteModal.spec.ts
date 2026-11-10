@@ -6,14 +6,14 @@ const cliente = {
     telefone: '11999990001',
 };
 
-function pacoteAtivo(renovadoEm: string | null) {
+function pacoteAtivo(renovadoEm?: string | null) {
     return {
         id: 'ciclo-atual',
         clienteId: cliente.id,
         pacoteId: 'pacote-mensal',
         renovadoDeId: renovadoEm ? 'ciclo-anterior' : null,
         dataInicio: '2026-01-01T12:00:00.000Z',
-        renovadoEm,
+        ...(renovadoEm === undefined ? {} : { renovadoEm }),
         status: 'ATIVO',
         createdAt: '2026-01-01T12:00:00.000Z',
         pacote: {
@@ -31,8 +31,9 @@ function pacoteAtivo(renovadoEm: string | null) {
 
 async function abrirModalPacote(
     page: Page,
-    renovadoEm: string | null,
-): Promise<void> {
+    renovadoEm?: string | null,
+): Promise<string> {
+    const corpoPacote = JSON.stringify(pacoteAtivo(renovadoEm));
     await page.route('**/api/**', async (route: Route) => {
         const request = route.request();
         const url = new URL(request.url());
@@ -66,7 +67,8 @@ async function abrirModalPacote(
         ) {
             await route.fulfill({
                 status: 200,
-                json: pacoteAtivo(renovadoEm),
+                contentType: 'application/json',
+                body: corpoPacote,
             });
         } else {
             await route.fulfill({
@@ -80,6 +82,7 @@ async function abrirModalPacote(
     await page
         .getByRole('button', { name: 'Gerenciar pacote do cliente' })
         .click();
+    return corpoPacote;
 }
 
 test('modal mostra data da renovação e remove validade de referência', async ({
@@ -96,14 +99,36 @@ test('modal mostra data da renovação e remove validade de referência', async 
     );
 });
 
-test('modal sem renovação não mostra linha de renovação nem validade', async ({
+test('modal sem campo renovadoEm não mostra linha nem texto undefined', async ({
+    page,
+}) => {
+    const corpoPacote = await abrirModalPacote(page);
+    expect(JSON.parse(corpoPacote)).not.toHaveProperty('renovadoEm');
+    const modal = page.getByRole('dialog', { name: 'Pacote de Ana Souza' });
+
+    await expect(modal.getByText(/Renovado automaticamente em/)).toHaveCount(0);
+    await expect(modal.getByText('undefined', { exact: true })).toHaveCount(0);
+    await expect(modal.getByText('Válido até', { exact: false })).toHaveCount(
+        0,
+    );
+});
+
+test('modal com renovadoEm null não mostra linha de renovação', async ({
     page,
 }) => {
     await abrirModalPacote(page, null);
     const modal = page.getByRole('dialog', { name: 'Pacote de Ana Souza' });
 
     await expect(modal.getByText(/Renovado automaticamente em/)).toHaveCount(0);
-    await expect(modal.getByText('Válido até', { exact: false })).toHaveCount(
-        0,
-    );
+    await expect(modal.getByText('undefined', { exact: true })).toHaveCount(0);
+});
+
+test('modal com renovadoEm vazio não mostra linha nem texto undefined', async ({
+    page,
+}) => {
+    await abrirModalPacote(page, '');
+    const modal = page.getByRole('dialog', { name: 'Pacote de Ana Souza' });
+
+    await expect(modal.getByText(/Renovado automaticamente em/)).toHaveCount(0);
+    await expect(modal.getByText('undefined', { exact: true })).toHaveCount(0);
 });

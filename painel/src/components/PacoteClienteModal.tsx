@@ -498,7 +498,7 @@ export function PacoteClienteModal({
                                 Início:{' '}
                                 {formatarDataEmBrasilia(pacoteAtivo.dataInicio)}
                             </p>
-                            {pacoteAtivo.renovadoEm !== null && (
+                            {Boolean(pacoteAtivo.renovadoEm) && (
                                 <p className="text-sm text-[var(--color-text-secondary)]">
                                     {formatarLinhaRenovacao(
                                         pacoteAtivo.renovadoEm,

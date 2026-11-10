@@ -1,14 +1,14 @@
 import { formatarDataRelatorio } from './relatorios.js';
 
 export function formatarLinhaRenovacao(
-    renovadoEm: string | null,
+    renovadoEm: string | null | undefined,
 ): string | null {
-    if (renovadoEm === null) return null;
+    if (!renovadoEm) return null;
     return `Renovado automaticamente em ${formatarDataRelatorio(renovadoEm)}`;
 }
 
 export function obterRotuloSeloRenovacao(
-    renovadoEm: string | null,
+    renovadoEm: string | null | undefined,
 ): string | null {
-    return renovadoEm === null ? null : 'Renovado automaticamente';
+    return renovadoEm ? 'Renovado automaticamente' : null;
 }

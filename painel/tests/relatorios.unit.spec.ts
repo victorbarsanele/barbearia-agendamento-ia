@@ -255,6 +255,8 @@ test.describe('helpers de relatórios', () => {
             'Renovado automaticamente em 02/03/2026',
         );
         expect(formatarLinhaRenovacao(null)).toBeNull();
+        expect(formatarLinhaRenovacao(undefined)).toBeNull();
+        expect(formatarLinhaRenovacao('')).toBeNull();
     });
 
     test('rotula selo apenas quando houver renovação', () => {
@@ -262,6 +264,8 @@ test.describe('helpers de relatórios', () => {
             'Renovado automaticamente',
         );
         expect(obterRotuloSeloRenovacao(null)).toBeNull();
+        expect(obterRotuloSeloRenovacao(undefined)).toBeNull();
+        expect(obterRotuloSeloRenovacao('')).toBeNull();
     });
 
     test('calcula mês atual usando dia local de São Paulo, não dia UTC', () => {

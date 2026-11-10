@@ -119,6 +119,24 @@ function relatorioComRenovacao(): RelatorioSaldoPacotes {
     });
 }
 
+function relatorioComRenovacaoAusenteEVazia(): RelatorioSaldoPacotes {
+    const itens = itensPadrao.map((item) => ({ ...item }));
+    const itemSemCampo = itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    const itemComCampoVazio = itens.find(
+        (item) => item.pacoteClienteId === 'pc-bruno',
+    );
+
+    if (!itemSemCampo || !itemComCampoVazio) {
+        throw new Error('Itens de teste de renovação não encontrados.');
+    }
+
+    Reflect.deleteProperty(itemSemCampo, 'renovadoEm');
+    itemComCampoVazio.renovadoEm = '';
+    return relatorioPadrao({ itens });
+}
+
 async function interceptarApi(
     page: Page,
     responder: (url: URL, chamada: number) => Promise<RespostaMock>,
@@ -726,6 +744,34 @@ test('desktop mostra selo apenas em ciclo renovado', async ({ page }) => {
     ).toHaveCount(0);
 });
 
+test('desktop omite selo com renovadoEm ausente, null ou vazio', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const body = relatorioComRenovacaoAusenteEVazia();
+    const itemSemCampo = body.itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    expect(itemSemCampo).not.toHaveProperty('renovadoEm');
+    expect(
+        JSON.parse(JSON.stringify(body)).itens.find(
+            (item: ItemSaldoPacote) => item.pacoteClienteId === 'pc-ana',
+        ),
+    ).not.toHaveProperty('renovadoEm');
+    await interceptarApi(page, async () => ({ status: 200, body }));
+    await abrirPacotes(page);
+
+    const tabela = page.getByRole('table');
+    for (const nome of ['Ana Silva', 'Bruno Lima', 'Pacote inicial']) {
+        await expect(
+            tabela
+                .getByRole('row')
+                .filter({ hasText: nome })
+                .getByText('Renovado automaticamente', { exact: true }),
+        ).toHaveCount(0);
+    }
+});
+
 test('mobile 375px mostra selo só para renovado sem overflow horizontal', async ({
     page,
 }) => {
@@ -757,6 +803,33 @@ test('mobile 375px mostra selo só para renovado sem overflow horizontal', async
         documento: document.documentElement.scrollWidth,
     }));
     expect(larguras.documento).toBeLessThanOrEqual(larguras.viewport);
+});
+
+test('mobile 375px omite selo com renovadoEm ausente, null ou vazio', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const body = relatorioComRenovacaoAusenteEVazia();
+    const itemSemCampo = body.itens.find(
+        (item) => item.pacoteClienteId === 'pc-ana',
+    );
+    expect(itemSemCampo).not.toHaveProperty('renovadoEm');
+    expect(
+        JSON.parse(JSON.stringify(body)).itens.find(
+            (item: ItemSaldoPacote) => item.pacoteClienteId === 'pc-ana',
+        ),
+    ).not.toHaveProperty('renovadoEm');
+    await interceptarApi(page, async () => ({ status: 200, body }));
+    await abrirPacotes(page);
+
+    const cards = page.getByTestId('saldo-pacote-card');
+    for (const nome of ['Ana Silva', 'Bruno Lima', 'Pacote inicial']) {
+        await expect(
+            cards
+                .filter({ hasText: nome })
+                .getByText('Renovado automaticamente', { exact: true }),
+        ).toHaveCount(0);
+    }
 });
 
 test('CSV baixa com nome local, BOM, cabeçalho, telefone e saldos', async ({
