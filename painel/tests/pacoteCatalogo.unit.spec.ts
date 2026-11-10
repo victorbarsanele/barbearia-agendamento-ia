@@ -8,10 +8,12 @@ import type { Pacote } from '../src/services/pacotes.service.js';
 import type { Servico } from '../src/services/servicos.service.js';
 import {
     filtrarServicosPorPacoteCatalogo,
+    filtrarPacotesCatalogoPorServico,
     calcularLimiteSlotsPacoteCatalogo,
     formatarLinhaPrecoPacote,
     montarPayloadAgendamento,
     montarPayloadLote,
+    resolverPacoteCatalogoAposTrocaServico,
     resolverServicoAposTrocaCliente,
     resolverServicoAposTrocaPacote,
     traduzirMotivoConflitoLote,
@@ -64,6 +66,42 @@ test('filtra serviços pelo pacote e mantém lista completa sem pacote', () => {
         servicos[0],
     ]);
     expect(filtrarServicosPorPacoteCatalogo(servicos, null)).toEqual(servicos);
+});
+
+test('filtra catálogo por serviço e exclui pacotes arquivados', () => {
+    const pacoteBarba: Pacote = {
+        ...pacote,
+        id: 'pacote-barba',
+        servicos: [
+            {
+                ...pacote.servicos[0],
+                pacoteId: 'pacote-barba',
+                servicoId: 'barba',
+            },
+        ],
+    };
+    const pacoteArquivado: Pacote = {
+        ...pacote,
+        id: 'pacote-arquivado',
+        arquivadoEm: '2026-10-10T12:00:00.000Z',
+    };
+
+    expect(
+        filtrarPacotesCatalogoPorServico(
+            [pacote, pacoteBarba, pacoteArquivado],
+            'corte',
+        ),
+    ).toEqual([pacote]);
+    expect(filtrarPacotesCatalogoPorServico([pacote, pacoteBarba], '')).toEqual(
+        [],
+    );
+});
+
+test('limpa pacote escolhido quando serviço deixa de ser elegível', () => {
+    expect(resolverPacoteCatalogoAposTrocaServico('pacote-1', [pacote])).toBe(
+        'pacote-1',
+    );
+    expect(resolverPacoteCatalogoAposTrocaServico('pacote-1', [])).toBe('');
 });
 
 test('preserva serviço compatível e limpa serviço incompatível ou cliente trocado', () => {

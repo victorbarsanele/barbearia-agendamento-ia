@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
     testDir: './tests',
     testMatch: [
+        '**/editarAgendamentoPacote.spec.ts',
         '**/novoAgendamentoPacote.spec.ts',
         '**/pacoteClienteModal.spec.ts',
         '**/overrideExpediente.spec.ts',
