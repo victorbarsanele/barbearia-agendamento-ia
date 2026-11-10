@@ -94,6 +94,7 @@ const PACOTES = [
 type MockResponse = { status: number; body: unknown };
 type MockOptions = {
     activeLookup?: (clienteId: string, attempt: number) => MockResponse;
+    catalogResponse?: (attempt: number) => MockResponse;
     simulationResponse?: (payload: Record<string, unknown>) => MockResponse;
     createResponse?: (payload: Record<string, unknown>) => MockResponse;
 };
@@ -187,7 +188,10 @@ async function mockApi(
         } else if (method === 'GET' && url.pathname === '/api/pacotes') {
             state.catalogRequests += 1;
             state.events.push('catalogo');
-            response = { status: 200, body: PACOTES };
+            response = options.catalogResponse?.(state.catalogRequests) ?? {
+                status: 200,
+                body: PACOTES,
+            };
         } else if (
             method === 'POST' &&
             url.pathname === '/api/agendamentos/lote/simular'
@@ -359,6 +363,82 @@ test('filtra serviço, mostra preço do pacote e omite preço avulso', async ({
     await expect(
         page.getByText(/R\$\s*65,00(?! · cobrado à parte)/),
     ).toHaveCount(0);
+});
+
+test('pacote arquivado invalida catálogo e simulação sem perder cliente ou datas', async ({
+    page,
+}) => {
+    const pacoteAlternativo = {
+        ...PACOTES[0],
+        id: 'pacote-corte-alternativo',
+        nome: 'Corte alternativo',
+    };
+    let tentativasCriacao = 0;
+    const api = await mockApi(page, {
+        catalogResponse: (attempt) => ({
+            status: 200,
+            body:
+                attempt === 1
+                    ? [PACOTES[0], pacoteAlternativo]
+                    : [pacoteAlternativo],
+        }),
+        createResponse: () => {
+            tentativasCriacao += 1;
+            return tentativasCriacao === 1
+                ? {
+                      status: 409,
+                      body: {
+                          message: 'Pacote arquivado.',
+                          code: 'PACOTE_ARQUIVADO',
+                      },
+                  }
+                : {
+                      status: 201,
+                      body: {
+                          loteId: 'lote-mock',
+                          criados: [],
+                          falhados: [],
+                      },
+                  };
+        },
+    });
+
+    await abrirLote(page);
+    const pacoteSelect = page.getByLabel('Pacote do catálogo (opcional)');
+    await pacoteSelect.selectOption('pacote-corte');
+    await page.getByLabel('Serviço').selectOption('servico-corte');
+    await avançarParaDatas(page);
+    await selecionarDias(page, [15]);
+    await simularEAvançar(page);
+    await confirmar(page);
+
+    await expect(
+        page.getByText(
+            'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote. Nada foi criado.',
+        ),
+    ).toBeVisible();
+    await expect.poll(() => api.catalogRequests).toBe(2);
+    await expect(pacoteSelect.locator('option')).toHaveCount(2);
+    await expect(page.getByLabel('Cliente')).toHaveValue('Ana Souza');
+    await expect(page.getByLabel('Serviço')).toHaveValue('servico-corte');
+
+    await pacoteSelect.selectOption('pacote-corte-alternativo');
+    await avançarParaDatas(page);
+    await simularEAvançar(page);
+    await confirmar(page);
+
+    expect(api.simulations).toHaveLength(2);
+    expect(api.simulations[1]).toMatchObject({
+        clienteId: 'cliente-ana',
+        servicoId: 'servico-corte',
+        pacoteId: 'pacote-corte-alternativo',
+        slots: api.simulations[0].slots,
+    });
+    expect(api.creates).toHaveLength(2);
+    expect(api.creates[1]).toHaveProperty(
+        'pacoteId',
+        'pacote-corte-alternativo',
+    );
 });
 
 test('pacote ativo com saldo mantém fluxo e oculta catálogo', async ({

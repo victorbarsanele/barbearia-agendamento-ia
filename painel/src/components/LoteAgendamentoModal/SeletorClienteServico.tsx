@@ -34,6 +34,7 @@ interface SeletorClienteServicoProps {
     aoMudarPacoteCatalogo?: (pacoteId: string) => void;
     aoSelecionarPacoteCatalogo?: (pacote: Pacote | null) => void;
     recarregarPacoteAtivo?: number;
+    recarregarCatalogo?: number;
 }
 
 type ResultadoPacoteAtivo =
@@ -63,6 +64,7 @@ export function SeletorClienteServico({
     aoMudarPacoteCatalogo,
     aoSelecionarPacoteCatalogo,
     recarregarPacoteAtivo,
+    recarregarCatalogo,
 }: SeletorClienteServicoProps) {
     const [queryCliente, setQueryCliente] = useState(
         clienteSelecionado?.nome ?? '',
@@ -75,6 +77,8 @@ export function SeletorClienteServico({
     const [resultadoCatalogo, setResultadoCatalogo] =
         useState<ResultadoCatalogo | null>(null);
     const [tentativaCatalogo, setTentativaCatalogo] = useState(0);
+    const tentativaCatalogoAtual =
+        tentativaCatalogo + (recarregarCatalogo ?? 0);
 
     useEffect(() => {
         listarServicos()
@@ -178,7 +182,7 @@ export function SeletorClienteServico({
                 if (ativo) {
                     setResultadoCatalogo({
                         clienteId,
-                        tentativa: tentativaCatalogo,
+                        tentativa: tentativaCatalogoAtual,
                         pacotes,
                     });
                 }
@@ -187,7 +191,7 @@ export function SeletorClienteServico({
                 if (ativo) {
                     setResultadoCatalogo({
                         clienteId,
-                        tentativa: tentativaCatalogo,
+                        tentativa: tentativaCatalogoAtual,
                         erro:
                             error instanceof Error
                                 ? error.message
@@ -203,13 +207,13 @@ export function SeletorClienteServico({
         clienteSelecionado?.id,
         modoCatalogoLote,
         resultadoAtivoAtual,
-        tentativaCatalogo,
+        tentativaCatalogoAtual,
     ]);
 
     const resultadoCatalogoAtual =
         resultadoCatalogo &&
         resultadoCatalogo?.clienteId === clienteSelecionado?.id &&
-        resultadoCatalogo.tentativa === tentativaCatalogo
+        resultadoCatalogo.tentativa === tentativaCatalogoAtual
             ? resultadoCatalogo
             : null;
     const pacotesCatalogo =

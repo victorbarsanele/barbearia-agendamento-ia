@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Cliente } from '../services/clientes.service';
+import { ApiError } from '../services/agendamentos.service.js';
 import { listarPacotes, type Pacote } from '../services/pacotes.service';
 import {
     atualizarUsosAnteriores,
@@ -258,7 +259,24 @@ export function PacoteClienteModal({
                 error instanceof Error
                     ? error.message
                     : 'Não foi possível vincular o pacote.';
-            setErro(message);
+            if (
+                error instanceof ApiError &&
+                error.status === 409 &&
+                error.body?.code === 'PACOTE_ARQUIVADO'
+            ) {
+                setErro(
+                    'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote.',
+                );
+                setPacoteSelecionadoId('');
+                setLinhasUsosAnteriores([]);
+                try {
+                    await carregarPacotesDisponiveis();
+                } catch {
+                    // preserva mensagem de arquivamento se recarga falhar
+                }
+            } else {
+                setErro(message);
+            }
 
             try {
                 const ativoAtual = await buscarPacoteAtivoDoCliente(cliente.id);
@@ -503,6 +521,12 @@ export function PacoteClienteModal({
                                     {formatarLinhaRenovacao(
                                         pacoteAtivo.renovadoEm,
                                     )}
+                                </p>
+                            )}
+                            {pacoteAtivo.pacote.arquivadoEm && (
+                                <p className="text-sm text-[var(--color-text-secondary)]">
+                                    Pacote arquivado: o ciclo segue até zerar,
+                                    sem renovação.
                                 </p>
                             )}
 

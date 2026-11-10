@@ -42,6 +42,7 @@ const pacote: Pacote = {
     preco: '120.00',
     liberadoParaGemini: false,
     createdAt: '2026-10-01T12:00:00.000Z',
+    arquivadoEm: null,
     servicos: [
         {
             pacoteId: 'pacote-1',
