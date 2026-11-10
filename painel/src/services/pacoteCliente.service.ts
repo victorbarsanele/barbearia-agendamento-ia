@@ -1,5 +1,6 @@
-import { apiFetch } from './api';
-import type { Pacote } from './pacotes.service';
+import { apiFetch } from './api.js';
+import { ApiError, type ApiErrorBody } from './agendamentos.service.js';
+import type { Pacote } from './pacotes.service.js';
 
 export interface PacoteClienteAtivo {
     id: string;
@@ -31,10 +32,18 @@ export interface VincularPacotePayload {
 
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-            message?: string;
-        } | null;
-        throw new Error(body?.message ?? 'Erro ao processar requisição.');
+        const body = (await response
+            .json()
+            .catch(() => null)) as ApiErrorBody | null;
+        if (!body) {
+            throw new Error('Erro ao processar requisição.');
+        }
+
+        throw new ApiError(
+            body.message ?? 'Erro ao processar requisição.',
+            response.status,
+            body,
+        );
     }
 
     return (await response.json()) as T;

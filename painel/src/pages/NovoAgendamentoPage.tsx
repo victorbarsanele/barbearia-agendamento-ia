@@ -671,6 +671,21 @@ export function NovoAgendamentoPage() {
             if (
                 error instanceof ApiError &&
                 error.status === 409 &&
+                error.body?.code === 'PACOTE_ARQUIVADO' &&
+                pacoteCatalogoSelecionado
+            ) {
+                setPacoteCatalogoId('');
+                setErro(
+                    'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote.',
+                );
+                setSucesso(null);
+                setTentativaCatalogo((atual) => atual + 1);
+                return;
+            }
+
+            if (
+                error instanceof ApiError &&
+                error.status === 409 &&
                 error.message === MENSAGEM_PACOTE_ATIVO_DIVERGENTE &&
                 pacoteCatalogoSelecionado
             ) {

@@ -60,6 +60,7 @@ const PACOTES = [
 type MockResponse = { status: number; body: unknown };
 type MockOptions = {
     activeLookup?: (clienteId: string, attempt: number) => MockResponse;
+    catalogResponse?: (attempt: number) => MockResponse;
     createResponse?: (attempt: number) => MockResponse;
 };
 
@@ -141,7 +142,10 @@ async function mockApi(
             };
         } else if (method === 'GET' && url.pathname === '/api/pacotes') {
             state.catalogRequests += 1;
-            response = { status: 200, body: PACOTES };
+            response = options.catalogResponse?.(state.catalogRequests) ?? {
+                status: 200,
+                body: PACOTES,
+            };
         } else if (method === 'POST' && url.pathname === '/api/agendamentos') {
             const payload = JSON.parse(request.postData() ?? '{}') as Record<
                 string,
@@ -259,6 +263,84 @@ test('catálogo filtra serviços, mostra valor e envia apenas pacoteId', async (
         pacoteId: 'pacote-corte',
     });
     expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
+});
+
+test('pacote arquivado recarrega catálogo e permite reenviar com outro pacote', async ({
+    page,
+}) => {
+    const pacoteAlternativo = {
+        ...PACOTES[0],
+        id: 'pacote-corte-alternativo',
+        nome: 'Corte alternativo',
+    };
+    const api = await mockApi(page, {
+        catalogResponse: (attempt) => ({
+            status: 200,
+            body:
+                attempt === 1
+                    ? [PACOTES[0], pacoteAlternativo]
+                    : [pacoteAlternativo],
+        }),
+        createResponse: (attempt) =>
+            attempt === 1
+                ? {
+                      status: 409,
+                      body: {
+                          message: 'Pacote arquivado.',
+                          code: 'PACOTE_ARQUIVADO',
+                      },
+                  }
+                : { status: 201, body: { id: 'agendamento-mock' } },
+    });
+
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    const catalogo = page.getByLabel('Pacote do catálogo (opcional)');
+    await catalogo.selectOption('pacote-corte');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    await expect(
+        page.getByText(
+            'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote.',
+        ),
+    ).toBeVisible();
+    await expect.poll(() => api.catalogRequests).toBe(2);
+    await expect(catalogo.locator('option')).toHaveCount(2);
+    await expect(catalogo).toHaveValue('');
+
+    await catalogo.selectOption('pacote-corte-alternativo');
+    await salvar(page);
+    await expect.poll(() => api.posts).toHaveLength(2);
+    expect(api.posts[1]).toMatchObject({
+        clienteId: 'cliente-ana',
+        servicoId: 'servico-corte',
+        pacoteId: 'pacote-corte-alternativo',
+        dataHoraInicio: api.posts[0].dataHoraInicio,
+    });
+});
+
+test('outro erro 409 mantém seleção e não recarrega catálogo', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        createResponse: () => ({
+            status: 409,
+            body: { message: 'Conflito diferente.', code: 'OUTRO_CONFLITO' },
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    const catalogo = page.getByLabel('Pacote do catálogo (opcional)');
+    await catalogo.selectOption('pacote-corte');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    await expect(page.getByText('Conflito diferente.')).toBeVisible();
+    await expect(catalogo).toHaveValue('pacote-corte');
+    expect(api.catalogRequests).toBe(1);
 });
 
 test('sem pacote mantém o payload avulso sem campos de pacote', async ({

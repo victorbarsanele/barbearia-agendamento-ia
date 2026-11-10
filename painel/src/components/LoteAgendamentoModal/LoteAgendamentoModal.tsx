@@ -37,6 +37,8 @@ interface CriacaoLoteResult {
 
 const MENSAGEM_PACOTE_ATIVO_DIVERGENTE =
     'Cliente já possui pacote ativo diferente do pacote selecionado.';
+const MENSAGEM_PACOTE_ARQUIVADO =
+    'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote. Nada foi criado.';
 
 interface LoteAgendamentoModalProps {
     aberto: boolean;
@@ -57,9 +59,11 @@ export function LoteAgendamentoModal({
     const [pacoteClienteId, setPacoteClienteId] = useState<string | undefined>(
         undefined,
     );
+    const [pacoteArquivado, setPacoteArquivado] = useState(false);
     const [pacoteCatalogoId, setPacoteCatalogoId] = useState('');
     const [pacoteCatalogo, setPacoteCatalogo] = useState<Pacote | null>(null);
     const [recarregarPacoteAtivo, setRecarregarPacoteAtivo] = useState(0);
+    const [recarregarCatalogo, setRecarregarCatalogo] = useState(0);
 
     const [slotsSelecionados, setSlotsSelecionados] = useState<SlotLote[]>([]);
     const [temRecorrencia, setTemRecorrencia] = useState(false);
@@ -109,6 +113,7 @@ export function LoteAgendamentoModal({
         setSimulacaoValida(false);
         setResultadoCriacao(null);
         setErro(null);
+        setPacoteArquivado(false);
     };
 
     const fechar = () => {
@@ -123,6 +128,7 @@ export function LoteAgendamentoModal({
     };
 
     const alterarSlots = (slots: SlotLote[]) => {
+        setPacoteArquivado(false);
         setSlotsSelecionados(slots);
         invalidarSimulacao();
     };
@@ -133,6 +139,7 @@ export function LoteAgendamentoModal({
             setServicoNome('');
             setPacoteClienteId(undefined);
             setPacoteCatalogoId('');
+            setPacoteArquivado(false);
             setPacoteCatalogo(null);
             invalidarSimulacao();
         }
@@ -147,6 +154,7 @@ export function LoteAgendamentoModal({
     };
 
     const alterarPacoteCatalogo = (id: string) => {
+        setPacoteArquivado(false);
         if (id !== pacoteCatalogoId) {
             invalidarSimulacao();
         }
@@ -285,6 +293,19 @@ export function LoteAgendamentoModal({
                 pacoteCatalogoId &&
                 error instanceof ApiError &&
                 error.status === 409 &&
+                error.body?.code === 'PACOTE_ARQUIVADO'
+            ) {
+                setPacoteCatalogoId('');
+                setPacoteCatalogo(null);
+                setConflitos([]);
+                setSimulacaoValida(false);
+                setEtapa('seletor');
+                setRecarregarCatalogo((atual) => atual + 1);
+                setPacoteArquivado(true);
+            } else if (
+                pacoteCatalogoId &&
+                error instanceof ApiError &&
+                error.status === 409 &&
                 error.message === MENSAGEM_PACOTE_ATIVO_DIVERGENTE
             ) {
                 setPacoteCatalogoId('');
@@ -352,6 +373,11 @@ export function LoteAgendamentoModal({
                 {erro && (
                     <p className="text-sm text-[var(--color-danger)]">{erro}</p>
                 )}
+                {pacoteArquivado && (
+                    <p className="text-sm text-[var(--color-danger)]">
+                        {MENSAGEM_PACOTE_ARQUIVADO}
+                    </p>
+                )}
 
                 {etapa === 'seletor' && (
                     <div className="space-y-4">
@@ -362,11 +388,13 @@ export function LoteAgendamentoModal({
                             modoCatalogoLote
                             pacoteCatalogoId={pacoteCatalogoId}
                             recarregarPacoteAtivo={recarregarPacoteAtivo}
+                            recarregarCatalogo={recarregarCatalogo}
                             aoMudarPacoteCatalogo={alterarPacoteCatalogo}
                             aoSelecionarPacoteCatalogo={setPacoteCatalogo}
                             onClienteChange={alterarCliente}
                             onServicoChange={alterarServico}
                             onPacoteClienteChange={(id) => {
+                                setPacoteArquivado(false);
                                 if (id !== pacoteClienteId) {
                                     invalidarSimulacao();
                                 }

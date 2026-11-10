@@ -55,11 +55,50 @@ const SERVICO_NOVO = {
     duracaoMinutos: 45,
     preco: '65.00',
 };
+const PACOTE_ATIVO_ARQUIVADO = {
+    id: 'pacote-cliente-ana',
+    clienteId: 'cliente-ana',
+    pacoteId: 'pacote-corte',
+    dataInicio: '2026-03-01T12:00:00.000Z',
+    renovadoEm: null,
+    status: 'ATIVO',
+    createdAt: '2026-03-01T12:00:00.000Z',
+    pacote: {
+        id: 'pacote-corte',
+        nome: 'Corte mensal arquivado',
+        duracaoDias: 30,
+        preco: '120.00',
+        liberadoParaGemini: false,
+        createdAt: '2026-01-01T12:00:00.000Z',
+        arquivadoEm: '2026-03-10T12:00:00.000Z',
+        servicos: [
+            {
+                pacoteId: 'pacote-corte',
+                servicoId: 'servico-corte',
+                quantidadeTotal: 4,
+                servico: AGENDAMENTO.servico,
+            },
+        ],
+    },
+    servicos: [
+        {
+            id: 'saldo-corte',
+            pacoteClienteId: 'pacote-cliente-ana',
+            servicoId: 'servico-corte',
+            quantidadeTotal: 4,
+            quantidadeRestante: 3,
+            usosAnteriores: 0,
+            servico: AGENDAMENTO.servico,
+        },
+    ],
+};
 
 async function mockEdicao(
     page: Page,
     dataHoraInicio = AGENDAMENTO.dataHoraInicio,
     exigirOverride = true,
+    pacoteAtivo: Record<string, unknown> | null = null,
+    vinculos: Record<string, unknown>[] = [],
 ): Promise<Record<string, unknown>[]> {
     const atualizacoes: Record<string, unknown>[] = [];
     const agendamento = { ...AGENDAMENTO, dataHoraInicio };
@@ -94,7 +133,21 @@ async function mockEdicao(
             request.method() === 'GET' &&
             url.pathname === '/api/pacotes/cliente/cliente-ana'
         ) {
-            response = { status: 200, body: null };
+            response = { status: 200, body: pacoteAtivo };
+        } else if (
+            request.method() === 'PATCH' &&
+            url.pathname === '/api/agendamentos/agendamento-edicao/pacote'
+        ) {
+            vinculos.push(
+                JSON.parse(request.postData() ?? '{}') as Record<
+                    string,
+                    unknown
+                >,
+            );
+            response = {
+                status: 200,
+                body: { ...agendamento, pacoteClienteId: 'pacote-cliente-ana' },
+            };
         } else if (
             request.method() === 'PUT' &&
             url.pathname === '/api/agendamentos/agendamento-edicao'
@@ -458,4 +511,22 @@ test('edição confirma expediente e repete PUT com override temporário', async
         ...atualizacoes[0],
         permitirForaDoExpediente: true,
     });
+});
+
+test('ciclo ativo de pacote arquivado pode ser vinculado ao agendamento', async ({
+    page,
+}) => {
+    const vinculos: Record<string, unknown>[] = [];
+    await mockEdicao(page, undefined, false, PACOTE_ATIVO_ARQUIVADO, vinculos);
+
+    await page.goto('/editar/agendamento-edicao');
+    await expect(
+        page.getByText('Pacote ativo do cliente', { exact: true }),
+    ).toBeVisible();
+    await page
+        .getByRole('button', { name: 'Vincular pacote a este agendamento' })
+        .click();
+
+    await expect.poll(() => vinculos).toHaveLength(1);
+    expect(vinculos[0]).toEqual({ pacoteClienteId: 'pacote-cliente-ana' });
 });

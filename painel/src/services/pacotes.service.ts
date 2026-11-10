@@ -1,4 +1,5 @@
 import { apiFetch } from './api.js';
+import { ApiError, type ApiErrorBody } from './agendamentos.service.js';
 import type { Servico } from './servicos.service.js';
 
 export interface PacoteServicoIncluso {
@@ -15,8 +16,11 @@ export interface Pacote {
     preco: string;
     liberadoParaGemini: boolean;
     createdAt: string;
+    arquivadoEm: string | null;
     servicos: PacoteServicoIncluso[];
 }
+
+export type PacoteCatalogo = Pacote & { ciclosAtivos: number };
 
 export interface PacotePayload {
     nome: string;
@@ -26,20 +30,52 @@ export interface PacotePayload {
     servicos: { servicoId: string; quantidade: number }[];
 }
 
+async function erroDaResposta(response: Response): Promise<Error> {
+    const body = (await response
+        .json()
+        .catch(() => null)) as ApiErrorBody | null;
+    if (!body) {
+        return new Error('Erro ao processar requisição.');
+    }
+
+    return new ApiError(
+        body.message ?? 'Erro ao processar requisição.',
+        response.status,
+        body,
+    );
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-            message?: string;
-        } | null;
-        throw new Error(body?.message ?? 'Erro ao processar requisição.');
+        throw await erroDaResposta(response);
     }
 
     return (await response.json()) as T;
 }
 
-export async function listarPacotes(): Promise<Pacote[]> {
-    const response = await apiFetch('/api/pacotes');
-    return handleResponse<Pacote[]>(response);
+export async function listarPacotes(
+    situacao: 'ativos' | 'arquivados' | 'todos' = 'ativos',
+): Promise<PacoteCatalogo[]> {
+    const query =
+        situacao === 'ativos'
+            ? ''
+            : `?${new URLSearchParams({ situacao }).toString()}`;
+    const response = await apiFetch(`/api/pacotes${query}`);
+    return handleResponse<PacoteCatalogo[]>(response);
+}
+
+export async function arquivarPacote(id: string): Promise<PacoteCatalogo> {
+    const response = await apiFetch(`/api/pacotes/${id}/arquivar`, {
+        method: 'POST',
+    });
+    return handleResponse<PacoteCatalogo>(response);
+}
+
+export async function desarquivarPacote(id: string): Promise<PacoteCatalogo> {
+    const response = await apiFetch(`/api/pacotes/${id}/desarquivar`, {
+        method: 'POST',
+    });
+    return handleResponse<PacoteCatalogo>(response);
 }
 
 export async function buscarPacotePorId(id: string): Promise<Pacote> {
@@ -80,9 +116,6 @@ export async function excluirPacote(id: string): Promise<void> {
     });
 
     if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-            message?: string;
-        } | null;
-        throw new Error(body?.message ?? 'Erro ao processar requisição.');
+        throw await erroDaResposta(response);
     }
 }

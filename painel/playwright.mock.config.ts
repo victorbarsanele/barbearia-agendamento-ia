@@ -4,6 +4,7 @@ export default defineConfig({
     testDir: './tests',
     testMatch: [
         '**/novoAgendamentoPacote.spec.ts',
+        '**/pacoteClienteModal.spec.ts',
         '**/overrideExpediente.spec.ts',
         '**/loteAgendamentoPacote.spec.ts',
         '**/numerosIgnorados.spec.ts',
@@ -11,6 +12,7 @@ export default defineConfig({
         '**/bottom-sheet.spec.ts',
         '**/relatorios.spec.ts',
         '**/saldoPacotes.spec.ts',
+        '**/pacotesGestao.spec.ts',
         '**/lembreteAgendamento.spec.ts',
         '**/origemAgendamento.spec.ts',
     ],
