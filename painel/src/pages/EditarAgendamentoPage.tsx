@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+    ApiError,
     atualizarAgendamento,
     buscarAgendamentoPorId,
     desvincularPacoteAgendamento,
@@ -9,6 +10,10 @@ import {
     type Agendamento,
     type AtualizarAgendamentoPayload,
 } from '../services/agendamentos.service';
+import {
+    listarPacotes,
+    type PacoteCatalogo,
+} from '../services/pacotes.service';
 import {
     buscarPacoteAtivoDoCliente,
     type PacoteClienteAtivo,
@@ -18,9 +23,14 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { DateTimePicker } from '../components/DateTimePicker';
+import { SelecaoPacoteCatalogo } from '../components/SelecaoPacoteCatalogo';
 import { PageHeader } from '../components/ui/PageHeader';
 import { getBrazilDateParts } from '../utils/dateTime';
 import { buscarSaldoPorServico } from '../utils/pacoteCliente';
+import {
+    filtrarPacotesCatalogoPorServico,
+    resolverPacoteCatalogoAposTrocaServico,
+} from '../utils/pacoteCatalogo';
 import { obterMotivosOverride } from '../utils/overrideExpediente';
 import {
     horarioAgendamentoAlterado,
@@ -93,6 +103,16 @@ function formatarPreco(valor: string | null): string {
     }).format(numero);
 }
 
+function mensagemErroAtualizarAgendamento(error: unknown): string {
+    if (error instanceof ApiError && error.body?.code === 'PACOTE_ARQUIVADO') {
+        return 'Este pacote foi arquivado e não está mais disponível. Escolha outro pacote.';
+    }
+
+    return error instanceof Error
+        ? error.message
+        : 'Não foi possível atualizar o agendamento.';
+}
+
 export function EditarAgendamentoPage() {
     const navigate = useNavigate();
     const { id = '' } = useParams<{ id: string }>();
@@ -113,6 +133,15 @@ export function EditarAgendamentoPage() {
     const [pacoteAtivo, setPacoteAtivo] = useState<PacoteClienteAtivo | null>(
         null,
     );
+    const [consultaPacoteAtivoConcluida, setConsultaPacoteAtivoConcluida] =
+        useState(false);
+    const [pacotesCatalogo, setPacotesCatalogo] = useState<PacoteCatalogo[]>(
+        [],
+    );
+    const [pacoteCatalogoId, setPacoteCatalogoId] = useState('');
+    const [catalogoCarregado, setCatalogoCarregado] = useState(false);
+    const [erroCatalogo, setErroCatalogo] = useState<string | null>(null);
+    const [tentativaCatalogo, setTentativaCatalogo] = useState(0);
     const [processandoPacote, setProcessandoPacote] = useState(false);
     const [erroPacote, setErroPacote] = useState<string | null>(null);
 
@@ -188,6 +217,12 @@ export function EditarAgendamentoPage() {
             setLoading(true);
             setErro(null);
             setSucesso(null);
+            setConsultaPacoteAtivoConcluida(false);
+            setPacoteAtivo(null);
+            setPacotesCatalogo([]);
+            setPacoteCatalogoId('');
+            setCatalogoCarregado(false);
+            setErroCatalogo(null);
 
             try {
                 const [agendamentoResponse, servicosResponse] =
@@ -227,10 +262,12 @@ export function EditarAgendamentoPage() {
                     );
                     if (ativo) {
                         setPacoteAtivo(pacoteResponse);
+                        setConsultaPacoteAtivoConcluida(true);
                     }
                 } catch {
                     if (ativo) {
                         setPacoteAtivo(null);
+                        setConsultaPacoteAtivoConcluida(false);
                     }
                 }
             } catch (error) {
@@ -265,6 +302,54 @@ export function EditarAgendamentoPage() {
         !!agendamento &&
         agendamento.status !== 'CONCLUIDO' &&
         agendamento.status !== 'CANCELADO';
+
+    const podeOferecerPacoteCatalogo =
+        !!agendamento &&
+        consultaPacoteAtivoConcluida &&
+        statusPermiteVinculo &&
+        !agendamento.pacoteClienteId &&
+        !pacoteAtivo;
+
+    const pacotesElegiveis = useMemo(
+        () => filtrarPacotesCatalogoPorServico(pacotesCatalogo, servicoId),
+        [pacotesCatalogo, servicoId],
+    );
+    const clienteId = agendamento?.cliente.id;
+    const carregandoCatalogo =
+        podeOferecerPacoteCatalogo && !catalogoCarregado && !erroCatalogo;
+
+    useEffect(() => {
+        if (!podeOferecerPacoteCatalogo || !clienteId) {
+            return;
+        }
+
+        let ativo = true;
+
+        void listarPacotes()
+            .then((pacotes) => {
+                if (ativo) {
+                    setPacotesCatalogo(pacotes);
+                }
+            })
+            .catch((error: unknown) => {
+                if (ativo) {
+                    setErroCatalogo(
+                        error instanceof Error
+                            ? error.message
+                            : 'Não foi possível carregar os pacotes do catálogo.',
+                    );
+                }
+            })
+            .finally(() => {
+                if (ativo) {
+                    setCatalogoCarregado(true);
+                }
+            });
+
+        return () => {
+            ativo = false;
+        };
+    }, [clienteId, podeOferecerPacoteCatalogo, tentativaCatalogo]);
 
     const pacoteCompativelComServico = useMemo(() => {
         const saldo = buscarSaldoPorServico(pacoteAtivo, servicoId);
@@ -327,6 +412,28 @@ export function EditarAgendamentoPage() {
         }
     };
 
+    const finalizarAtualizacao = async (
+        payload: AtualizarAgendamentoPayload,
+    ) => {
+        if (payload.pacoteId) {
+            const [agendamentoAtualizado, pacoteAtivoAtualizado] =
+                await Promise.all([
+                    buscarAgendamentoPorId(id),
+                    buscarPacoteAtivoDoCliente(payload.clienteId),
+                ]);
+            setAgendamento(agendamentoAtualizado);
+            setPacoteAtivo(pacoteAtivoAtualizado);
+            setPacoteCatalogoId('');
+            setSucesso('Agendamento atualizado com sucesso!');
+            return;
+        }
+
+        setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
+        redirectTimeoutRef.current = window.setTimeout(() => {
+            navigate('/');
+        }, 1200);
+    };
+
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
@@ -355,14 +462,15 @@ export function EditarAgendamentoPage() {
                 : toIsoWithBrasiliaOffset(data, hora),
             status: agendamento.status,
             notificarCliente,
+            ...(podeOferecerPacoteCatalogo &&
+            pacotesElegiveis.some((pacote) => pacote.id === pacoteCatalogoId)
+                ? { pacoteId: pacoteCatalogoId }
+                : {}),
         };
 
         try {
             await atualizarAgendamento(id, payload);
-            setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
-            redirectTimeoutRef.current = window.setTimeout(() => {
-                navigate('/');
-            }, 1200);
+            await finalizarAtualizacao(payload);
         } catch (error) {
             const motivosOverride = obterMotivosOverride(error);
             if (motivosOverride) {
@@ -370,11 +478,7 @@ export function EditarAgendamentoPage() {
                 return;
             }
 
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível atualizar o agendamento.';
-            setErro(message);
+            setErro(mensagemErroAtualizarAgendamento(error));
             setSucesso(null);
         } finally {
             setSubmetendo(false);
@@ -394,17 +498,10 @@ export function EditarAgendamentoPage() {
                 permitirForaDoExpediente: true,
             });
             setOverridePendente(null);
-            setSucesso('Agendamento atualizado com sucesso! Redirecionando...');
-            redirectTimeoutRef.current = window.setTimeout(() => {
-                navigate('/');
-            }, 1200);
+            await finalizarAtualizacao(overridePendente.payload);
         } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível atualizar o agendamento.';
             setOverridePendente(null);
-            setErro(message);
+            setErro(mensagemErroAtualizarAgendamento(error));
             setSucesso(null);
         } finally {
             setSubmetendo(false);
@@ -533,7 +630,17 @@ export function EditarAgendamentoPage() {
                                 value={servicoId}
                                 onChange={(event) => {
                                     setOverridePendente(null);
-                                    setServicoId(event.target.value);
+                                    const proximoServicoId = event.target.value;
+                                    setServicoId(proximoServicoId);
+                                    setPacoteCatalogoId((atual) =>
+                                        resolverPacoteCatalogoAposTrocaServico(
+                                            atual,
+                                            filtrarPacotesCatalogoPorServico(
+                                                pacotesCatalogo,
+                                                proximoServicoId,
+                                            ),
+                                        ),
+                                    );
                                 }}
                                 disabled={servicos.length === 0}
                                 className={`${fieldClassName} disabled:cursor-not-allowed disabled:opacity-60`}
@@ -563,6 +670,46 @@ export function EditarAgendamentoPage() {
                                 </p>
                             )}
                         </div>
+
+                        {podeOferecerPacoteCatalogo && carregandoCatalogo && (
+                            <p
+                                className="text-sm text-[var(--color-text-secondary)]"
+                                role="status"
+                            >
+                                Carregando pacotes...
+                            </p>
+                        )}
+
+                        {podeOferecerPacoteCatalogo && erroCatalogo && (
+                            <div
+                                className="space-y-2 rounded-[8px] border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                                role="alert"
+                            >
+                                <p>{erroCatalogo}</p>
+                                <Button
+                                    type="button"
+                                    variant="ghost"
+                                    onClick={() => {
+                                        setErroCatalogo(null);
+                                        setCatalogoCarregado(false);
+                                        setTentativaCatalogo(
+                                            (atual) => atual + 1,
+                                        );
+                                    }}
+                                >
+                                    Tentar novamente
+                                </Button>
+                            </div>
+                        )}
+
+                        {podeOferecerPacoteCatalogo &&
+                            pacotesElegiveis.length > 0 && (
+                                <SelecaoPacoteCatalogo
+                                    pacotes={pacotesElegiveis}
+                                    value={pacoteCatalogoId}
+                                    onChange={setPacoteCatalogoId}
+                                />
+                            )}
 
                         <div>
                             <label
@@ -639,7 +786,10 @@ export function EditarAgendamentoPage() {
                         </label>
 
                         {erro && (
-                            <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
+                            <div
+                                className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]"
+                                role="alert"
+                            >
                                 {erro}
                             </div>
                         )}

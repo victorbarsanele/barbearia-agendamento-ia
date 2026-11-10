@@ -78,6 +78,7 @@ export interface AtualizarAgendamentoPayload {
     servicoId: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
+    pacoteId?: string;
     notificarCliente?: boolean;
     permitirForaDoExpediente?: boolean;
 }

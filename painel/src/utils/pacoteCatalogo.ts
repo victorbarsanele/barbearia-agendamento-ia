@@ -17,6 +17,30 @@ export type VinculoPacoteLote =
     | { tipo: 'ativo'; pacoteClienteId: string }
     | { tipo: 'nenhum' };
 
+export function filtrarPacotesCatalogoPorServico(
+    pacotes: Pacote[],
+    servicoId: string,
+): Pacote[] {
+    if (!servicoId) {
+        return [];
+    }
+
+    return pacotes.filter(
+        (pacote) =>
+            !pacote.arquivadoEm &&
+            pacote.servicos.some((item) => item.servicoId === servicoId),
+    );
+}
+
+export function resolverPacoteCatalogoAposTrocaServico(
+    pacoteId: string,
+    pacotesElegiveis: Pacote[],
+): string {
+    return pacotesElegiveis.some((pacote) => pacote.id === pacoteId)
+        ? pacoteId
+        : '';
+}
+
 export function filtrarServicosPorPacoteCatalogo(
     servicos: Servico[],
     pacote: Pacote | null,
