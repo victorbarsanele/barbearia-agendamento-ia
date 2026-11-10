@@ -86,6 +86,7 @@ export async function agendamentoRoutes(app: FastifyInstance): Promise<void> {
                     properties: {
                         clienteId: { type: 'string', minLength: 1 },
                         servicoId: { type: 'string', minLength: 1 },
+                        pacoteId: { type: 'string', minLength: 1 },
                         dataHoraInicio: { type: 'string', format: 'date-time' },
                         status: {
                             type: 'string',

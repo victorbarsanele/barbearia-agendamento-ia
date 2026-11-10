@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import prisma from '../lib/prisma';
 import {
     atualizarUsosAnteriores,
+    atualizarComPacoteDoCatalogoNaTransacao,
     atualizarComNumeroNoPacote,
     atualizarPacoteClienteId,
     concluirComPacote,
@@ -27,7 +28,12 @@ vi.mock('./pacote.repository', () => ({
     bloquearParaCriacaoNaTransacao: vi.fn(),
 }));
 
+vi.mock('./cliente.repository', () => ({
+    bloquearParaCriacaoDePacote: vi.fn(),
+}));
+
 import * as pacoteRepository from './pacote.repository';
+import * as clienteRepository from './cliente.repository';
 
 type PrismaTransactionMock = {
     $queryRaw: ReturnType<typeof vi.fn>;
@@ -896,6 +902,123 @@ describe('ordem de locks de agendamento', () => {
         expect(tx.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
             tx.agendamento.update.mock.invocationCallOrder[0],
         );
+    });
+});
+
+describe('agendamento.repository atualizar com pacote do catálogo', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('trava cliente, agendamento, catálogo e saldo nessa ordem', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        const eventos: string[] = [];
+        tx.agendamento.findUnique.mockResolvedValueOnce({
+            clienteId: 'cliente-1',
+        });
+        vi.mocked(
+            clienteRepository.bloquearParaCriacaoDePacote,
+        ).mockImplementationOnce(async () => {
+            eventos.push('cliente');
+            return true;
+        });
+        tx.$queryRaw.mockImplementation(async (query) => {
+            const sql = (query as { sql: string }).sql;
+            if (
+                sql.includes('FROM "agendamentos"') &&
+                sql.includes('FOR UPDATE')
+            ) {
+                eventos.push('agendamento');
+                return [
+                    {
+                        clienteId: 'cliente-1',
+                        pacoteClienteId: null,
+                        status: StatusAgendamento.AGENDADO,
+                        concluido: false,
+                    },
+                ];
+            }
+            if (sql.includes('FROM "pacotes_clientes_servicos"')) {
+                if (sql.includes('SELECT "quantidadeTotal"')) {
+                    eventos.push('saldo');
+                    return [{ quantidadeTotal: 4, usosAnteriores: 0 }];
+                }
+                return [];
+            }
+            return [];
+        });
+        vi.mocked(
+            pacoteRepository.bloquearParaCriacaoNaTransacao,
+        ).mockImplementationOnce(async () => {
+            eventos.push('catalogo');
+            return { id: 'pacote-1', arquivadoEm: null };
+        });
+
+        await atualizarComPacoteDoCatalogoNaTransacao(
+            tx as never,
+            'agendamento-1',
+            {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
+                dataHoraFim: new Date('2026-07-20T13:30:00Z'),
+                status: StatusAgendamento.AGENDADO,
+            },
+            async (txAtual) => {
+                await pacoteRepository.bloquearParaCriacaoNaTransacao(
+                    txAtual as never,
+                    'pacote-1',
+                );
+                return 'pacote-cliente-1';
+            },
+        );
+
+        expect(eventos).toEqual([
+            'cliente',
+            'agendamento',
+            'catalogo',
+            'saldo',
+        ]);
+    });
+
+    it('rejeita com conflito se clienteId mudar entre pré-leitura e lock', async () => {
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.agendamento.findUnique.mockResolvedValueOnce({
+            clienteId: 'cliente-1',
+        });
+        vi.mocked(
+            clienteRepository.bloquearParaCriacaoDePacote,
+        ).mockResolvedValueOnce(true);
+        tx.$queryRaw.mockReset().mockResolvedValueOnce([
+            {
+                clienteId: 'cliente-2',
+                pacoteClienteId: null,
+                status: StatusAgendamento.AGENDADO,
+                concluido: false,
+            },
+        ]);
+        const resolver = vi.fn(async () => 'pacote-cliente-1');
+
+        await expect(
+            atualizarComPacoteDoCatalogoNaTransacao(
+                tx as never,
+                'agendamento-1',
+                {
+                    clienteId: 'cliente-1',
+                    servicoId: 'servico-1',
+                    dataHoraInicio: new Date('2026-07-20T13:00:00Z'),
+                    dataHoraFim: new Date('2026-07-20T13:30:00Z'),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                resolver,
+            ),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            message:
+                'Cliente do agendamento mudou durante a edição. Tente novamente.',
+        });
+        expect(resolver).not.toHaveBeenCalled();
+        expect(tx.agendamento.update).not.toHaveBeenCalled();
     });
 });
 

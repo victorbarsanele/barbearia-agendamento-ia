@@ -101,6 +101,7 @@ function montarDataHoraInicio(slot: SlotLote): string {
 interface AtualizarAgendamentoData {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
@@ -1394,6 +1395,14 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             throw new AppError('Agendamento não encontrado.', 404);
         }
 
+        if (data.pacoteId) {
+            return await atualizarComPacoteDoCatalogo(
+                id,
+                { ...data, pacoteId: data.pacoteId },
+                agendamentoExistente,
+            );
+        }
+
         if (
             data.status === StatusAgendamento.CANCELADO &&
             ehConclusaoAutomaticaEstornavel(agendamentoExistente, new Date())
@@ -1515,6 +1524,141 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
 
         throw new AppError('Erro ao atualizar agendamento.', 500);
     }
+}
+
+async function atualizarComPacoteDoCatalogo(
+    id: string,
+    data: AtualizarAgendamentoData & { pacoteId: string },
+    agendamentoExistente: agendamentoRepository.AgendamentoComRelacoes,
+): Promise<agendamentoRepository.AgendamentoComRelacoes> {
+    validarStatusPermiteVinculo(agendamentoExistente);
+    validarStatusPermiteVinculo({
+        status: data.status,
+        concluido: false,
+    });
+
+    if (agendamentoExistente.pacoteClienteId) {
+        throw new AppError(
+            'Desvincule o pacote atual antes de vender um pacote do catálogo.',
+            409,
+        );
+    }
+    if (agendamentoExistente.clienteId !== data.clienteId) {
+        throw new AppError(
+            'Não é possível trocar o cliente ao vender um pacote do catálogo.',
+            400,
+        );
+    }
+
+    const { servico } = await carregarDependencias(
+        data.clienteId,
+        data.servicoId,
+    );
+    const dataHoraInicio = converterParaData(data.dataHoraInicio);
+    const dataHoraFim = adicionarMinutos(
+        dataHoraInicio,
+        servico.duracaoMinutos,
+    );
+    const dataHoraMudou =
+        agendamentoExistente.dataHoraInicio.getTime() !==
+        dataHoraInicio.getTime();
+    const servicoMudou = agendamentoExistente.servicoId !== data.servicoId;
+    const duracaoExistente =
+        agendamentoExistente.dataHoraFim.getTime() -
+        agendamentoExistente.dataHoraInicio.getTime();
+    const duracaoMudou =
+        duracaoExistente !== servico.duracaoMinutos * 60 * 1000;
+    const extensaoMudou =
+        agendamentoExistente.servico.permiteExtensaoFechamento !==
+        servico.permiteExtensaoFechamento;
+    const regrasDeHorarioMudaram =
+        dataHoraMudou || duracaoMudou || extensaoMudou;
+
+    if (regrasDeHorarioMudaram) {
+        const horarioValidado = await validarDisponibilidade(
+            data.dataHoraInicio,
+            servico.duracaoMinutos,
+            servico.permiteExtensaoFechamento,
+            dataHoraInicio.getTime() <= Date.now(),
+            data.origem,
+            undefined,
+            data.permitirForaDoExpediente,
+            id,
+        );
+        dataHoraFim.setTime(horarioValidado.dataHoraFim.getTime());
+    }
+
+    const dados = {
+        clienteId: data.clienteId,
+        servicoId: data.servicoId,
+        ...(servicoMudou ? { precoUnitario: servico.preco } : {}),
+        dataHoraInicio,
+        dataHoraFim,
+        status: data.status,
+    };
+
+    const atualizado = await pacoteClienteRepository.transacionar((tx) =>
+        agendamentoRepository.atualizarComPacoteDoCatalogoNaTransacao(
+            tx,
+            id,
+            dados,
+            async (txAtual, atual) => {
+                validarStatusPermiteVinculo(atual);
+                if (atual.pacoteClienteId) {
+                    throw new AppError(
+                        'Desvincule o pacote atual antes de vender um pacote do catálogo.',
+                        409,
+                    );
+                }
+                if (atual.clienteId !== data.clienteId) {
+                    throw new AppError(
+                        'Não é possível trocar o cliente ao vender um pacote do catálogo.',
+                        400,
+                    );
+                }
+
+                const resolvido = await resolverPacoteDoCatalogoNaTransacao(
+                    txAtual,
+                    atual.clienteId,
+                    data.pacoteId,
+                    data.servicoId,
+                    true,
+                );
+                if (resolvido.pacoteCliente) {
+                    validarPacoteClienteEncontrado(
+                        resolvido.pacoteCliente,
+                        data.servicoId,
+                    );
+                }
+                if (!resolvido.pacoteClienteId) {
+                    throw new AppError(
+                        'Não foi possível resolver o pacote do cliente.',
+                        500,
+                    );
+                }
+                return resolvido.pacoteClienteId;
+            },
+        ),
+    );
+
+    await enfileirarSemFalhar([atualizado.id]);
+
+    if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
+        try {
+            await enviarMensagemRemarcacao(
+                atualizado.cliente.telefone,
+                atualizado.cliente.nome,
+                atualizado.servico.nome,
+                atualizado.dataHoraInicio,
+            );
+        } catch {
+            console.error(
+                '[AGENDAMENTO SERVICE] Falha ao enviar mensagem de remarcação no WhatsApp',
+            );
+        }
+    }
+
+    return atualizado;
 }
 
 export async function cancelar(
