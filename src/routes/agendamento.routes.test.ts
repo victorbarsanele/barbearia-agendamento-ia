@@ -406,4 +406,47 @@ describe('PUT /agendamentos/:id', () => {
             vi.mocked(agendamentoService.atualizar).mock.calls[0]?.[1],
         ).not.toHaveProperty('origem', 'WHATSAPP_IA');
     });
+
+    it('aceita pacoteId e encaminha ao service', async () => {
+        let schemaBody: Record<string, unknown> | undefined;
+        app.addHook(
+            'onRoute',
+            (routeOptions: {
+                method: string | string[];
+                url: string;
+                schema?: { body?: unknown };
+            }) => {
+                if (
+                    routeOptions.method === 'PUT' &&
+                    routeOptions.url === '/agendamentos/:id'
+                ) {
+                    schemaBody = routeOptions.schema?.body as
+                        | Record<string, unknown>
+                        | undefined;
+                }
+            },
+        );
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'PUT',
+            url: '/agendamentos/agendamento-1',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                pacoteId: 'pacote-1',
+                dataHoraInicio: '2026-11-02T10:00:00-03:00',
+                status: 'AGENDADO',
+            },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(agendamentoService.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ pacoteId: 'pacote-1' }),
+        );
+        expect(schemaBody).toMatchObject({
+            additionalProperties: false,
+            properties: { pacoteId: { type: 'string', minLength: 1 } },
+        });
+    });
 });

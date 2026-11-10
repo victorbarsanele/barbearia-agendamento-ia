@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
+import * as clienteRepository from './cliente.repository';
 import * as pacoteRepository from './pacote.repository';
 
 type AgendamentoBase = Prisma.AgendamentoGetPayload<{
@@ -48,6 +49,13 @@ interface BuscarConflitoParams {
 }
 
 type Transacao = Prisma.TransactionClient;
+
+export interface AgendamentoPacoteCatalogoLock {
+    clienteId: string;
+    pacoteClienteId: string | null;
+    status: StatusAgendamento;
+    concluido: boolean;
+}
 
 const includeRelacoes = {
     cliente: true,
@@ -512,6 +520,81 @@ export async function atualizar(
         return await prisma.agendamento.update({
             where: { id },
             data,
+            include: includeRelacoes,
+        });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409);
+        }
+
+        throw error;
+    }
+}
+
+/**
+ * Ordem dos locks: Cliente, Agendamento, catálogo (FOR SHARE), saldo.
+ * Cliente primeiro alinha estorno e conclusão automática com renovação.
+ * Operações administrativas usam FOR UPDATE, mas não pedem esses locks depois.
+ * Renovação pode travar saldo antes do catálogo, mantendo cliente primeiro.
+ */
+export async function atualizarComPacoteDoCatalogoNaTransacao(
+    tx: Transacao,
+    id: string,
+    data: AtualizarAgendamentoData,
+    resolverPacoteClienteId: (
+        tx: Transacao,
+        agendamento: AgendamentoPacoteCatalogoLock,
+    ) => Promise<string>,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        const preLeitura = await tx.agendamento.findUnique({
+            where: { id },
+            select: { clienteId: true },
+        });
+        if (!preLeitura) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+
+        const clienteExiste =
+            await clienteRepository.bloquearParaCriacaoDePacote(
+                tx,
+                preLeitura.clienteId,
+            );
+        if (!clienteExiste) {
+            throw new AppError('Cliente não encontrado.', 404);
+        }
+
+        const linhas = await tx.$queryRaw<AgendamentoPacoteCatalogoLock[]>(
+            Prisma.sql`
+                SELECT "clienteId", "pacoteClienteId", "status", "concluido"
+                FROM "agendamentos"
+                WHERE "id" = ${id}
+                FOR UPDATE
+            `,
+        );
+        const atual = linhas[0];
+
+        if (!atual) {
+            throw new AppError('Agendamento não encontrado.', 404);
+        }
+        if (atual.clienteId !== preLeitura.clienteId) {
+            throw new AppError(
+                'Cliente do agendamento mudou durante a edição. Tente novamente.',
+                409,
+            );
+        }
+
+        const pacoteClienteId = await resolverPacoteClienteId(tx, atual);
+        const numeroNoPacote = await reservarNumeroNoPacote(
+            tx,
+            pacoteClienteId,
+            data.servicoId,
+            id,
+        );
+
+        return await tx.agendamento.update({
+            where: { id },
+            data: { ...data, pacoteClienteId, numeroNoPacote },
             include: includeRelacoes,
         });
     } catch (error) {

@@ -17,6 +17,7 @@ interface CriarAgendamentoBody {
 interface AtualizarAgendamentoBody {
     clienteId: string;
     servicoId: string;
+    pacoteId?: string;
     dataHoraInicio: string;
     status: StatusAgendamento;
     notificarCliente?: boolean;
@@ -78,7 +79,9 @@ function complementarAgendamento<
         status: StatusAgendamento;
         concluido: boolean;
         concluidoEm?: Date | null;
-        concluidoPor?: import('@prisma/client').OrigemConclusaoAgendamento | null;
+        concluidoPor?:
+            | import('@prisma/client').OrigemConclusaoAgendamento
+            | null;
         dataHoraInicio: Date;
         dataHoraFim: Date;
     },
