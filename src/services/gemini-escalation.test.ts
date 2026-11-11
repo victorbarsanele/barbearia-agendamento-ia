@@ -90,7 +90,7 @@ const NUMERO_BARBEIRO = '5511888888888';
 const RESPOSTA_CONFUSA = 'Desculpe, não entendi. Pode repetir?';
 const RESPOSTA_FAQ = 'O corte custa R$40.';
 const MENSAGEM_ESCALONAMENTO =
-    'Já avisei o barbeiro, ele já te responde por aqui em instantes.';
+    'Avisei o barbeiro sobre o seu pedido. Ele responde por aqui assim que puder.';
 
 type GeminiModule = Awaited<typeof import('./gemini.service')>;
 
@@ -125,6 +125,7 @@ describe('gemini.service escalonamento humano', () => {
 
         process.env.GEMINI_API_KEY = 'gemini-test-key';
         process.env.EVOLUTION_API_KEY = 'evolution-test-key';
+        process.env.WHATSAPP_PROVIDER = 'evolution';
         delete process.env.EVOLUTION_API_URL;
         delete process.env.ESCALATION_COOLDOWN_MS;
         delete process.env.BARBER_PHONE;
@@ -134,6 +135,7 @@ describe('gemini.service escalonamento humano', () => {
             text: vi.fn().mockResolvedValue(''),
         }) as typeof fetch;
 
+        mocks.generateContent.mockReset();
         mocks.generateContent.mockResolvedValue({
             functionCalls: [],
             text: RESPOSTA_FAQ,
@@ -154,6 +156,7 @@ describe('gemini.service escalonamento humano', () => {
         delete process.env.ESCALATION_COOLDOWN_MS;
         delete process.env.GEMINI_API_KEY;
         delete process.env.EVOLUTION_API_KEY;
+        delete process.env.WHATSAPP_PROVIDER;
         delete process.env.EVOLUTION_API_URL;
     });
 
@@ -178,6 +181,59 @@ describe('gemini.service escalonamento humano', () => {
                 text: 'Cliente 5511999999999 precisa de atendimento manual (motivo: palavra_chave).',
             },
         ]);
+    });
+
+    it('tool geral escala uma vez e registra origem sem conteúdo pessoal', async () => {
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
+        vi.spyOn(Math, 'random').mockReturnValue(0);
+        const infoLog = vi.spyOn(console, 'info').mockImplementation(() => {});
+        mocks.generateContent.mockResolvedValueOnce({
+            functionCalls: [
+                {
+                    name: 'solicitarAtendimentoHumano',
+                    args: {},
+                    id: 'call-atendimento-humano',
+                },
+            ],
+        });
+
+        const gemini = await importGeminiModule();
+        await gemini.processarMensagemWhatsapp(
+            TELEFONE_CLIENTE,
+            'Quero falar com o barbeiro.',
+        );
+
+        expect(mocks.generateContent).toHaveBeenCalledOnce();
+        expect(getSentMessages()).toEqual([
+            {
+                number: NUMERO_CLIENTE,
+                text: MENSAGEM_ESCALONAMENTO,
+            },
+            {
+                number: NUMERO_BARBEIRO,
+                text: 'Cliente 5511999999999 precisa de atendimento manual (motivo: palavra_chave).',
+            },
+        ]);
+        await expect(
+            gemini.obterEstadoEscalonamento(NUMERO_CLIENTE),
+        ).resolves.toMatchObject({
+            estado: 'ESCALADO',
+            motivo: 'palavra_chave',
+        });
+        expect(infoLog).toHaveBeenCalledWith(
+            '[GEMINI TOOL] Pedido de atendimento humano',
+            { origem: 'tool' },
+        );
+        expect(JSON.stringify(infoLog.mock.calls)).not.toContain(
+            'Quero falar com o barbeiro.',
+        );
+        expect(JSON.stringify(infoLog.mock.calls)).not.toContain(
+            NUMERO_CLIENTE,
+        );
+        expect(JSON.stringify(infoLog.mock.calls)).not.toContain(
+            NUMERO_BARBEIRO,
+        );
+        infoLog.mockRestore();
     });
 
     it('não notifica barbeiro na segunda escalada seguida dentro do cooldown', async () => {
