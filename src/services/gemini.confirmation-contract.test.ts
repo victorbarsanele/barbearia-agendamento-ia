@@ -636,6 +636,38 @@ describe('regras do prompt de sistema', () => {
         );
     });
 
+    it('orienta escalonamento humano e proíbe promessas de indisponibilidade', () => {
+        const prompt = __testables.buildSystemPrompt();
+        const tool = (
+            __testables.functionDeclarations as Array<{
+                name: string;
+                description?: string;
+                parametersJsonSchema?: unknown;
+            }>
+        ).find(({ name }) => name === 'solicitarAtendimentoHumano');
+
+        expect(prompt).toContain(
+            'chame solicitarAtendimentoHumano imediatamente, sem tentar resolver nem perguntar o motivo.',
+        );
+        expect(prompt).toContain(
+            'Falta de horário disponível não é motivo para escalar.',
+        );
+        expect(prompt).toContain(
+            'Nunca afirme que o barbeiro está indisponível ou não pode atender, nem que não é possível transferir ou encaminhar; não invente motivo ou prazo.',
+        );
+        expect(prompt).toContain(
+            'Saudação ou menção isolada ao nome do barbeiro não é pedido de atendimento humano.',
+        );
+        expect(tool?.description).toContain('encaixe/exceção');
+        expect(tool?.description).toContain(
+            'Não use por falta de horário disponível.',
+        );
+        expect(tool?.parametersJsonSchema).toEqual({
+            type: 'object',
+            properties: {},
+        });
+    });
+
     it('usa regra neutra sem identidade e mantém chamada compatível com um argumento', () => {
         const prompt = __testables.buildSystemPrompt(
             'CONTEXTO DE RASCUNHO',

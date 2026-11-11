@@ -18,13 +18,13 @@ import {
 } from '../whatsapp/ycloud-media-download';
 import { AudioLimiter, AudioQueueFullError } from '../whatsapp/audio-limiter';
 import { runExclusive } from '../utils/phone-queue';
+import { carregarIdentidadeBarbeiro } from '../utils/barbeiro-identidade';
+import { detectarPedidoHumano } from '../utils/pedido-humano';
 
 const MAX_MESSAGE_LENGTH = 500;
 const URL_PATTERN = /(https?:\/\/|www\.)/i;
 const JAILBREAK_PATTERN =
     /\b(ignore|system\s*prompt|instru[çc][aã]o|dan|jailbreak|bypass|prompt|base64)\b/i;
-const ESCALATION_KEYWORDS_PATTERN =
-    /\b(atendente|humano|pessoa real|falar com o barbeiro|falar com alguem)\b/i;
 const MEDIA_NOTICE =
     'Olá! No momento só consigo entender mensagens escritas. Pode me enviar sua dúvida por texto?';
 const AUDIO_FAILURE_NOTICE =
@@ -103,10 +103,7 @@ function getAudioLimiter(): AudioLimiter {
     const config = getAudioConfig();
     const key = `${config.maxConcurrency}:${config.maxQueue}`;
     if (!audioLimiter || audioLimiterConfig !== key) {
-        audioLimiter = new AudioLimiter(
-            config.maxConcurrency,
-            config.maxQueue,
-        );
+        audioLimiter = new AudioLimiter(config.maxConcurrency, config.maxQueue);
         audioLimiterConfig = key;
     }
     return audioLimiter;
@@ -255,11 +252,15 @@ async function processarAudio(
 
             bytesBaixados = downloaded.data.length;
             const payloadMime = normalizeAudioMimeType(media?.mimeType);
-            mime = payloadMime ?? normalizeAudioMimeType(downloaded.contentType);
+            mime =
+                payloadMime ?? normalizeAudioMimeType(downloaded.contentType);
             if (!mime || !AUDIO_TRANSCRIPTION_MIME_TYPES.has(mime)) {
                 throw new AudioProcessingError('unsupported_format');
             }
-            sha256Match = compareAudioSha256(downloaded.data, media?.sha256 ?? null);
+            sha256Match = compareAudioSha256(
+                downloaded.data,
+                media?.sha256 ?? null,
+            );
 
             const transcribeStartedAt = Date.now();
             const transcription = await transcreverAudio(downloaded.data, mime);
@@ -350,10 +351,10 @@ async function processarTextoDeCliente(
         return;
     }
 
-    if (ESCALATION_KEYWORDS_PATTERN.test(text)) {
-        console.log(
-            `[WEBHOOK] Escalonamento por palavra-chave | numero: ${mascararTelefone(phone)}`,
-        );
+    if (detectarPedidoHumano(text, carregarIdentidadeBarbeiro())) {
+        console.info('[WEBHOOK] Pedido de atendimento humano escalonado', {
+            origem: 'prefiltro',
+        });
         await escalarParaHumano(phone, 'palavra_chave');
         return;
     }
