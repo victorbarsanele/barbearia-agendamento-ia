@@ -15,6 +15,7 @@ export default defineConfig({
         '**/saldoPacotes.spec.ts',
         '**/pacotesGestao.spec.ts',
         '**/lembreteAgendamento.spec.ts',
+        '**/visibilidadeDados.spec.ts',
         '**/origemAgendamento.spec.ts',
     ],
     fullyParallel: true,
