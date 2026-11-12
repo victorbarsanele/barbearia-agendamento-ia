@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Package, Pencil, Trash2 } from 'lucide-react';
+import { Calendar, Eye, EyeOff, Package, Pencil, Trash2 } from 'lucide-react';
 import { AgendamentosClienteModal } from '../components/AgendamentosClienteModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PacoteClienteModal } from '../components/PacoteClienteModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
+import { IconButton } from '../components/ui/IconButton';
 import { PageHeader } from '../components/ui/PageHeader';
 import { listarAgendamentos } from '../services/agendamentos.service';
 import {
@@ -33,6 +34,7 @@ export function ClientesPage() {
 
     const [clientes, setClientes] = useState<Cliente[]>([]);
     const [loading, setLoading] = useState(true);
+    const [telefonesVisiveis, setTelefonesVisiveis] = useState(true);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
     const [excluindoId, setExcluindoId] = useState<string | null>(null);
@@ -207,13 +209,40 @@ export function ClientesPage() {
                 title="Clientes"
                 subtitle="Gerencie os clientes cadastrados."
                 action={
-                    <Button
-                        variant="primary"
-                        className="px-3 text-xs"
-                        onClick={() => navigate('/clientes/novo')}
-                    >
-                        Novo cliente
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <IconButton
+                            ariaLabel={
+                                telefonesVisiveis
+                                    ? 'Ocultar telefones dos clientes'
+                                    : 'Mostrar telefones dos clientes'
+                            }
+                            title={
+                                telefonesVisiveis
+                                    ? 'Ocultar telefones dos clientes'
+                                    : 'Mostrar telefones dos clientes'
+                            }
+                            aria-pressed={telefonesVisiveis}
+                            onClick={() =>
+                                setTelefonesVisiveis((current) => !current)
+                            }
+                        >
+                            {telefonesVisiveis ? (
+                                <EyeOff
+                                    aria-hidden="true"
+                                    className="h-4 w-4"
+                                />
+                            ) : (
+                                <Eye aria-hidden="true" className="h-4 w-4" />
+                            )}
+                        </IconButton>
+                        <Button
+                            variant="primary"
+                            className="px-3 text-xs"
+                            onClick={() => navigate('/clientes/novo')}
+                        >
+                            Novo cliente
+                        </Button>
+                    </div>
                 }
             />
 
@@ -264,7 +293,13 @@ export function ClientesPage() {
                                     {cliente.nome}
                                 </p>
                                 <p className="text-sm text-[var(--color-text-secondary)]">
-                                    {formatarTelefone(cliente.telefone)}
+                                    {telefonesVisiveis ? (
+                                        formatarTelefone(cliente.telefone)
+                                    ) : (
+                                        <span aria-label="Telefone oculto">
+                                            ••••••
+                                        </span>
+                                    )}
                                 </p>
                             </div>
 

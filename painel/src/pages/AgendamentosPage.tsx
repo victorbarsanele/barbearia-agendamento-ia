@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Calendar } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Calendar, Eye, EyeOff } from 'lucide-react';
 import { AgendamentoItem } from '../components/AgendamentoItem';
 import { CalendarGrid } from '../components/CalendarGrid.tsx';
 import { LoteAgendamentoModal } from '../components/LoteAgendamentoModal/LoteAgendamentoModal';
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
+import { IconButton } from '../components/ui/IconButton';
 import {
     cancelarAgendamento,
     concluirAgendamento,
@@ -107,6 +108,7 @@ export function AgendamentosPage() {
         useState<string>(dataInicial);
     const [calendarioAberto, setCalendarioAberto] = useState(false);
     const [loteModalAberto, setLoteModalAberto] = useState(false);
+    const [valoresVisiveis, setValoresVisiveis] = useState(true);
 
     useEffect(() => {
         const timer = window.setInterval(() => setAgora(Date.now()), 30_000);
@@ -277,6 +279,34 @@ export function AgendamentosPage() {
                         </h1>
 
                         <div className="flex items-center gap-2">
+                            <IconButton
+                                ariaLabel={
+                                    valoresVisiveis
+                                        ? 'Ocultar valores da agenda'
+                                        : 'Mostrar valores da agenda'
+                                }
+                                title={
+                                    valoresVisiveis
+                                        ? 'Ocultar valores da agenda'
+                                        : 'Mostrar valores da agenda'
+                                }
+                                aria-pressed={valoresVisiveis}
+                                onClick={() =>
+                                    setValoresVisiveis((current) => !current)
+                                }
+                            >
+                                {valoresVisiveis ? (
+                                    <EyeOff
+                                        aria-hidden="true"
+                                        className="h-4 w-4"
+                                    />
+                                ) : (
+                                    <Eye
+                                        aria-hidden="true"
+                                        className="h-4 w-4"
+                                    />
+                                )}
+                            </IconButton>
                             <Button
                                 variant="primary"
                                 className="px-4 text-sm font-semibold"
@@ -381,6 +411,7 @@ export function AgendamentosPage() {
                                 enviandoLembreteId === agendamento.id
                             }
                             agora={agora}
+                            valorVisivel={valoresVisiveis}
                         />
                     ))}
                 </ul>

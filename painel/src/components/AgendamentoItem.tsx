@@ -13,6 +13,7 @@ import { IconButton } from './ui/IconButton';
 
 interface AgendamentoItemProps {
     agendamento: Agendamento;
+    valorVisivel: boolean;
     onEditar: (id: string) => void;
     onCancelar: (
         id: string,
@@ -46,6 +47,7 @@ function formatarDataHora(isoDate: string): string {
 
 export function AgendamentoItem({
     agendamento,
+    valorVisivel,
     onEditar,
     onCancelar,
     cancelando,
@@ -182,8 +184,14 @@ export function AgendamentoItem({
                                             ·
                                         </span>
                                         <span className="font-bold text-[var(--color-gold)]">
-                                            {formatarPrecoBRL(
-                                                agendamento.servico.preco,
+                                            {valorVisivel ? (
+                                                formatarPrecoBRL(
+                                                    agendamento.servico.preco,
+                                                )
+                                            ) : (
+                                                <span aria-label="Valor do serviço oculto">
+                                                    ••••
+                                                </span>
                                             )}
                                         </span>
                                     </>
@@ -411,11 +419,11 @@ export function AgendamentoItem({
                                 onClick={() => void confirmarCancelamento()}
                                 disabled={cancelando}
                             >
-                                                                {cancelando
-                                                                        ? 'Cancelando...'
-                                                                        : agendamento.estornavel
-                                                                            ? 'Sim, cancelar e estornar crédito'
-                                                                            : 'Sim, cancelar'}
+                                {cancelando
+                                    ? 'Cancelando...'
+                                    : agendamento.estornavel
+                                      ? 'Sim, cancelar e estornar crédito'
+                                      : 'Sim, cancelar'}
                             </Button>
                             <Button
                                 variant="ghost"
