@@ -29,8 +29,14 @@ import { configuracaoAgendamentoRoutes } from './src/routes/configuracao-agendam
 import { numeroIgnoradoWhatsAppRoutes } from './src/routes/numero-ignorado-whatsapp.routes';
 import { registerAuthPlugin } from './src/plugins/auth.plugin';
 import { validateWhatsAppConfiguration } from './src/whatsapp/config';
-import { iniciarJobLembretesRascunho } from './src/services/pending-agendamento-reminder.service';
-import { getAutoConclusaoConfig, validarAutoConclusaoConfig } from './src/config/auto-conclusao';
+import {
+    iniciarJobLembretesRascunho,
+    validarJobLembretesRascunhoConfig,
+} from './src/services/pending-agendamento-reminder.service';
+import {
+    getAutoConclusaoConfig,
+    validarAutoConclusaoConfig,
+} from './src/config/auto-conclusao';
 import { iniciarJobAutoConclusao } from './src/services/auto-conclusao-agendamento.service';
 import { getGoogleCalendarConfig } from './src/google-calendar/config';
 import { GoogleCalendarAdapter } from './src/google-calendar/google-calendar.adapter';
@@ -126,6 +132,7 @@ const start = async (): Promise<void> => {
     try {
         validarAgendamentoConfig();
         validarAutoConclusaoConfig();
+        validarJobLembretesRascunhoConfig();
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
         app.log.info({ nodeVersion: process.version }, 'node.runtime');

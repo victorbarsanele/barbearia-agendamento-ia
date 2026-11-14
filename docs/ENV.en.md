@@ -58,6 +58,7 @@ Defaults below describe code behavior when a variable is unset. “Required” m
 | `HUMAN_TAKEOVER_TTL_MS`             | No       | `1800000` | Finite number `> 0`; invalid values use fallback                                                                                                | Human takeover TTL, sliding from barber's latest message. |
 | `PENDING_BOOKING_TTL_MS`            | No       | `1800000` | Finite number `> 0`; invalid values use fallback                                                                                                | Booking draft TTL.                                        |
 | `PENDING_BOOKING_REMINDER_DELAY_MS` | No       | `600000`  | Finite number `> 0`; invalid values use fallback                                                                                                | Delay before draft reminder.                              |
+| `PENDING_BOOKING_SAFETY_SWEEP_MS`   | No       | `3600000` | `0` disables; otherwise, integer `>= 60000`                                                                                                     | Safety sweep for the draft scheduler.                     |
 
 ## Scheduling and lead time
 

@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import {
     InMemoryPendingAgendamentoRepository,
     PrismaPendingAgendamentoRepository,
+    registrarObservadorRascunho,
 } from './pending-agendamento.repository';
 
 const baseDraft = {
@@ -255,6 +256,68 @@ describe('InMemoryPendingAgendamentoRepository', () => {
                 new Date('2026-10-20T12:05:00-03:00'),
             ),
         ).resolves.toMatchObject({ nomeCliente: 'Novo cliente' });
+    });
+
+    it('notifica cada mutação efetiva que altera o agendamento do rascunho', async () => {
+        const repository = new InMemoryPendingAgendamentoRepository();
+        const changes: unknown[] = [];
+        const unregister = registrarObservadorRascunho((change) =>
+            changes.push(change),
+        );
+
+        try {
+            const draft = await repository.salvar(baseDraft);
+            expect(
+                await repository.reivindicarLembrete(
+                    baseDraft.telefoneSessao,
+                    new Date('2026-10-20T12:05:00-03:00'),
+                ),
+            ).toBe(true);
+            expect(
+                await repository.marcarResumoEnviado(
+                    baseDraft.telefoneSessao,
+                    'message-1',
+                    new Date('2026-10-20T12:06:00-03:00'),
+                ),
+            ).toBe(true);
+            expect(
+                await repository.consumir(
+                    baseDraft.telefoneSessao,
+                    'message-2',
+                    new Date('2026-10-20T12:07:00-03:00'),
+                ),
+            ).not.toBeNull();
+            expect(await repository.restaurarSeAusente(draft)).toBe(true);
+            expect(await repository.apagar(baseDraft.telefoneSessao)).toBe(
+                true,
+            );
+            await repository.salvar({
+                ...baseDraft,
+                telefoneSessao: '5511888888888',
+                expiraEm: new Date('2026-10-20T12:00:00-03:00'),
+            });
+            expect(
+                await repository.apagarExpirado(
+                    '5511888888888',
+                    new Date('2026-10-20T12:10:00-03:00'),
+                ),
+            ).toBe(true);
+
+            expect(
+                changes.map((change) => (change as { tipo: string }).tipo),
+            ).toEqual([
+                'salvo',
+                'lembrete_reivindicado',
+                'resumo_marcado',
+                'removido',
+                'salvo',
+                'removido',
+                'salvo',
+                'removido',
+            ]);
+        } finally {
+            unregister();
+        }
     });
 });
 
