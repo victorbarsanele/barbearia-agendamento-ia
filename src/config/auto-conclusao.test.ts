@@ -2,6 +2,7 @@ import { fromZonedTime } from 'date-fns-tz';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     calcularCorteAutoConclusao,
+    calcularProximoVencimentoAutoConclusao,
     estaDentroDaJanelaEstorno,
     getAutoConclusaoConfig,
 } from './auto-conclusao';
@@ -20,7 +21,7 @@ describe('configuração de conclusão automática', () => {
             enabled: false,
             aPartirDe: null,
             horaLocal: 6,
-            intervaloMs: 900000,
+            safetySweepMs: 3600000,
             loteMaximo: 50,
             janelaEstornoHoras: 48,
         });
@@ -31,7 +32,7 @@ describe('configuração de conclusão automática', () => {
         vi.stubEnv('AUTO_CONCLUSAO_A_PARTIR_DE', '');
         vi.stubEnv('JANELA_ESTORNO_HORAS', '24');
         vi.stubEnv('AUTO_CONCLUSAO_HORA_LOCAL', '7');
-        vi.stubEnv('AUTO_CONCLUSAO_INTERVALO_MS', '30000');
+        vi.stubEnv('AUTO_CONCLUSAO_INTERVALO_MS', 'not-a-number');
         vi.stubEnv('AUTO_CONCLUSAO_LOTE_MAXIMO', '20');
 
         expect(getAutoConclusaoConfig()).toMatchObject({
@@ -39,9 +40,23 @@ describe('configuração de conclusão automática', () => {
             aPartirDe: null,
             janelaEstornoHoras: 24,
             horaLocal: 7,
-            intervaloMs: 30000,
+            safetySweepMs: 3600000,
             loteMaximo: 20,
         });
+    });
+
+    it('valida o safety sweep e aceita zero para desativar', () => {
+        vi.stubEnv('AUTO_CONCLUSAO_ENABLED', 'false');
+        vi.stubEnv('AUTO_CONCLUSAO_SAFETY_SWEEP_MS', '0');
+        expect(getAutoConclusaoConfig().safetySweepMs).toBe(0);
+
+        vi.stubEnv('AUTO_CONCLUSAO_SAFETY_SWEEP_MS', '60000');
+        expect(getAutoConclusaoConfig().safetySweepMs).toBe(60000);
+
+        vi.stubEnv('AUTO_CONCLUSAO_SAFETY_SWEEP_MS', '59999');
+        expect(() => getAutoConclusaoConfig()).toThrow(
+            'AUTO_CONCLUSAO_SAFETY_SWEEP_MS inválida',
+        );
     });
 
     it('exige data inicial válida quando feature está ligada', () => {
@@ -70,6 +85,32 @@ describe('calcularCorteAutoConclusao', () => {
         const agora = fromZonedTime('2026-11-08T06:00:00', TIME_ZONE);
         expect(calcularCorteAutoConclusao(agora, 6)).toEqual(
             fromZonedTime('2026-11-08T00:00:00', TIME_ZONE),
+        );
+    });
+});
+
+describe('calcularProximoVencimentoAutoConclusao', () => {
+    it('agenda no primeiro corte diário depois do fim, no horário local', () => {
+        const fim = fromZonedTime('2026-11-08T22:30:00', TIME_ZONE);
+
+        expect(calcularProximoVencimentoAutoConclusao(fim, 6)).toEqual(
+            fromZonedTime('2026-11-09T06:00:00', TIME_ZONE),
+        );
+    });
+
+    it('respeita o limite estrito quando o fim ocorre exatamente à meia-noite', () => {
+        const fim = fromZonedTime('2026-11-09T00:00:00', TIME_ZONE);
+
+        expect(calcularProximoVencimentoAutoConclusao(fim, 6)).toEqual(
+            fromZonedTime('2026-11-10T06:00:00', TIME_ZONE),
+        );
+    });
+
+    it('aceita elegibilidade à meia-noite quando a hora local configurada é zero', () => {
+        const fim = fromZonedTime('2026-11-08T23:59:59', TIME_ZONE);
+
+        expect(calcularProximoVencimentoAutoConclusao(fim, 0)).toEqual(
+            fromZonedTime('2026-11-09T00:00:00', TIME_ZONE),
         );
     });
 });

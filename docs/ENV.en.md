@@ -69,6 +69,18 @@ Defaults below describe code behavior when a variable is unset. “Required” m
 | `CONFIRMACAO_TOLERANCIA_MINUTOS` | No       | `0`     | Integer from `0` to `60`; invalid value aborts startup   | Tolerance at draft confirmation; does not change dashboard/API creation. |
 | `AVISO_CURTO_PRAZO_MINUTOS`      | No       | `60`    | Integer from `0` to `1440`; invalid value aborts startup | Adds a summary notice when appointment is sooner than this threshold.    |
 
+## Automatic completion
+
+| Variable                         | Required         | Default    | Range/rule                                                    | Description                                                                     |
+| -------------------------------- | ---------------- | ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `AUTO_CONCLUSAO_ENABLED`         | No               | Disabled   | Only `true` or `false`; only `true` starts the scheduler      | Enables automatic completion for package-linked appointments.                   |
+| `AUTO_CONCLUSAO_A_PARTIR_DE`     | Yes when enabled | No default | Valid local date `YYYY-MM-DD`; invalid value aborts startup   | Lower bound for eligible appointment start dates.                               |
+| `AUTO_CONCLUSAO_HORA_LOCAL`      | No               | `6`        | Integer from `0` to `23`; invalid value aborts startup        | Daily cutoff hour in `America/Sao_Paulo`.                                       |
+| `AUTO_CONCLUSAO_SAFETY_SWEEP_MS` | No               | `3600000`  | `0` disables; otherwise, integer `>= 60000`                   | Safety sweep interval for the automatic completion scheduler.                   |
+| `AUTO_CONCLUSAO_INTERVALO_MS`    | No               | `900000`   | Deprecated and ignored; not validated and cannot fail startup | Kept for legacy configuration only; it no longer defines an execution interval. |
+| `AUTO_CONCLUSAO_LOTE_MAXIMO`     | No               | `50`       | Integer from `1` to `500`; invalid value aborts startup       | Maximum completions per cycle.                                                  |
+| `JANELA_ESTORNO_HORAS`           | No               | `48`       | Integer from `1` to `720`; invalid value aborts startup       | Window for reversing an automatic completion.                                   |
+
 ## Media and audio
 
 | Variable                      | Required | Default  | Range/rule                                                       | Description                                      |

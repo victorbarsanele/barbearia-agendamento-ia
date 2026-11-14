@@ -12,6 +12,7 @@ import {
     atualizarPacoteClienteId,
     concluirComPacote,
     estornarConclusaoAutomatica,
+    listarPendentesParaAgendamentoAutoConclusao,
     listarParaConclusaoAutomatica,
     listarSiblingsEditaveisDoLote,
     reservarNumeroNoPacoteOportunistaNaTransacao,
@@ -1108,6 +1109,59 @@ describe('agendamento.repository.listarParaConclusaoAutomatica', () => {
                 take: 1,
             }),
         );
+    });
+});
+
+describe('agendamento.repository.listarPendentesParaAgendamentoAutoConclusao', () => {
+    it('inclui campos persistidos e status do pacote no snapshot', async () => {
+        const dataHoraInicio = new Date('2026-11-10T12:00:00.000Z');
+        const dataHoraFim = new Date('2026-11-10T13:00:00.000Z');
+        vi.mocked(prisma.agendamento.findMany).mockResolvedValue([
+            {
+                id: 'agendamento-1',
+                pacoteClienteId: 'pacote-cliente-1',
+                servicoId: 'servico-1',
+                status: StatusAgendamento.CONFIRMADO,
+                concluido: false,
+                dataHoraInicio,
+                dataHoraFim,
+                pacoteCliente: { status: StatusPacoteCliente.ATIVO },
+            },
+        ] as never);
+        const aPartirDe = new Date('2026-01-01T00:00:00.000Z');
+
+        await expect(
+            listarPendentesParaAgendamentoAutoConclusao(aPartirDe),
+        ).resolves.toEqual([
+            {
+                id: 'agendamento-1',
+                pacoteClienteId: 'pacote-cliente-1',
+                servicoId: 'servico-1',
+                status: StatusAgendamento.CONFIRMADO,
+                concluido: false,
+                dataHoraInicio,
+                dataHoraFim,
+                statusPacoteCliente: StatusPacoteCliente.ATIVO,
+            },
+        ]);
+        expect(prisma.agendamento.findMany).toHaveBeenCalledWith({
+            where: {
+                pacoteClienteId: { not: null },
+                concluido: false,
+                status: { not: StatusAgendamento.CANCELADO },
+                dataHoraInicio: { gte: aPartirDe },
+            },
+            select: {
+                id: true,
+                pacoteClienteId: true,
+                servicoId: true,
+                status: true,
+                concluido: true,
+                dataHoraInicio: true,
+                dataHoraFim: true,
+                pacoteCliente: { select: { status: true } },
+            },
+        });
     });
 });
 

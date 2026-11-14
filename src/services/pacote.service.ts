@@ -1,6 +1,7 @@
 import { Prisma, StatusPacoteCliente } from '@prisma/client';
 import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { AppError } from '../lib/app-error';
+import { notificarAutoConclusao } from '../lib/auto-conclusao-events';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as pacoteRepository from '../repositories/pacote.repository';
@@ -320,12 +321,16 @@ export async function atualizarUsosAnteriores(
         servicoId,
         usosAnteriores,
     );
-
     const pacoteCliente =
         await pacoteClienteRepository.buscarPorId(pacoteClienteId);
     if (!pacoteCliente) {
         throw new AppError('Pacote do cliente não encontrado.', 404);
     }
+    notificarAutoConclusao({
+        tipo: 'pacote-cliente',
+        pacoteClienteId,
+        status: pacoteCliente.status,
+    });
 
     return pacoteCliente;
 }
