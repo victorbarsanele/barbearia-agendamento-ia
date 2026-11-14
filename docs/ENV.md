@@ -69,6 +69,18 @@ Use defaults abaixo como comportamento do código quando variável estiver ausen
 | `CONFIRMACAO_TOLERANCIA_MINUTOS` | Não         | `0`    | Inteiro entre `0` e `60`; valor inválido interrompe inicialização   | Tolerância aplicada à confirmação de rascunho, sem alterar criação pelo painel/API. |
 | `AVISO_CURTO_PRAZO_MINUTOS`      | Não         | `60`   | Inteiro entre `0` e `1440`; valor inválido interrompe inicialização | Inclui aviso no resumo quando horário está mais próximo que o limite.               |
 
+## Conclusão automática
+
+| Variável                         | Obrigatória        | Padrão     | Faixa/regra                                                              | Descrição                                                                                     |
+| -------------------------------- | ------------------ | ---------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `AUTO_CONCLUSAO_ENABLED`         | Não                | Desativada | Só `true` ou `false`; apenas `true` inicia o scheduler                   | Ativa conclusão automática de agendamentos vinculados a pacotes.                              |
+| `AUTO_CONCLUSAO_A_PARTIR_DE`     | Sim quando ativada | Sem padrão | Data local válida `YYYY-MM-DD`; inválida interrompe inicialização        | Limite inferior de data de início dos agendamentos elegíveis.                                 |
+| `AUTO_CONCLUSAO_HORA_LOCAL`      | Não                | `6`        | Inteiro entre `0` e `23`; inválido interrompe inicialização              | Hora diária do corte em `America/Sao_Paulo`.                                                  |
+| `AUTO_CONCLUSAO_SAFETY_SWEEP_MS` | Não                | `3600000`  | `0` desativa; caso contrário, inteiro `>= 60000`                         | Varredura de segurança do scheduler de conclusão automática.                                  |
+| `AUTO_CONCLUSAO_INTERVALO_MS`    | Não                | `900000`   | Depreciada e ignorada; não é validada e não causa falha de inicialização | Mantida apenas para compatibilidade de configuração antiga; não define intervalo de execução. |
+| `AUTO_CONCLUSAO_LOTE_MAXIMO`     | Não                | `50`       | Inteiro entre `1` e `500`; inválido interrompe inicialização             | Máximo de conclusões por ciclo.                                                               |
+| `JANELA_ESTORNO_HORAS`           | Não                | `48`       | Inteiro entre `1` e `720`; inválido interrompe inicialização             | Janela para estornar conclusão automática.                                                    |
+
 ## Mídia e áudio
 
 | Variável                      | Obrigatória | Padrão     | Faixa/regra                                                     | Descrição                                           |

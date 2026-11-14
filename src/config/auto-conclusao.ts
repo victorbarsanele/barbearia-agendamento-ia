@@ -5,7 +5,7 @@ export interface AutoConclusaoConfig {
     enabled: boolean;
     aPartirDe: Date | null;
     horaLocal: number;
-    intervaloMs: number;
+    safetySweepMs: number;
     loteMaximo: number;
     janelaEstornoHoras: number;
 }
@@ -29,6 +29,24 @@ function lerInteiro(
     ) {
         throw new Error(
             `${nome} inválida: informe inteiro entre ${minimo} e ${maximo}.`,
+        );
+    }
+    return numero;
+}
+
+function lerSafetySweepMs(): number {
+    const recebido = process.env.AUTO_CONCLUSAO_SAFETY_SWEEP_MS;
+    if (recebido === undefined) return 60 * 60 * 1000;
+
+    const valor = recebido.trim();
+    const numero = Number(valor);
+    if (
+        !/^\d+$/.test(valor) ||
+        !Number.isInteger(numero) ||
+        (numero !== 0 && numero < 60_000)
+    ) {
+        throw new Error(
+            'AUTO_CONCLUSAO_SAFETY_SWEEP_MS inválida: use 0 ou inteiro >= 60000.',
         );
     }
     return numero;
@@ -66,12 +84,7 @@ export function getAutoConclusaoConfig(): AutoConclusaoConfig {
         enabled,
         aPartirDe: enabled ? lerDataInicial() : null,
         horaLocal: lerInteiro('AUTO_CONCLUSAO_HORA_LOCAL', 6, 0, 23),
-        intervaloMs: lerInteiro(
-            'AUTO_CONCLUSAO_INTERVALO_MS',
-            15 * 60 * 1000,
-            1000,
-            24 * 60 * 60 * 1000,
-        ),
+        safetySweepMs: lerSafetySweepMs(),
         loteMaximo: lerInteiro('AUTO_CONCLUSAO_LOTE_MAXIMO', 50, 1, 500),
         janelaEstornoHoras: lerInteiro('JANELA_ESTORNO_HORAS', 48, 1, 720),
     };
@@ -91,6 +104,26 @@ export function calcularCorteAutoConclusao(
     }
     local.setHours(0, 0, 0, 0);
     return fromZonedTime(local, TIME_ZONE);
+}
+
+export function calcularProximoVencimentoAutoConclusao(
+    dataHoraFim: Date,
+    horaLocal: number,
+): Date {
+    const fimLocal = toZonedTime(dataHoraFim, TIME_ZONE);
+    const corteLocal = new Date(fimLocal);
+    corteLocal.setDate(corteLocal.getDate() + 1);
+    corteLocal.setHours(0, 0, 0, 0);
+
+    let corte = fromZonedTime(corteLocal, TIME_ZONE);
+    if (corte.getTime() <= dataHoraFim.getTime()) {
+        corteLocal.setDate(corteLocal.getDate() + 1);
+        corte = fromZonedTime(corteLocal, TIME_ZONE);
+    }
+
+    const vencimentoLocal = toZonedTime(corte, TIME_ZONE);
+    vencimentoLocal.setHours(horaLocal, 0, 0, 0);
+    return fromZonedTime(vencimentoLocal, TIME_ZONE);
 }
 
 export function estaDentroDaJanelaEstorno(

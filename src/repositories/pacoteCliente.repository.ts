@@ -1,4 +1,5 @@
 import { PacoteCliente, Prisma, StatusPacoteCliente } from '@prisma/client';
+import { notificarAutoConclusao } from '../lib/auto-conclusao-events';
 import prisma from '../lib/prisma';
 
 export type PacoteClienteComPacote = Prisma.PacoteClienteGetPayload<{
@@ -96,16 +97,22 @@ export async function atualizarStatus(
     id: string,
     status: StatusPacoteCliente,
 ): Promise<PacoteCliente> {
-    return prisma.pacoteCliente.update({
+    const pacoteCliente = await prisma.pacoteCliente.update({
         where: { id },
         data: { status },
     });
+    notificarAutoConclusao({
+        tipo: 'pacote-cliente',
+        pacoteClienteId: id,
+        status,
+    });
+    return pacoteCliente;
 }
 
 export async function cancelarSeAtivo(
     id: string,
 ): Promise<PacoteCliente | null> {
-    return prisma.$transaction(async (tx) => {
+    const pacoteCliente = await prisma.$transaction(async (tx) => {
         const resultado = await tx.pacoteCliente.updateMany({
             where: { id, status: StatusPacoteCliente.ATIVO },
             data: { status: StatusPacoteCliente.CANCELADO },
@@ -114,4 +121,12 @@ export async function cancelarSeAtivo(
 
         return tx.pacoteCliente.findUniqueOrThrow({ where: { id } });
     });
+    if (pacoteCliente) {
+        notificarAutoConclusao({
+            tipo: 'pacote-cliente',
+            pacoteClienteId: id,
+            status: pacoteCliente.status,
+        });
+    }
+    return pacoteCliente;
 }

@@ -3,6 +3,7 @@ import {
     OrigemConclusaoAgendamento,
     Prisma,
     StatusAgendamento,
+    StatusPacoteCliente,
 } from '@prisma/client';
 import { toZonedTime } from 'date-fns-tz';
 import { getAgendamentoConfig } from '../config/agendamento';
@@ -13,6 +14,10 @@ import {
     getAutoConclusaoConfig,
 } from '../config/auto-conclusao';
 import { AppError } from '../lib/app-error';
+import {
+    notificarAutoConclusao,
+    type SnapshotAutoConclusao,
+} from '../lib/auto-conclusao-events';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
@@ -27,6 +32,38 @@ import { estaDentroDoHorarioDeAlmoco } from './horario-funcionamento';
 import * as horarioFuncionamentoService from './horario-funcionamento.service';
 
 export const TIME_ZONE = HORARIO_TIME_ZONE;
+
+function notificarSnapshotAutoConclusao(
+    agendamento: SnapshotAutoConclusao,
+    statusPacoteCliente?: StatusPacoteCliente | null,
+): void {
+    const snapshot: SnapshotAutoConclusao = {
+        id: agendamento.id,
+        pacoteClienteId: agendamento.pacoteClienteId,
+        servicoId: agendamento.servicoId,
+        status: agendamento.status,
+        concluido: agendamento.concluido,
+        dataHoraInicio: agendamento.dataHoraInicio,
+        dataHoraFim: agendamento.dataHoraFim,
+    };
+    if (statusPacoteCliente !== undefined) {
+        snapshot.statusPacoteCliente = statusPacoteCliente;
+    } else if (!agendamento.pacoteClienteId) {
+        snapshot.statusPacoteCliente = null;
+    }
+    notificarAutoConclusao({ tipo: 'agendamento', agendamento: snapshot });
+}
+
+function notificarPacoteAutoConclusao(
+    pacoteClienteId: string,
+    status: StatusPacoteCliente,
+): void {
+    notificarAutoConclusao({
+        tipo: 'pacote-cliente',
+        pacoteClienteId,
+        status,
+    });
+}
 
 async function enfileirarSemFalhar(ids: string[]): Promise<void> {
     try {
@@ -928,6 +965,12 @@ async function criarComResultadoInterno(
                       criarComVinculoAutomaticoWhatsappNaTransacao(tx, dados),
                   )
                 : { agendamento: await agendamentoRepository.criar(dados) };
+        notificarSnapshotAutoConclusao(
+            resultado.agendamento,
+            resultado.agendamento.pacoteClienteId
+                ? StatusPacoteCliente.ATIVO
+                : null,
+        );
         await enfileirarSemFalhar([resultado.agendamento.id]);
         return resultado;
     } catch (error) {
@@ -1040,10 +1083,18 @@ export async function criarLote(data: LoteAgendamentoData) {
         validarContratoLote(data);
         if (data.pacoteId) {
             const resultado = await criarLoteComPacoteDoCatalogo(data);
+            for (const agendamento of resultado.autoConclusaoSnapshots) {
+                notificarSnapshotAutoConclusao(
+                    agendamento,
+                    StatusPacoteCliente.ATIVO,
+                );
+            }
             await enfileirarSemFalhar(
                 resultado.criados.map(({ agendamentoId }) => agendamentoId),
             );
-            return resultado;
+            const { autoConclusaoSnapshots: _snapshots, ...resposta } =
+                resultado;
+            return resposta;
         }
 
         const { servico } = await carregarDependencias(
@@ -1096,6 +1147,12 @@ export async function criarLote(data: LoteAgendamentoData) {
                           data.servicoId,
                       )
                     : await agendamentoRepository.criar(dados);
+                notificarSnapshotAutoConclusao(
+                    agendamento,
+                    agendamento.pacoteClienteId
+                        ? StatusPacoteCliente.ATIVO
+                        : null,
+                );
 
                 criados.push({
                     agendamentoId: agendamento.id,
@@ -1285,6 +1342,7 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                     data: string;
                     horario: string;
                 }[] = [];
+                const autoConclusaoSnapshots: SnapshotAutoConclusao[] = [];
 
                 for (const slot of data.slots) {
                     try {
@@ -1317,6 +1375,7 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                             data: slot.data,
                             horario: slot.horario,
                         });
+                        autoConclusaoSnapshots.push(agendamento);
                     } catch (error) {
                         if (
                             !(error instanceof AppError) &&
@@ -1344,6 +1403,7 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                     criados,
                     falhados: [],
                     pacoteClienteId: resolvido.pacoteClienteId,
+                    autoConclusaoSnapshots,
                 };
             },
             { timeout: 10_000 },
@@ -1499,6 +1559,8 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
               )
             : await agendamentoRepository.atualizar(id, dados);
 
+        notificarSnapshotAutoConclusao(agendamentoAtualizado);
+
         await enfileirarSemFalhar([agendamentoAtualizado.id]);
 
         if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
@@ -1642,6 +1704,7 @@ async function atualizarComPacoteDoCatalogo(
     );
 
     await enfileirarSemFalhar([atualizado.id]);
+    notificarSnapshotAutoConclusao(atualizado, StatusPacoteCliente.ATIVO);
 
     if ((dataHoraMudou || servicoMudou) && data.notificarCliente === true) {
         try {
@@ -1674,6 +1737,7 @@ export async function cancelar(
         }
 
         let agendamentoCancelado: agendamentoRepository.AgendamentoComRelacoes;
+        let pacoteRestauradoId: string | undefined;
         if (isAgendamentoConcluido(agendamento)) {
             if (!ehConclusaoAutomaticaEstornavel(agendamento, new Date())) {
                 throw new AppError(
@@ -1688,6 +1752,7 @@ export async function cancelar(
                     new Date(),
                     config.janelaEstornoHoras,
                 );
+            pacoteRestauradoId = agendamento.pacoteClienteId ?? undefined;
         } else {
             agendamentoCancelado = await agendamentoRepository.cancelar(id);
         }
@@ -1715,6 +1780,23 @@ export async function cancelar(
                   (siblingId) => agendamentoRepository.cancelar(siblingId),
               )
             : [];
+
+        notificarAutoConclusao({
+            tipo: 'agendamento-removido',
+            agendamentoId: agendamentoCancelado.id,
+        });
+        for (const agendamentoId of agendamentosAfetados) {
+            notificarAutoConclusao({
+                tipo: 'agendamento-removido',
+                agendamentoId,
+            });
+        }
+        if (pacoteRestauradoId) {
+            notificarPacoteAutoConclusao(
+                pacoteRestauradoId,
+                StatusPacoteCliente.ATIVO,
+            );
+        }
 
         await enfileirarSemFalhar([
             agendamentoCancelado.id,
@@ -1812,6 +1894,14 @@ async function concluirInterno(id: string, agora = new Date()) {
 
     switch (resultado.estado) {
         case 'CONCLUIDO':
+            notificarAutoConclusao({
+                tipo: 'agendamento-removido',
+                agendamentoId: id,
+            });
+            notificarPacoteAutoConclusao(
+                agendamento.pacoteClienteId,
+                resultado.pacoteCliente.status,
+            );
             break;
         case 'IGNORADO':
             throw new AppError('Agendamento já está concluído.', 409);
@@ -1953,10 +2043,15 @@ export async function vincularPacote(id: string, pacoteClienteId: string) {
             );
         }
 
-        return await agendamentoRepository.atualizarPacoteClienteId(
+        const atualizado = await agendamentoRepository.atualizarPacoteClienteId(
             id,
             pacoteClienteId,
         );
+        notificarSnapshotAutoConclusao(
+            atualizado,
+            pacoteCliente?.status ?? null,
+        );
+        return atualizado;
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -1980,7 +2075,12 @@ export async function desvincularPacote(id: string) {
             throw new AppError('Agendamento não está vinculado a pacote.', 400);
         }
 
-        return await agendamentoRepository.atualizarPacoteClienteId(id, null);
+        const atualizado = await agendamentoRepository.atualizarPacoteClienteId(
+            id,
+            null,
+        );
+        notificarSnapshotAutoConclusao(atualizado, null);
+        return atualizado;
     } catch (error) {
         if (error instanceof AppError) {
             throw error;

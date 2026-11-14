@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
+import type { SnapshotAutoConclusao } from '../lib/auto-conclusao-events';
 import * as clienteRepository from './cliente.repository';
 import * as pacoteRepository from './pacote.repository';
 
@@ -1125,6 +1126,33 @@ export async function listarParaConclusaoAutomatica(
             ? [{ ...candidato, pacoteClienteId: candidato.pacoteClienteId }]
             : [],
     );
+}
+
+export async function listarPendentesParaAgendamentoAutoConclusao(
+    aPartirDe: Date,
+): Promise<SnapshotAutoConclusao[]> {
+    const agendamentos = await prisma.agendamento.findMany({
+        where: {
+            pacoteClienteId: { not: null },
+            concluido: false,
+            status: { not: StatusAgendamento.CANCELADO },
+            dataHoraInicio: { gte: aPartirDe },
+        },
+        select: {
+            id: true,
+            pacoteClienteId: true,
+            servicoId: true,
+            status: true,
+            concluido: true,
+            dataHoraInicio: true,
+            dataHoraFim: true,
+            pacoteCliente: { select: { status: true } },
+        },
+    });
+    return agendamentos.map(({ pacoteCliente, ...agendamento }) => ({
+        ...agendamento,
+        statusPacoteCliente: pacoteCliente?.status ?? null,
+    }));
 }
 
 export async function estornarConclusaoAutomatica(

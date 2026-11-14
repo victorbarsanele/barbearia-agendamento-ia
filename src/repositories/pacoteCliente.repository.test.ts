@@ -1,5 +1,9 @@
 import { StatusPacoteCliente } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    observarAutoConclusao,
+    type AlteracaoAutoConclusao,
+} from '../lib/auto-conclusao-events';
 import prisma from '../lib/prisma';
 import { cancelarSeAtivo } from './pacoteCliente.repository';
 
@@ -33,5 +37,36 @@ describe('pacoteCliente.repository.cancelarSeAtivo', () => {
             data: { status: StatusPacoteCliente.CANCELADO },
         });
         expect(tx.pacoteCliente.findUniqueOrThrow).not.toHaveBeenCalled();
+    });
+
+    it('notifica mudança de status somente após cancelar pacote ativo', async () => {
+        const alteracoes: AlteracaoAutoConclusao[] = [];
+        const removerObservador = observarAutoConclusao((alteracao) =>
+            alteracoes.push(alteracao),
+        );
+        const tx = {
+            pacoteCliente: {
+                updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+                findUniqueOrThrow: vi.fn().mockResolvedValue({
+                    id: 'pacote-cliente-1',
+                    status: StatusPacoteCliente.CANCELADO,
+                }),
+            },
+        };
+        transaction.mockImplementation(async (operation) => operation(tx));
+
+        try {
+            await cancelarSeAtivo('pacote-cliente-1');
+        } finally {
+            removerObservador();
+        }
+
+        expect(alteracoes).toEqual([
+            {
+                tipo: 'pacote-cliente',
+                pacoteClienteId: 'pacote-cliente-1',
+                status: StatusPacoteCliente.CANCELADO,
+            },
+        ]);
     });
 });

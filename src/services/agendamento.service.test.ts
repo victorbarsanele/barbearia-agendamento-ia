@@ -6,6 +6,10 @@ import {
 } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppError } from '../lib/app-error';
+import {
+    observarAutoConclusao,
+    type AlteracaoAutoConclusao,
+} from '../lib/auto-conclusao-events';
 
 const notificationMock = vi.hoisted(() => ({
     enviarNotificacaoWhatsApp: vi.fn(),
@@ -236,6 +240,43 @@ afterEach(() => {
 });
 
 describe('agendamento.service.criar', () => {
+    it('notifica o scheduler depois de criar um agendamento', async () => {
+        const alteracoes: AlteracaoAutoConclusao[] = [];
+        const removerObservador = observarAutoConclusao((alteracao) =>
+            alteracoes.push(alteracao),
+        );
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        try {
+            await agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-24T13:00:00-03:00',
+                origem: 'PAINEL',
+            });
+        } finally {
+            removerObservador();
+        }
+
+        expect(alteracoes).toEqual([
+            {
+                tipo: 'agendamento',
+                agendamento: {
+                    id: agendamentoAtual.id,
+                    pacoteClienteId: null,
+                    servicoId: agendamentoAtual.servicoId,
+                    status: agendamentoAtual.status,
+                    concluido: false,
+                    dataHoraInicio: agendamentoAtual.dataHoraInicio,
+                    dataHoraFim: agendamentoAtual.dataHoraFim,
+                    statusPacoteCliente: null,
+                },
+            },
+        ]);
+    });
+
     it('usa almoço configurado para dia específico', async () => {
         mockarDependenciasPadrao({ 5: [720, 780] });
         vi.mocked(agendamentoRepository.criar).mockResolvedValue({
