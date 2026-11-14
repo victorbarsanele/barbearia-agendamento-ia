@@ -122,6 +122,51 @@ describe('Google Agenda outbox repository', () => {
         ).resolves.toEqual([]);
     });
 
+    it('notifica enqueue, lease e finalização após mutações bem-sucedidas', async () => {
+        const alteracoes: syncRepository.AlteracaoOutbox[] = [];
+        const removerObservador = syncRepository.observarOutbox((alteracao) =>
+            alteracoes.push(alteracao),
+        );
+        const agora = new Date('2026-10-26T12:00:00.000Z');
+        const vencimentoFinal = new Date('2026-10-26T12:05:00.000Z');
+        vi.mocked(prisma.$transaction).mockResolvedValue([] as never);
+        vi.mocked(prisma.sincronizacaoGoogleAgenda.findMany).mockResolvedValue([
+            { agendamentoId: 'agendamento-1', tentativas: 0, versao: 4 },
+        ] as never);
+        vi.mocked(
+            prisma.sincronizacaoGoogleAgenda.updateMany,
+        ).mockResolvedValue({ count: 1 });
+
+        try {
+            await syncRepository.enfileirar(['agendamento-1']);
+            await syncRepository.reivindicar(agora, 10);
+            await syncRepository.finalizar('agendamento-1', 4, {
+                status: 'SINCRONIZADO',
+                tentativas: 0,
+                proximaTentativaEm: vencimentoFinal,
+                ultimoErro: null,
+            });
+        } finally {
+            removerObservador();
+        }
+
+        expect(alteracoes).toHaveLength(3);
+        expect(alteracoes[0]).toMatchObject({
+            agendamentoId: 'agendamento-1',
+            status: 'PENDENTE',
+        });
+        expect(alteracoes[1]).toEqual({
+            agendamentoId: 'agendamento-1',
+            status: 'PENDENTE',
+            proximaTentativaEm: new Date(agora.getTime() + 2 * 60_000),
+        });
+        expect(alteracoes[2]).toEqual({
+            agendamentoId: 'agendamento-1',
+            status: 'SINCRONIZADO',
+            proximaTentativaEm: vencimentoFinal,
+        });
+    });
+
     it('não finaliza item quando versão mudou após reivindicação', async () => {
         vi.mocked(
             prisma.sincronizacaoGoogleAgenda.updateMany,

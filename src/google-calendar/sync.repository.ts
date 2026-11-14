@@ -31,6 +31,30 @@ export type ResultadoFinalizacao = {
     ultimoErro: string | null;
 };
 
+export type ItemPendenteSincronizacao = {
+    agendamentoId: string;
+    proximaTentativaEm: Date;
+};
+
+export type AlteracaoOutbox = ItemPendenteSincronizacao & {
+    status: ResultadoFinalizacao['status'];
+};
+
+const observadoresOutbox = new Set<(alteracao: AlteracaoOutbox) => void>();
+
+export function observarOutbox(
+    observador: (alteracao: AlteracaoOutbox) => void,
+): () => void {
+    observadoresOutbox.add(observador);
+    return () => observadoresOutbox.delete(observador);
+}
+
+function notificarOutbox(alteracao: AlteracaoOutbox): void {
+    for (const observador of observadoresOutbox) {
+        observador(alteracao);
+    }
+}
+
 export async function enfileirar(
     ids: string[],
 ): Promise<ResultadoEnfileiramento> {
@@ -71,6 +95,13 @@ export async function enfileirar(
                     maxWait: MAXWAIT_TRANSACAO_MS,
                 },
             );
+            for (const agendamentoId of lote) {
+                notificarOutbox({
+                    agendamentoId,
+                    status: 'PENDENTE',
+                    proximaTentativaEm: agora,
+                });
+            }
         } catch (erro) {
             lotesFalhos.push({
                 erro,
@@ -115,7 +146,14 @@ export async function reivindicar(
             },
             data: { proximaTentativaEm: leaseAte },
         });
-        if (atualizado.count === 1) reivindicados.push(candidato);
+        if (atualizado.count === 1) {
+            reivindicados.push(candidato);
+            notificarOutbox({
+                agendamentoId: candidato.agendamentoId,
+                status: 'PENDENTE',
+                proximaTentativaEm: leaseAte,
+            });
+        }
     }
 
     return reivindicados;
@@ -130,7 +168,21 @@ export async function finalizar(
         where: { agendamentoId, versao },
         data: resultado,
     });
-    return atualizado.count === 1;
+    if (atualizado.count !== 1) return false;
+    notificarOutbox({
+        agendamentoId,
+        status: resultado.status,
+        proximaTentativaEm: resultado.proximaTentativaEm,
+    });
+    return true;
+}
+
+export async function listarPendentes(): Promise<ItemPendenteSincronizacao[]> {
+    return prisma.sincronizacaoGoogleAgenda.findMany({
+        where: { status: 'PENDENTE' },
+        orderBy: { proximaTentativaEm: 'asc' },
+        select: { agendamentoId: true, proximaTentativaEm: true },
+    });
 }
 
 export async function buscarAgendamento(agendamentoId: string) {
