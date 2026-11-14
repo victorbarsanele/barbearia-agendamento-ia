@@ -85,11 +85,12 @@ Os valores numéricos de `AUDIO_*` não têm limite superior e o código não ex
 
 ## Google Agenda
 
-| Variável                             | Obrigatória           | Padrão     | Faixa/regra                                                                                   | Descrição                                           |
-| ------------------------------------ | --------------------- | ---------- | --------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `GOOGLE_CALENDAR_SYNC_ENABLED`       | Não                   | Desativada | Só valor exato `true` ativa sincronização                                                     | Ativa espelho unidirecional de agendamentos.        |
-| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Sim quando sync ativa | Sem padrão | Base64 estrito com round-trip; JSON deve conter `client_email` com `@` e `private_key` válida | Credencial da service account codificada em Base64. |
-| `GOOGLE_CALENDAR_ID`                 | Sim quando sync ativa | Sem padrão | Não vazia após trim; sem faixa adicional                                                      | ID da agenda dedicada.                              |
+| Variável                             | Obrigatória           | Padrão     | Faixa/regra                                                                                   | Descrição                                             |
+| ------------------------------------ | --------------------- | ---------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `GOOGLE_CALENDAR_SYNC_ENABLED`       | Não                   | Desativada | Só valor exato `true` ativa sincronização                                                     | Ativa espelho unidirecional de agendamentos.          |
+| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Sim quando sync ativa | Sem padrão | Base64 estrito com round-trip; JSON deve conter `client_email` com `@` e `private_key` válida | Credencial da service account codificada em Base64.   |
+| `GOOGLE_CALENDAR_ID`                 | Sim quando sync ativa | Sem padrão | Não vazia após trim; sem faixa adicional                                                      | ID da agenda dedicada.                                |
+| `GOOGLE_CALENDAR_SAFETY_SWEEP_MS`    | Não                   | `3600000`  | `0` desativa; caso contrário, inteiro `>= 60000`                                              | Intervalo da varredura de segurança da outbox Google. |
 
 ## Controle e desenvolvimento
 

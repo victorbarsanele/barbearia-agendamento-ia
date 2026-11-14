@@ -41,7 +41,10 @@ import { iniciarJobAutoConclusao } from './src/services/auto-conclusao-agendamen
 import { getGoogleCalendarConfig } from './src/google-calendar/config';
 import { GoogleCalendarAdapter } from './src/google-calendar/google-calendar.adapter';
 import { iniciarReconciliacaoGoogleAgenda } from './src/google-calendar/sync.scheduler';
-import { iniciarWorkerGoogleAgenda } from './src/google-calendar/sync.worker';
+import {
+    iniciarWorkerGoogleAgenda,
+    validarGoogleCalendarWorkerConfig,
+} from './src/google-calendar/sync.worker';
 
 const app = Fastify({
     logger: true,
@@ -133,6 +136,7 @@ const start = async (): Promise<void> => {
         validarAgendamentoConfig();
         validarAutoConclusaoConfig();
         validarJobLembretesRascunhoConfig();
+        validarGoogleCalendarWorkerConfig();
         validateWhatsAppConfiguration();
         await app.listen({ port, host: '0.0.0.0' });
         app.log.info({ nodeVersion: process.version }, 'node.runtime');

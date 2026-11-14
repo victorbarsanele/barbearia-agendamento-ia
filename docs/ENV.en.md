@@ -85,11 +85,12 @@ Numeric `AUDIO_*` values have no upper bound and are not required to be integers
 
 ## Google Calendar
 
-| Variable                             | Required                 | Default    | Range/rule                                                                                    | Description                                 |
-| ------------------------------------ | ------------------------ | ---------- | --------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `GOOGLE_CALENDAR_SYNC_ENABLED`       | No                       | Disabled   | Only exact value `true` enables synchronization                                               | Enables one-way appointment mirroring.      |
-| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Yes when sync is enabled | No default | Strict Base64 round-trip; JSON must contain `client_email` with `@` and a valid `private_key` | Base64-encoded service account credentials. |
-| `GOOGLE_CALENDAR_ID`                 | Yes when sync is enabled | No default | Must be non-empty after trimming; no additional range                                         | Dedicated calendar ID.                      |
+| Variable                             | Required                 | Default    | Range/rule                                                                                    | Description                                  |
+| ------------------------------------ | ------------------------ | ---------- | --------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `GOOGLE_CALENDAR_SYNC_ENABLED`       | No                       | Disabled   | Only exact value `true` enables synchronization                                               | Enables one-way appointment mirroring.       |
+| `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` | Yes when sync is enabled | No default | Strict Base64 round-trip; JSON must contain `client_email` with `@` and a valid `private_key` | Base64-encoded service account credentials.  |
+| `GOOGLE_CALENDAR_ID`                 | Yes when sync is enabled | No default | Must be non-empty after trimming; no additional range                                         | Dedicated calendar ID.                       |
+| `GOOGLE_CALENDAR_SAFETY_SWEEP_MS`    | No                       | `3600000`  | `0` disables; otherwise, integer `>= 60000`                                                   | Safety sweep interval for the Google outbox. |
 
 ## Control and development
 
