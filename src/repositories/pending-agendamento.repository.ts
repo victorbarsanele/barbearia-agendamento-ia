@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 
-const REMINDER_MIN_EXPIRY_MARGIN_MS = 3 * 60_000;
+export const REMINDER_MIN_EXPIRY_MARGIN_MS = 3 * 60_000;
 
 export interface PendingAgendamento {
     telefoneSessao: string;
@@ -13,6 +13,48 @@ export interface PendingAgendamento {
     expiraEm: Date;
     lembreteEnviadoEm?: Date | null;
     resumoEnviadoEm?: Date | null;
+}
+
+export type PendingAgendamentoSchedule = Pick<
+    PendingAgendamento,
+    | 'telefoneSessao'
+    | 'criadoEm'
+    | 'expiraEm'
+    | 'dataHoraInicio'
+    | 'lembreteEnviadoEm'
+>;
+
+export type PendingAgendamentoChange =
+    | { tipo: 'salvo'; rascunho: PendingAgendamentoSchedule }
+    | { tipo: 'lembrete_reivindicado'; telefoneSessao: string; agora: Date }
+    | { tipo: 'resumo_marcado'; telefoneSessao: string }
+    | { tipo: 'removido'; telefoneSessao: string };
+
+let changeHandler: ((change: PendingAgendamentoChange) => void) | undefined;
+
+export function registrarObservadorRascunho(
+    handler: (change: PendingAgendamentoChange) => void,
+): () => void {
+    changeHandler = handler;
+    return () => {
+        if (changeHandler === handler) changeHandler = undefined;
+    };
+}
+
+function notificarAlteracaoRascunho(change: PendingAgendamentoChange): void {
+    changeHandler?.(change);
+}
+
+function paraAgendamento(
+    draft: PendingAgendamento,
+): PendingAgendamentoSchedule {
+    return {
+        telefoneSessao: draft.telefoneSessao,
+        criadoEm: draft.criadoEm,
+        expiraEm: draft.expiraEm,
+        dataHoraInicio: draft.dataHoraInicio,
+        lembreteEnviadoEm: draft.lembreteEnviadoEm,
+    };
 }
 
 export interface PendingAgendamentoRepository {
@@ -33,6 +75,7 @@ export interface PendingAgendamentoRepository {
         agora: Date,
         criadoAte: Date,
     ): Promise<PendingAgendamento[]>;
+    listarParaAgendamento(): Promise<PendingAgendamentoSchedule[]>;
     reivindicarLembrete(telefoneSessao: string, agora: Date): Promise<boolean>;
     marcarResumoEnviado(
         telefoneSessao: string,
@@ -89,6 +132,10 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
                 resumoEnviadoEm: null,
             },
         });
+        notificarAlteracaoRascunho({
+            tipo: 'salvo',
+            rascunho: paraAgendamento(saved),
+        });
         return toPending(saved);
     }
 
@@ -121,7 +168,14 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
             )
             ON CONFLICT ("telefoneSessao") DO NOTHING
         `;
-        return result === 1;
+        if (result === 1) {
+            notificarAlteracaoRascunho({
+                tipo: 'salvo',
+                rascunho: paraAgendamento(draft),
+            });
+            return true;
+        }
+        return false;
     }
 
     async obterValido(
@@ -154,6 +208,19 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
         });
     }
 
+    async listarParaAgendamento(): Promise<PendingAgendamentoSchedule[]> {
+        const prisma = await this.getPrisma();
+        return prisma.rascunhoAgendamento.findMany({
+            select: {
+                telefoneSessao: true,
+                criadoEm: true,
+                expiraEm: true,
+                dataHoraInicio: true,
+                lembreteEnviadoEm: true,
+            },
+        });
+    }
+
     async reivindicarLembrete(
         telefoneSessao: string,
         agora: Date,
@@ -172,7 +239,13 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
             },
             data: { lembreteEnviadoEm: agora },
         });
-        return result.count === 1;
+        if (result.count !== 1) return false;
+        notificarAlteracaoRascunho({
+            tipo: 'lembrete_reivindicado',
+            telefoneSessao,
+            agora,
+        });
+        return true;
     }
 
     async marcarResumoEnviado(
@@ -189,7 +262,12 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
             },
             data: { resumoEnviadoEm: agora },
         });
-        return result.count === 1;
+        if (result.count !== 1) return false;
+        notificarAlteracaoRascunho({
+            tipo: 'resumo_marcado',
+            telefoneSessao,
+        });
+        return true;
     }
 
     async listarExpirados(agora: Date): Promise<PendingAgendamento[]> {
@@ -207,7 +285,12 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
         const result = await prisma.rascunhoAgendamento.deleteMany({
             where: { telefoneSessao, expiraEm: { lt: agora } },
         });
-        return result.count === 1;
+        if (result.count !== 1) return false;
+        notificarAlteracaoRascunho({
+            tipo: 'removido',
+            telefoneSessao,
+        });
+        return true;
     }
 
     async consumir(
@@ -233,7 +316,9 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
                 "lembreteEnviadoEm",
                 "resumoEnviadoEm"
         `;
-        return rows[0] ? toPending(rows[0]) : null;
+        if (!rows[0]) return null;
+        notificarAlteracaoRascunho({ tipo: 'removido', telefoneSessao });
+        return toPending(rows[0]);
     }
 
     async apagar(telefoneSessao: string): Promise<boolean> {
@@ -241,7 +326,9 @@ export class PrismaPendingAgendamentoRepository implements PendingAgendamentoRep
         const result = await prisma.rascunhoAgendamento.deleteMany({
             where: { telefoneSessao },
         });
-        return result.count > 0;
+        if (result.count === 0) return false;
+        notificarAlteracaoRascunho({ tipo: 'removido', telefoneSessao });
+        return true;
     }
 }
 
@@ -258,6 +345,10 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             resumoEnviadoEm: null,
         };
         this.drafts.set(saved.telefoneSessao, saved);
+        notificarAlteracaoRascunho({
+            tipo: 'salvo',
+            rascunho: paraAgendamento(saved),
+        });
         return { ...saved };
     }
 
@@ -286,6 +377,7 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             return null;
         }
         this.drafts.delete(telefoneSessao);
+        notificarAlteracaoRascunho({ tipo: 'removido', telefoneSessao });
         return { ...draft };
     }
 
@@ -305,6 +397,10 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             .map((draft) => ({ ...draft }));
     }
 
+    async listarParaAgendamento(): Promise<PendingAgendamentoSchedule[]> {
+        return [...this.drafts.values()].map(paraAgendamento);
+    }
+
     async reivindicarLembrete(
         telefoneSessao: string,
         agora: Date,
@@ -320,6 +416,11 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             return false;
         }
         draft.lembreteEnviadoEm = agora;
+        notificarAlteracaoRascunho({
+            tipo: 'lembrete_reivindicado',
+            telefoneSessao,
+            agora,
+        });
         return true;
     }
 
@@ -337,6 +438,10 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             return false;
         }
         draft.resumoEnviadoEm = agora;
+        notificarAlteracaoRascunho({
+            tipo: 'resumo_marcado',
+            telefoneSessao,
+        });
         return true;
     }
 
@@ -355,6 +460,7 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             return false;
         }
         this.drafts.delete(telefoneSessao);
+        notificarAlteracaoRascunho({ tipo: 'removido', telefoneSessao });
         return true;
     }
 
@@ -363,12 +469,19 @@ export class InMemoryPendingAgendamentoRepository implements PendingAgendamentoR
             return false;
         }
         this.drafts.set(draft.telefoneSessao, { ...draft });
+        notificarAlteracaoRascunho({
+            tipo: 'salvo',
+            rascunho: paraAgendamento(draft),
+        });
         return true;
     }
 
     async apagar(telefoneSessao: string): Promise<boolean> {
         const existed = this.drafts.has(telefoneSessao);
         this.drafts.delete(telefoneSessao);
+        if (existed) {
+            notificarAlteracaoRascunho({ tipo: 'removido', telefoneSessao });
+        }
         return existed;
     }
 }

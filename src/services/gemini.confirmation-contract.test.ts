@@ -204,6 +204,10 @@ class InMemoryPendingRepository implements PendingAgendamentoRepository {
             .map((draft) => ({ ...draft }));
     }
 
+    async listarParaAgendamento(): Promise<PendingAgendamento[]> {
+        return [...this.drafts.values()].map((draft) => ({ ...draft }));
+    }
+
     async apagarExpirado(
         telefoneSessao: string,
         agora: Date,

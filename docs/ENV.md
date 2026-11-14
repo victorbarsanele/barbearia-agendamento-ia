@@ -58,6 +58,7 @@ Use defaults abaixo como comportamento do código quando variável estiver ausen
 | `HUMAN_TAKEOVER_TTL_MS`             | Não         | `1800000` | Número finito `> 0`; valor inválido usa fallback                                                                                           | TTL do takeover humano, deslizante desde última mensagem do barbeiro. |
 | `PENDING_BOOKING_TTL_MS`            | Não         | `1800000` | Número finito `> 0`; valor inválido usa fallback                                                                                           | TTL de rascunho de agendamento.                                       |
 | `PENDING_BOOKING_REMINDER_DELAY_MS` | Não         | `600000`  | Número finito `> 0`; valor inválido usa fallback                                                                                           | Atraso antes do lembrete de rascunho.                                 |
+| `PENDING_BOOKING_SAFETY_SWEEP_MS`   | Não         | `3600000` | `0` desativa; caso contrário, inteiro `>= 60000`                                                                                           | Varredura de segurança do agendador de rascunhos.                     |
 
 ## Agendamento e antecedência
 
