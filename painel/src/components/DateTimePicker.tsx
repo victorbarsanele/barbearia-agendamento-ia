@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CalendarGrid } from './CalendarGrid';
 import { useScrollTimePicker } from '../hooks/useScrollTimePicker';
 import {
@@ -17,6 +17,8 @@ type DateTimePickerProps = {
     onChange: (date: Date) => void;
     minDate?: Date;
     minDateTime?: Date;
+    currentTime?: number;
+    allowPastTimes?: boolean;
     maxDate?: Date;
     className?: string;
     labels?: {
@@ -30,19 +32,16 @@ export function DateTimePicker({
     onChange,
     minDate,
     minDateTime,
+    currentTime,
+    allowPastTimes = false,
     maxDate,
     className = '',
     labels,
 }: DateTimePickerProps) {
-    const [viewDate, setViewDate] = useState<Date>(
-        () => value ?? minDate ?? new Date(),
+    const [calendarViewDate, setCalendarViewDate] = useState<Date>(
+        () => value ?? new Date(),
     );
-
-    useEffect(() => {
-        if (value) {
-            setViewDate(value);
-        }
-    }, [value]);
+    const viewDate = value ?? calendarViewDate;
 
     const valueParts = value ? getBrazilDateParts(value) : null;
     const selectedHour = valueParts?.hour ?? '';
@@ -61,20 +60,25 @@ export function DateTimePicker({
         }
 
         const parts = getBrazilDateParts(activeDate);
+        const candidateTime = createBrazilDate(
+            parts.year,
+            parts.monthIndex,
+            parts.day,
+            Number(hour),
+            Number(minute),
+        ).getTime();
+
         return (
-            createBrazilDate(
-                parts.year,
-                parts.monthIndex,
-                parts.day,
-                Number(hour),
-                Number(minute),
-            ).getTime() >= minDateTime.getTime()
+            candidateTime >= minDateTime.getTime() ||
+            (allowPastTimes &&
+                currentTime !== undefined &&
+                candidateTime < currentTime)
         );
     };
 
     const emitDate = (date: Date) => {
         // Evita realinhar scroll quando mudança veio da própria interação interna.
-        setViewDate(date);
+        setCalendarViewDate(date);
         onChange(date);
     };
 
@@ -153,9 +157,10 @@ export function DateTimePicker({
                     const nextDate = new Date(
                         `${dateKey}T${selectedHour || '06'}:${selectedMinute || '00'}:00-03:00`,
                     );
-                    setViewDate(nextDate);
+                    setCalendarViewDate(nextDate);
                     onChange(nextDate);
                 }}
+                initialViewDate={viewDate}
                 minDateKey={minDate ? getBrazilDateKey(minDate) : null}
                 maxDateKey={maxDate ? getBrazilDateKey(maxDate) : null}
                 labels={{

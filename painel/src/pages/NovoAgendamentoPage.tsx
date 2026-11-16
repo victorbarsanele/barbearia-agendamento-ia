@@ -24,7 +24,7 @@ import { Checkbox } from '../components/ui/Checkbox';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PageHeader } from '../components/ui/PageHeader';
 import { DateTimePicker } from '../components/DateTimePicker';
-import { getBrazilDateParts } from '../utils/dateTime';
+import { getBrazilDateKey, getBrazilDateParts } from '../utils/dateTime';
 import { calcularPisoAntecedencia } from '../utils/antecedenciaAgendamento';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
 import { obterMotivosOverride } from '../utils/overrideExpediente';
@@ -42,6 +42,8 @@ import {
 } from '../utils/pacoteCatalogo';
 
 const DEBOUNCE_MS = 300;
+const RETROATIVO_MAX_DIAS = 90; // Keep aligned with backend RETROATIVO_MAX_DIAS.
+const TIME_ZONE = 'America/Sao_Paulo';
 const MENSAGEM_PACOTE_ATIVO_DIVERGENTE =
     'Cliente já possui pacote ativo diferente do pacote selecionado.';
 
@@ -77,19 +79,14 @@ function toIsoWithBrasiliaOffset(data: string, hora: string): string {
     return `${data}T${hora}:00-03:00`;
 }
 
-function getHojeEmBrasiliaParaInput(): string {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'America/Sao_Paulo',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-    }).formatToParts(new Date());
+function subtrairDiasDaData(data: string, dias: number): string {
+    const [ano, mes, dia] = data.split('-').map(Number);
+    const resultado = new Date(Date.UTC(ano, mes - 1, dia));
+    resultado.setUTCDate(resultado.getUTCDate() - dias);
 
-    const year = parts.find((part) => part.type === 'year')?.value ?? '1970';
-    const month = parts.find((part) => part.type === 'month')?.value ?? '01';
-    const day = parts.find((part) => part.type === 'day')?.value ?? '01';
-
-    return `${year}-${month}-${day}`;
+    return `${String(resultado.getUTCFullYear()).padStart(4, '0')}-${String(
+        resultado.getUTCMonth() + 1,
+    ).padStart(2, '0')}-${String(resultado.getUTCDate()).padStart(2, '0')}`;
 }
 
 function calcularDataHoraNoPassado(data: string, hora: string): boolean {
@@ -108,6 +105,39 @@ function calcularDataHoraNoPassado(data: string, hora: string): boolean {
 function formatarDataHoraResumo(data: string, hora: string): string {
     const [ano = '', mes = '', dia = ''] = data.split('-');
     return `${dia.padStart(2, '0')}/${mes.padStart(2, '0')}/${ano} às ${hora}`;
+}
+
+function formatarDataHoraCompleta(data: string, hora: string): string {
+    const dataHora = new Date(toIsoWithBrasiliaOffset(data, hora));
+    const dataFormatada = new Intl.DateTimeFormat('pt-BR', {
+        weekday: 'long',
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+        timeZone: TIME_ZONE,
+    }).format(dataHora);
+
+    return `${dataFormatada} às ${hora}`;
+}
+
+function obterMensagemErroRetroativo(error: unknown): string | null {
+    if (!(error instanceof ApiError)) {
+        return null;
+    }
+
+    if (error.body?.code === 'RETROATIVO_FORA_DO_LIMITE') {
+        const limiteDias =
+            typeof error.body.limiteDias === 'number'
+                ? error.body.limiteDias
+                : RETROATIVO_MAX_DIAS;
+        return `O registro retroativo ultrapassa o limite de ${limiteDias} dias. Escolha uma data mais recente.`;
+    }
+
+    if (error.body?.code === 'RETROATIVO_NAO_PERMITE_VENDA_PACOTE') {
+        return 'Venda de pacote do catálogo não está disponível em data passada. Selecione um pacote ativo ou deixe sem pacote.';
+    }
+
+    return null;
 }
 
 export function NovoAgendamentoPage() {
@@ -136,13 +166,18 @@ export function NovoAgendamentoPage() {
     const [data, setData] = useState('');
     const [horaSelecionada, setHoraSelecionada] = useState('');
     const [minutoSelecionado, setMinutoSelecionado] = useState('');
-    const [dataHoraNoPassado, setDataHoraNoPassado] = useState(false);
-    const [registroRetroativo, setRegistroRetroativo] = useState(false);
+    const [agora, setAgora] = useState(() => new Date().getTime());
+    const [avisoCatalogoRetroativo, setAvisoCatalogoRetroativo] =
+        useState(false);
 
     const [loadingServicos, setLoadingServicos] = useState(true);
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
+    const [retroativoPendente, setRetroativoPendente] = useState<{
+        payload: CriarAgendamentoPayload;
+        pacoteSeraConcluido: boolean;
+    } | null>(null);
     const [overridePendente, setOverridePendente] = useState<{
         payload: CriarAgendamentoPayload;
         motivos: string[];
@@ -190,7 +225,11 @@ export function NovoAgendamentoPage() {
         'h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]';
 
     const redirectTimeoutRef = useRef<number | null>(null);
-    const minData = useMemo(() => getHojeEmBrasiliaParaInput(), []);
+    const hoje = useMemo(() => getBrazilDateKey(new Date(agora)), [agora]);
+    const minData = useMemo(
+        () => subtrairDiasDaData(hoje, RETROATIVO_MAX_DIAS),
+        [hoje],
+    );
     const minDataDate = useMemo(
         () => new Date(`${minData}T12:00:00-03:00`),
         [minData],
@@ -211,14 +250,27 @@ export function NovoAgendamentoPage() {
 
         return `${horaSelecionada}:${minutoSelecionado}`;
     }, [horaSelecionada, minutoSelecionado]);
-    const registroRetroativoDisponivel = data === minData;
+    const dataHoraNoPassado = Boolean(
+        data &&
+        hora &&
+        new Date(toIsoWithBrasiliaOffset(data, hora)).getTime() < agora,
+    );
+    const registroRetroativo = dataHoraNoPassado;
     const minDateTime = useMemo(
         () =>
-            registroRetroativoDisponivel
-                ? calcularPisoAntecedencia(Date.now(), minAntecedenciaMinutos)
+            data === hoje
+                ? calcularPisoAntecedencia(agora, minAntecedenciaMinutos)
                 : undefined,
-        [registroRetroativoDisponivel, minAntecedenciaMinutos],
+        [agora, data, hoje, minAntecedenciaMinutos],
     );
+
+    useEffect(() => {
+        const timerId = window.setInterval(() => {
+            setAgora(new Date().getTime());
+        }, 30_000);
+
+        return () => window.clearInterval(timerId);
+    }, []);
 
     useEffect(() => {
         let ativo = true;
@@ -443,14 +495,13 @@ export function NovoAgendamentoPage() {
     const servicoSelecionado = servicosDisponiveis.find(
         (servico) => servico.id === servicoId,
     );
-
     const podeEnviar = useMemo(() => {
         return (
             !!clienteSelecionado?.id &&
             !!servicoId &&
             !!data &&
             !!hora &&
-            (!dataHoraNoPassado || registroRetroativo) &&
+            (!registroRetroativo || !pacoteCatalogoSelecionado) &&
             (!usarPacoteAtivo ||
                 (saldoServicoSelecionado !== null &&
                     saldoServicoSelecionado.quantidadeRestante > 0)) &&
@@ -460,9 +511,9 @@ export function NovoAgendamentoPage() {
     }, [
         clienteSelecionado?.id,
         data,
-        dataHoraNoPassado,
         hora,
         loadingServicos,
+        pacoteCatalogoSelecionado,
         registroRetroativo,
         saldoServicoSelecionado,
         servicoId,
@@ -518,6 +569,12 @@ export function NovoAgendamentoPage() {
 
     const handlePacoteCatalogoChange = (pacoteId: string) => {
         setOverridePendente(null);
+        if (registroRetroativo && pacoteId) {
+            setErro(
+                'Venda de pacote do catálogo não está disponível em data passada.',
+            );
+            return;
+        }
         const pacote = pacotesCatalogo.find((item) => item.id === pacoteId);
         const servicosDoPacote = filtrarServicosPorPacoteCatalogo(
             servicos,
@@ -530,6 +587,7 @@ export function NovoAgendamentoPage() {
         );
         setErro(null);
         setSucesso(null);
+        setAvisoCatalogoRetroativo(false);
     };
 
     const handleUsarPacoteAtivoChange = (checked: boolean) => {
@@ -560,101 +618,26 @@ export function NovoAgendamentoPage() {
         const nextData = `${String(parts.year).padStart(4, '0')}-${String(
             parts.monthIndex + 1,
         ).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
-        const nextHora = `${parts.hour}:${parts.minute}`;
-
-        const nextDateIsToday = nextData === minData;
-        const nextDateIsInvalidWithoutRetroactive =
-            nextDate.getTime() <
-            calcularPisoAntecedencia(
-                Date.now(),
-                minAntecedenciaMinutos,
-            ).getTime();
+        const nextRegistroRetroativo = nextDate.getTime() < Date.now();
 
         setData(nextData);
-        setRegistroRetroativo(nextDateIsToday ? registroRetroativo : false);
+        setHoraSelecionada(parts.hour);
+        setMinutoSelecionado(parts.minute);
 
-        if (!nextDateIsToday && nextDateIsInvalidWithoutRetroactive) {
-            setHoraSelecionada('');
-            setMinutoSelecionado('');
-            setDataHoraNoPassado(false);
-        } else {
-            setHoraSelecionada(parts.hour);
-            setMinutoSelecionado(parts.minute);
-            setDataHoraNoPassado(calcularDataHoraNoPassado(nextData, nextHora));
+        if (nextRegistroRetroativo && pacoteCatalogoId) {
+            setPacoteCatalogoId('');
+            setAvisoCatalogoRetroativo(true);
+        } else if (!nextRegistroRetroativo) {
+            setAvisoCatalogoRetroativo(false);
         }
         setErro(null);
         setSucesso(null);
     };
 
-    const handleRegistroRetroativoChange = (checked: boolean) => {
-        setOverridePendente(null);
-        setRegistroRetroativo(checked);
-
-        if (!checked && dataHoraSelecionada) {
-            const antecedenciaMinima = calcularPisoAntecedencia(
-                Date.now(),
-                minAntecedenciaMinutos,
-            );
-            if (dataHoraSelecionada.getTime() < antecedenciaMinima.getTime()) {
-                setHoraSelecionada('');
-                setMinutoSelecionado('');
-                setDataHoraNoPassado(false);
-            }
-        }
-    };
-
-    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-
-        if (!clienteSelecionado?.id) {
-            setErro('Selecione um cliente da lista de sugestões.');
-            return;
-        }
-
-        if (!servicoId || !data || !hora) {
-            setErro('Preencha todos os campos obrigatórios.');
-            return;
-        }
-
-        if (
-            usarPacoteAtivo &&
-            (!saldoServicoSelecionado ||
-                saldoServicoSelecionado.quantidadeRestante <= 0)
-        ) {
-            setErro('Serviço selecionado não possui saldo no pacote.');
-            return;
-        }
-
-        const horarioNoPassado = calcularDataHoraNoPassado(data, hora);
-        setDataHoraNoPassado(horarioNoPassado);
-
-        if (horarioNoPassado && !registroRetroativo) {
-            setErro('Selecione uma data e hora futuras para o agendamento.');
-            return;
-        }
-
+    const enviarAgendamento = async (payload: CriarAgendamentoPayload) => {
         setSubmetendo(true);
         setErro(null);
         setSucesso(null);
-
-        const payloadBase: CriarAgendamentoBasePayload = {
-            clienteId: clienteSelecionado.id,
-            servicoId,
-            dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
-            ...(registroRetroativo ? { registroRetroativo: true } : {}),
-        };
-        const payload: CriarAgendamentoPayload = montarPayloadAgendamento(
-            payloadBase,
-            usarPacoteAtivo && pacoteAtivoDoCliente
-                ? { tipo: 'ativo', pacoteClienteId: pacoteAtivoDoCliente.id }
-                : pacoteCatalogoSelecionado
-                  ? {
-                        tipo: 'catalogo',
-                        pacoteId: pacoteCatalogoSelecionado.id,
-                    }
-                  : { tipo: 'nenhum' },
-        );
-
         try {
             await criarAgendamento(payload);
             setSucesso('Agendamento criado com sucesso! Redirecionando...');
@@ -702,15 +685,93 @@ export function NovoAgendamentoPage() {
                 return;
             }
 
+            const mensagemRetroativa = obterMensagemErroRetroativo(error);
             const message =
-                error instanceof Error
+                mensagemRetroativa ??
+                (error instanceof Error
                     ? error.message
-                    : 'Não foi possível criar o agendamento.';
+                    : 'Não foi possível criar o agendamento.');
             setErro(message);
             setSucesso(null);
         } finally {
             setSubmetendo(false);
         }
+    };
+
+    const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+
+        if (!clienteSelecionado?.id) {
+            setErro('Selecione um cliente da lista de sugestões.');
+            return;
+        }
+
+        if (!servicoId || !data || !hora) {
+            setErro('Preencha todos os campos obrigatórios.');
+            return;
+        }
+
+        if (
+            usarPacoteAtivo &&
+            (!saldoServicoSelecionado ||
+                saldoServicoSelecionado.quantidadeRestante <= 0)
+        ) {
+            setErro('Serviço selecionado não possui saldo no pacote.');
+            return;
+        }
+
+        const retroativo = calcularDataHoraNoPassado(data, hora);
+        if (retroativo && pacoteCatalogoSelecionado) {
+            setPacoteCatalogoId('');
+            setAvisoCatalogoRetroativo(true);
+            setErro(
+                'Venda de pacote do catálogo não está disponível em data passada.',
+            );
+            return;
+        }
+
+        const payloadBase: CriarAgendamentoBasePayload = {
+            clienteId: clienteSelecionado.id,
+            servicoId,
+            dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
+            ...(retroativo ? { registroRetroativo: true } : {}),
+        };
+        const payload: CriarAgendamentoPayload = montarPayloadAgendamento(
+            payloadBase,
+            usarPacoteAtivo && pacoteAtivoDoCliente
+                ? { tipo: 'ativo', pacoteClienteId: pacoteAtivoDoCliente.id }
+                : pacoteCatalogoSelecionado
+                  ? {
+                        tipo: 'catalogo',
+                        pacoteId: pacoteCatalogoSelecionado.id,
+                    }
+                  : { tipo: 'nenhum' },
+        );
+
+        if (retroativo) {
+            const pacoteSeraConcluido = Boolean(
+                usarPacoteAtivo &&
+                servicoSelecionado &&
+                dataHoraSelecionada &&
+                dataHoraSelecionada.getTime() +
+                    servicoSelecionado.duracaoMinutos * 60_000 <=
+                    Date.now(),
+            );
+            setRetroativoPendente({ payload, pacoteSeraConcluido });
+            return;
+        }
+
+        await enviarAgendamento(payload);
+    };
+
+    const confirmarRegistroRetroativo = async () => {
+        if (!retroativoPendente) {
+            return;
+        }
+
+        const payload = retroativoPendente.payload;
+        setRetroativoPendente(null);
+        await enviarAgendamento(payload);
     };
 
     const confirmarOverrideExpediente = async () => {
@@ -736,9 +797,10 @@ export function NovoAgendamentoPage() {
             }, 1200);
         } catch (error) {
             const message =
-                error instanceof Error
+                obterMensagemErroRetroativo(error) ??
+                (error instanceof Error
                     ? error.message
-                    : 'Não foi possível criar o agendamento.';
+                    : 'Não foi possível criar o agendamento.');
             setOverridePendente(null);
             setErro(message);
             setSucesso(null);
@@ -889,6 +951,11 @@ export function NovoAgendamentoPage() {
                                                     )
                                                 }
                                                 disabled={loadingServicos}
+                                                title={
+                                                    registroRetroativo
+                                                        ? 'Venda de pacote não está disponível em data passada.'
+                                                        : undefined
+                                                }
                                                 className={fieldClassName}
                                             >
                                                 <option value="">
@@ -899,12 +966,26 @@ export function NovoAgendamentoPage() {
                                                         <option
                                                             key={pacote.id}
                                                             value={pacote.id}
+                                                            disabled={
+                                                                registroRetroativo
+                                                            }
                                                         >
                                                             {pacote.nome}
                                                         </option>
                                                     ),
                                                 )}
                                             </select>
+                                            {registroRetroativo && (
+                                                <p
+                                                    className="text-sm text-[var(--color-text-secondary)]"
+                                                    role="status"
+                                                >
+                                                    Venda de pacote não está
+                                                    disponível em data passada.
+                                                    {avisoCatalogoRetroativo &&
+                                                        ' A seleção anterior foi removida.'}
+                                                </p>
+                                            )}
                                             {pacoteCatalogoSelecionado && (
                                                 <p className="text-sm font-semibold text-[var(--color-gold)]">
                                                     {formatarLinhaPrecoPacote(
@@ -1101,25 +1182,15 @@ export function NovoAgendamentoPage() {
                             value={dataHoraSelecionada}
                             onChange={handleChangeDataHora}
                             minDate={minDataDate}
-                            minDateTime={
-                                registroRetroativo ? undefined : minDateTime
-                            }
+                            minDateTime={minDateTime}
+                            currentTime={agora}
+                            allowPastTimes
                             labels={{
                                 dateTitle: 'SELECIONE UMA DATA',
                                 timeTitle: 'SELECIONE UM HORÁRIO',
                             }}
                         />
                     </div>
-
-                    {registroRetroativoDisponivel && (
-                        <Checkbox
-                            checked={registroRetroativo}
-                            onChange={handleRegistroRetroativoChange}
-                            className="text-[var(--color-text-primary)]"
-                        >
-                            Registro retroativo
-                        </Checkbox>
-                    )}
 
                     {clienteSelecionado &&
                         servicoSelecionado &&
@@ -1191,16 +1262,6 @@ export function NovoAgendamentoPage() {
                             </div>
                         )}
 
-                    {data &&
-                        hora &&
-                        dataHoraNoPassado &&
-                        !registroRetroativo && (
-                            <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
-                                O horário selecionado já passou. Escolha uma
-                                data/hora futura.
-                            </div>
-                        )}
-
                     {erro && (
                         <div className="rounded-md border border-[var(--color-danger)]/40 bg-[var(--color-danger)]/10 p-3 text-sm text-[var(--color-danger)]">
                             {erro}
@@ -1225,6 +1286,38 @@ export function NovoAgendamentoPage() {
                     </Button>
                 </form>
             </Card>
+            <ConfirmDialog
+                open={retroativoPendente !== null}
+                alertDialog
+                title="Registrar atendimento no passado?"
+                description="Confirme os dados antes de continuar:"
+                descriptionItems={
+                    retroativoPendente &&
+                    clienteSelecionado &&
+                    servicoSelecionado &&
+                    data &&
+                    hora
+                        ? [
+                              `Data e horário: ${formatarDataHoraCompleta(data, hora)}`,
+                              `Serviço: ${servicoSelecionado.nome}`,
+                              `Cliente: ${clienteSelecionado.nome}`,
+                              ...(retroativoPendente.pacoteSeraConcluido
+                                  ? [
+                                        'Este atendimento será registrado como realizado e debitará 1 uso do pacote. Se esse uso esgotar o pacote, a renovação deve ser feita manualmente.',
+                                    ]
+                                  : []),
+                          ]
+                        : undefined
+                }
+                confirmText="Registrar atendimento"
+                loadingText="Registrando..."
+                confirmVariant="primary"
+                cancelVariant="outline"
+                restoreFocusId="novo-agendamento-submit"
+                loading={submetendo}
+                onConfirm={() => void confirmarRegistroRetroativo()}
+                onCancel={() => setRetroativoPendente(null)}
+            />
             <ConfirmDialog
                 open={overridePendente !== null}
                 alertDialog
