@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
     escalarParaHumano,
     obterEstadoEscalonamento,
@@ -20,6 +21,7 @@ import { AudioLimiter, AudioQueueFullError } from '../whatsapp/audio-limiter';
 import { runExclusive } from '../utils/phone-queue';
 import { carregarIdentidadeBarbeiro } from '../utils/barbeiro-identidade';
 import { detectarPedidoHumano } from '../utils/pedido-humano';
+import type { GeminiUsageContext } from './gemini-usage';
 
 const MAX_MESSAGE_LENGTH = 500;
 const URL_PATTERN = /(https?:\/\/|www\.)/i;
@@ -217,6 +219,7 @@ async function processarAudio(
     phone: string,
     message: IncomingWhatsAppMessage,
     estadoAtual: EstadoEscalonamento,
+    usageContext: GeminiUsageContext,
 ): Promise<void> {
     const config = getAudioConfig();
     const media = message.media;
@@ -263,7 +266,11 @@ async function processarAudio(
             );
 
             const transcribeStartedAt = Date.now();
-            const transcription = await transcreverAudio(downloaded.data, mime);
+            const transcription = await transcreverAudio(
+                downloaded.data,
+                mime,
+                usageContext,
+            );
             transcribeMs = Date.now() - transcribeStartedAt;
             if (!transcription.ok) {
                 throw new AudioProcessingError(
@@ -283,6 +290,7 @@ async function processarAudio(
                 phone,
                 transcription.text,
                 message.messageId,
+                usageContext,
             );
             result = 'success';
         } finally {
@@ -338,6 +346,7 @@ async function processarTextoDeCliente(
     phone: string,
     text: string,
     messageId: string | null,
+    usageContext: GeminiUsageContext,
 ): Promise<void> {
     const estado = await obterEstadoEscalonamento(phone);
 
@@ -369,7 +378,7 @@ async function processarTextoDeCliente(
         return;
     }
 
-    await processarMensagemWhatsapp(phone, text, messageId);
+    await processarMensagemWhatsapp(phone, text, messageId, usageContext);
 }
 
 async function processarMensagemRecebidaInterno(
@@ -386,6 +395,14 @@ async function processarMensagemRecebidaInterno(
     }
 
     try {
+        const usageContext: GeminiUsageContext = {
+            origem:
+                message.kind === 'non_text' && message.rawType === 'audio'
+                    ? 'audio'
+                    : 'texto',
+            correlationId: randomUUID(),
+        };
+
         if (message.kind === 'non_text') {
             const estado = await obterEstadoEscalonamento(phone);
             const estadoAtual = estado?.estado ?? EstadoEscalonamento.BOT;
@@ -407,7 +424,7 @@ async function processarMensagemRecebidaInterno(
                 audioConfig.transcriptionEnabled &&
                 message.media?.link
             ) {
-                await processarAudio(phone, message, estadoAtual);
+                await processarAudio(phone, message, estadoAtual, usageContext);
                 return;
             }
 
@@ -426,7 +443,12 @@ async function processarMensagemRecebidaInterno(
             return;
         }
 
-        await processarTextoDeCliente(phone, text, message.messageId);
+        await processarTextoDeCliente(
+            phone,
+            text,
+            message.messageId,
+            usageContext,
+        );
     } catch {
         console.error('[WEBHOOK] Falha no processamento assíncrono.');
     }

@@ -1781,6 +1781,66 @@ describe('gemini.service tools de pacotes', () => {
         expect(agendamentoRepository.listarTodos).not.toHaveBeenCalled();
     });
 
+    it('registra uma linha de uso por iteração do loop de tools', async () => {
+        prepararGemini();
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarServicos',
+                        args: {},
+                        id: 'call-servicos',
+                    },
+                ],
+                usageMetadata: { promptTokenCount: 12, totalTokenCount: 12 },
+            })
+            .mockResolvedValueOnce({
+                text: 'Temos opções disponíveis.',
+                usageMetadata: { promptTokenCount: 18, totalTokenCount: 24 },
+            });
+        const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        try {
+            await processarMensagemWhatsapp(remoteJid, 'Quais serviços?');
+
+            const usageLogs = info.mock.calls
+                .map(([line]) => {
+                    if (typeof line !== 'string') {
+                        return null;
+                    }
+                    try {
+                        const payload = JSON.parse(line) as {
+                            evt?: string;
+                            correlationId?: string;
+                        };
+                        return payload.evt === 'gemini_usage' ? payload : null;
+                    } catch {
+                        return null;
+                    }
+                })
+                .filter((payload) => payload !== null);
+
+            expect(usageLogs).toHaveLength(2);
+            expect(usageLogs[0]).toMatchObject({
+                finalidade: 'conversa',
+                iteracao: 1,
+                tentativas: 1,
+                promptTokens: 12,
+            });
+            expect(usageLogs[1]).toMatchObject({
+                finalidade: 'conversa',
+                iteracao: 2,
+                tentativas: 1,
+                promptTokens: 18,
+            });
+            expect(usageLogs[0]?.correlationId).toBe(
+                usageLogs[1]?.correlationId,
+            );
+        } finally {
+            info.mockRestore();
+        }
+    });
+
     it('não retorna guarda para 05/11, após término local à meia-noite', async () => {
         vi.mocked(servicoRepository.listarTodos).mockResolvedValue([
             servicoBase,
@@ -2612,6 +2672,21 @@ describe('gemini.service retry 429', () => {
 
         expect(operation).toHaveBeenCalledTimes(1);
     });
+
+    it('retorna a quantidade de tentativas até o sucesso sem mudar o retry', async () => {
+        const operation = vi
+            .fn<() => Promise<string>>()
+            .mockRejectedValueOnce({ status: 429 })
+            .mockResolvedValueOnce('ok');
+
+        await expect(
+            __testables.executeWith429Retry(operation, {
+                sleepFn: vi.fn().mockResolvedValue(undefined),
+                warnFn: vi.fn(),
+            }),
+        ).resolves.toEqual({ value: 'ok', attempts: 2 });
+        expect(operation).toHaveBeenCalledTimes(2);
+    });
 });
 
 describe('gemini.service audio transcription', () => {
@@ -2649,6 +2724,21 @@ describe('gemini.service audio transcription', () => {
         expect(request.config.thinkingConfig).toBeUndefined();
         expect(request.config.responseMimeType).toBe('application/json');
         expect(request.config.httpOptions.timeout).toBe(30000);
+    });
+
+    it('returns transcription when usage logging throws', async () => {
+        vi.stubEnv('GEMINI_API_KEY', 'gemini-test-key');
+        vi.stubEnv('GEMINI_USAGE_LOG_ENABLED', 'true');
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: JSON.stringify({ status: 'ok', text: 'Quero agendar' }),
+        });
+        vi.spyOn(console, 'info').mockImplementation(() => {
+            throw new Error('logger indisponível');
+        });
+
+        await expect(
+            transcreverAudio(Buffer.from('audio'), 'audio/ogg'),
+        ).resolves.toEqual({ ok: true, text: 'Quero agendar' });
     });
 
     it.each([

@@ -4,6 +4,7 @@ import {
     type FunctionDeclaration,
     GoogleGenAI,
 } from '@google/genai';
+import { randomUUID } from 'node:crypto';
 import { formatInTimeZone } from 'date-fns-tz';
 import { StatusAgendamento } from '@prisma/client';
 import {
@@ -97,6 +98,7 @@ import {
     carregarIdentidadeBarbeiro,
     type IdentidadeBarbeiro,
 } from '../utils/barbeiro-identidade';
+import { emitirLogGeminiUsage, type GeminiUsageContext } from './gemini-usage';
 
 export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
@@ -904,7 +906,7 @@ function logNetworkError(label: string, url: string, error: unknown): void {
 async function executeWith429Retry<T>(
     operation: () => Promise<T>,
     options: Retry429Options = {},
-): Promise<T> {
+): Promise<{ value: T; attempts: number }> {
     const randomFn = options.randomFn ?? Math.random;
     const sleepFn = options.sleepFn ?? sleep;
     const warnFn = options.warnFn ?? console.warn;
@@ -915,7 +917,7 @@ async function executeWith429Retry<T>(
         attempt += 1
     ) {
         try {
-            return await operation();
+            return { value: await operation(), attempts: attempt + 1 };
         } catch (error) {
             if (options.url && options.logError !== false) {
                 logNetworkError('GEMINI API', options.url, error);
@@ -965,6 +967,7 @@ export type AudioTranscriptionResult =
 export async function transcreverAudio(
     buffer: Buffer,
     mimeType: string,
+    usageContext?: GeminiUsageContext,
 ): Promise<AudioTranscriptionResult> {
     const { transcribeTimeoutMs } = getAudioConfig();
     const controller = new AbortController();
@@ -972,7 +975,7 @@ export async function transcreverAudio(
 
     try {
         const ai = getGeminiClient();
-        const result = await executeWith429Retry(
+        const { value: result, attempts } = await executeWith429Retry(
             () =>
                 ai.models.generateContent({
                     model: GEMINI_MODEL,
@@ -1016,6 +1019,17 @@ export async function transcreverAudio(
                 logError: false,
             },
         );
+        emitirLogGeminiUsage({
+            finalidade: 'transcricao',
+            ...(usageContext ?? {
+                origem: 'audio',
+                correlationId: randomUUID(),
+            }),
+            modelo: GEMINI_MODEL,
+            iteracao: 1,
+            tentativas: attempts,
+            usageMetadata: result.usageMetadata,
+        });
 
         let parsed: unknown;
         try {
@@ -3582,6 +3596,10 @@ async function runGeminiFunctionCalling(
     confirmarDisponivel = false,
     rascunhoPendenteNoInicio = false,
     contextoHorizonte?: ContextoHorizonteTurno,
+    usageContext: GeminiUsageContext = {
+        origem: 'texto',
+        correlationId: randomUUID(),
+    },
 ): Promise<ResultadoTurnoGemini> {
     const horizonteTurno =
         contextoHorizonte ?? (await carregarContextoHorizonteTurno());
@@ -3665,7 +3683,7 @@ async function runGeminiFunctionCalling(
 
         for (let i = 0; i < 6; i += 1) {
             iteracoes += 1;
-            const result = await executeWith429Retry(
+            const { value: result, attempts } = await executeWith429Retry(
                 () =>
                     ai.models.generateContent({
                         model: GEMINI_MODEL,
@@ -3696,6 +3714,14 @@ async function runGeminiFunctionCalling(
                     url: `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
                 },
             );
+            emitirLogGeminiUsage({
+                finalidade: 'conversa',
+                ...usageContext,
+                modelo: GEMINI_MODEL,
+                iteracao: iteracoes,
+                tentativas: attempts,
+                usageMetadata: result.usageMetadata,
+            });
 
             const functionCalls = result.functionCalls ?? [];
 
@@ -3837,9 +3863,14 @@ export async function processarMensagemWhatsapp(
     remoteJid: string,
     texto: string,
     messageId: string | null = null,
+    usageContext?: GeminiUsageContext,
 ): Promise<void> {
     try {
         const phone = normalizeConversationKey(remoteJid);
+        const contextoUso: GeminiUsageContext = usageContext ?? {
+            origem: 'texto',
+            correlationId: randomUUID(),
+        };
 
         const estado = await obterEstadoEscalonamento(phone);
         if (estado?.estado === EstadoEscalonamento.BOT && estado.escaladoEm) {
@@ -3968,6 +3999,7 @@ export async function processarMensagemWhatsapp(
                 confirmarDisponivel,
                 rascunhoNoInicio !== null,
                 horizonteTurno,
+                contextoUso,
             );
             await responderMensagemGemini(remoteJid, phone, texto, resultado);
             return;
@@ -3982,6 +4014,7 @@ export async function processarMensagemWhatsapp(
             false,
             false,
             horizonteTurno,
+            contextoUso,
         );
         await responderMensagemGemini(remoteJid, phone, texto, resultado);
     } catch (error) {

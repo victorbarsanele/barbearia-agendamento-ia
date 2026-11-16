@@ -23,13 +23,14 @@ Use defaults abaixo como comportamento do código quando variável estiver ausen
 
 ## Gemini e identidade
 
-| Variável         | Obrigatória                           | Padrão     | Faixa/regra                                                                                       | Descrição                                                               |
-| ---------------- | ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `GEMINI_API_KEY` | Para chamadas Gemini                  | Sem padrão | Sem validação de formato                                                                          | Chave principal da API Gemini.                                          |
-| `GOOGLE_API_KEY` | Não                                   | Sem padrão | Fallback usado somente quando `GEMINI_API_KEY` está ausente; não recomendado                      | Compatibilidade legada para chave Gemini. Não consta em `.env.example`. |
-| `BARBER_PHONE`   | Sim quando `WHATSAPP_PROVIDER=ycloud` | Sem padrão | Obrigatória e não pode equivaler a `YCLOUD_FROM_NUMBER`; sem faixa própria adicional no validador | Destino de notificações e referência do barbeiro.                       |
-| `BARBER_NAME`    | Não                                   | Sem padrão | Nome trimado; sem limite explícito                                                                | Nome usado na identidade do barbeiro no prompt.                         |
-| `BARBER_ALIASES` | Não                                   | Sem padrão | Apelidos separados por vírgula; entradas vazias ignoradas                                         | Apelidos aceitos para identificar o barbeiro.                           |
+| Variável                   | Obrigatória                           | Padrão     | Faixa/regra                                                                                       | Descrição                                                                                                        |
+| -------------------------- | ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`           | Para chamadas Gemini                  | Sem padrão | Sem validação de formato                                                                          | Chave principal da API Gemini.                                                                                   |
+| `GOOGLE_API_KEY`           | Não                                   | Sem padrão | Fallback usado somente quando `GEMINI_API_KEY` está ausente; não recomendado                      | Compatibilidade legada para chave Gemini. Não consta em `.env.example`.                                          |
+| `GEMINI_USAGE_LOG_ENABLED` | Não                                   | `true`     | Somente o valor exato `false` desativa                                                            | Emite uma linha JSON por chamada Gemini bem-sucedida com metadados de tokens; não registra conteúdo da mensagem. |
+| `BARBER_PHONE`             | Sim quando `WHATSAPP_PROVIDER=ycloud` | Sem padrão | Obrigatória e não pode equivaler a `YCLOUD_FROM_NUMBER`; sem faixa própria adicional no validador | Destino de notificações e referência do barbeiro.                                                                |
+| `BARBER_NAME`              | Não                                   | Sem padrão | Nome trimado; sem limite explícito                                                                | Nome usado na identidade do barbeiro no prompt.                                                                  |
+| `BARBER_ALIASES`           | Não                                   | Sem padrão | Apelidos separados por vírgula; entradas vazias ignoradas                                         | Apelidos aceitos para identificar o barbeiro.                                                                    |
 
 ## Webhooks
 

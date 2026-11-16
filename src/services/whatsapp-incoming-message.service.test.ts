@@ -103,6 +103,34 @@ afterEach(() => {
 });
 
 describe('processarMensagemRecebida', () => {
+    it('propaga origem texto e correlationId aleatório ao Gemini', async () => {
+        await processarMensagemRecebida(criarMensagem('oi'));
+
+        const usageContext = vi.mocked(processarMensagemWhatsapp).mock
+            .calls[0][3];
+        expect(usageContext).toMatchObject({ origem: 'texto' });
+        expect(usageContext?.correlationId).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        );
+        expect(usageContext?.correlationId).not.toBe('message-1');
+    });
+
+    it('compartilha origem audio e correlationId entre transcrição e conversa', async () => {
+        vi.stubEnv('AUDIO_TRANSCRIPTION_ENABLED', 'true');
+
+        await processarMensagemRecebida(criarAudio());
+
+        const transcriptionContext =
+            vi.mocked(transcreverAudio).mock.calls[0][2];
+        const conversationContext = vi.mocked(processarMensagemWhatsapp).mock
+            .calls[0][3];
+        expect(transcriptionContext).toMatchObject({ origem: 'audio' });
+        expect(conversationContext).toEqual(transcriptionContext);
+        expect(transcriptionContext?.correlationId).toMatch(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        );
+    });
+
     it('mantém aviso para mensagem acima do limite', async () => {
         await processarMensagemRecebida(criarMensagem('a'.repeat(501)));
 
@@ -173,12 +201,14 @@ describe('processarMensagemRecebida', () => {
             phone,
             'oi léo, queria marcar um corte',
             'message-1',
+            expect.objectContaining({ origem: 'texto' }),
         );
         expect(processarMensagemWhatsapp).toHaveBeenNthCalledWith(
             2,
             phone,
             'tem horário amanhã?',
             'message-1',
+            expect.objectContaining({ origem: 'texto' }),
         );
     });
 
@@ -220,6 +250,7 @@ describe('processarMensagemRecebida', () => {
             phone,
             'Quero agendar',
             'message-1',
+            expect.objectContaining({ origem: 'texto' }),
         );
     });
 
@@ -363,6 +394,7 @@ describe('processarMensagemRecebida', () => {
             phone,
             'transcrição',
             'message-1',
+            expect.objectContaining({ origem: 'audio' }),
         );
         expect(sendWhatsAppText).not.toHaveBeenCalled();
     });
