@@ -10,12 +10,16 @@ import {
     atualizarComPacoteDoCatalogoNaTransacao,
     atualizarComNumeroNoPacote,
     atualizarPacoteClienteId,
+    bloquearDiasAgendaNaTransacao,
     concluirComPacote,
     estornarConclusaoAutomatica,
+    isViolacaoDeSobreposicao,
     listarPendentesParaAgendamentoAutoConclusao,
     listarParaConclusaoAutomatica,
     listarSiblingsEditaveisDoLote,
+    prepararEncaixeDaAtualizacaoNaTransacao,
     reservarNumeroNoPacoteOportunistaNaTransacao,
+    validarSobreposicaoNaTransacao,
 } from './agendamento.repository';
 
 vi.mock('../lib/prisma', () => ({
@@ -38,6 +42,7 @@ import * as clienteRepository from './cliente.repository';
 
 type PrismaTransactionMock = {
     $queryRaw: ReturnType<typeof vi.fn>;
+    $executeRaw: ReturnType<typeof vi.fn>;
     pacoteClienteServico: {
         updateMany: ReturnType<typeof vi.fn>;
         findUnique: ReturnType<typeof vi.fn>;
@@ -68,6 +73,7 @@ const transaction = prisma.$transaction as unknown as ReturnType<typeof vi.fn>;
 function configurarTransacao(saldoExistente: { id: string } | null) {
     const tx: PrismaTransactionMock = {
         $queryRaw: vi.fn(),
+        $executeRaw: vi.fn(),
         pacoteClienteServico: {
             updateMany: vi.fn().mockResolvedValue({ count: 0 }),
             findUnique: vi.fn().mockResolvedValue(saldoExistente),
@@ -464,6 +470,252 @@ describe('agendamento.repository.concluirComPacote', () => {
             statusCode: 409,
         });
         expect(tx.pacoteCliente.findUnique).not.toHaveBeenCalled();
+    });
+});
+
+describe('agendamento.repository.validarSobreposicaoNaTransacao', () => {
+    const inicio = new Date('2026-07-24T13:00:00.000Z');
+    const fim = new Date('2026-07-24T13:30:00.000Z');
+
+    function criarTx(intervalos: object[]) {
+        return {
+            agendamento: {
+                findMany: vi.fn().mockResolvedValue(intervalos),
+            },
+            $queryRaw: vi.fn().mockResolvedValue([]),
+            $executeRaw: vi.fn().mockResolvedValue(1),
+        };
+    }
+
+    it('mantém conflito sem permissão e inclui CONFLITO_HORARIO', async () => {
+        const tx = criarTx([
+            {
+                clienteId: 'cliente-2',
+                dataHoraInicio: new Date('2026-07-24T12:30:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T13:15:00.000Z'),
+            },
+        ]);
+
+        await expect(
+            validarSobreposicaoNaTransacao(tx as never, {
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                clienteId: 'cliente-1',
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'CONFLITO_HORARIO' },
+        });
+        expect(tx.agendamento.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: expect.objectContaining({
+                    status: { not: StatusAgendamento.CANCELADO },
+                }),
+            }),
+        );
+    });
+
+    it('ignora slots adicionais adjacentes e bloqueia os que realmente sobrepõem', async () => {
+        const tx = criarTx([]);
+        const adjacente = {
+            inicio: fim,
+            fim: new Date('2026-07-24T14:00:00.000Z'),
+        };
+
+        await expect(
+            validarSobreposicaoNaTransacao(tx as never, {
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                intervalosAdicionais: [adjacente],
+            }),
+        ).resolves.toBe(false);
+
+        await expect(
+            validarSobreposicaoNaTransacao(tx as never, {
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                intervalosAdicionais: [
+                    {
+                        inicio: new Date('2026-07-24T13:15:00.000Z'),
+                        fim: new Date('2026-07-24T13:45:00.000Z'),
+                    },
+                ],
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'CONFLITO_HORARIO' },
+        });
+    });
+
+    it('permite um intervalo sobreposto quando a permissão está ativa', async () => {
+        const tx = criarTx([
+            {
+                clienteId: 'cliente-2',
+                dataHoraInicio: new Date('2026-07-24T12:30:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T13:15:00.000Z'),
+            },
+        ]);
+
+        await expect(
+            validarSobreposicaoNaTransacao(tx as never, {
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                permitirEncaixe: true,
+            }),
+        ).resolves.toBe(true);
+    });
+
+    it('rejeita terceiro intervalo simultâneo com LIMITE_ENCAIXE', async () => {
+        const tx = criarTx([
+            {
+                clienteId: 'cliente-2',
+                dataHoraInicio: new Date('2026-07-24T12:00:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T13:20:00.000Z'),
+            },
+            {
+                clienteId: 'cliente-3',
+                dataHoraInicio: new Date('2026-07-24T13:10:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T14:00:00.000Z'),
+            },
+        ]);
+
+        await expect(
+            validarSobreposicaoNaTransacao(tx as never, {
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                permitirEncaixe: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'LIMITE_ENCAIXE' },
+        });
+    });
+
+    it('adquire os locks dos dias locais em ordem crescente', async () => {
+        const tx = criarTx([]);
+        await bloquearDiasAgendaNaTransacao(tx as never, [
+            new Date('2026-07-25T13:00:00.000Z'),
+            new Date('2026-07-24T13:00:00.000Z'),
+            new Date('2026-07-25T14:00:00.000Z'),
+        ]);
+
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+        const chamadas = tx.$executeRaw.mock.calls.map(
+            ([query]) => (query as { values: unknown[] }).values,
+        );
+        expect(chamadas[0]?.[1]).toBeLessThan(chamadas[1]?.[1] as number);
+    });
+});
+
+describe('agendamento.repository.isViolacaoDeSobreposicao', () => {
+    it('reconhece SQLSTATE 23P01 e o nome da constraint em causas aninhadas', () => {
+        expect(
+            isViolacaoDeSobreposicao({
+                cause: { code: '23P01' },
+            }),
+        ).toBe(true);
+        expect(
+            isViolacaoDeSobreposicao({
+                meta: { message: 'sem_sobreposicao_horario' },
+            }),
+        ).toBe(true);
+        expect(isViolacaoDeSobreposicao({ code: '23505' })).toBe(false);
+    });
+});
+
+describe('agendamento.repository.prepararEncaixeDaAtualizacaoNaTransacao', () => {
+    const inicio = new Date('2026-07-24T13:00:00.000Z');
+    const fim = new Date('2026-07-24T13:30:00.000Z');
+    const dados = {
+        clienteId: 'cliente-1',
+        servicoId: 'servico-1',
+        dataHoraInicio: inicio,
+        dataHoraFim: fim,
+        status: StatusAgendamento.AGENDADO,
+    };
+
+    function criarTxUpdate(intervalos: object[]) {
+        return {
+            agendamento: {
+                findMany: vi.fn().mockResolvedValue(intervalos),
+                findUnique: vi.fn(),
+            },
+            $queryRaw: vi.fn().mockResolvedValue([]),
+            $executeRaw: vi.fn().mockResolvedValue(1),
+        };
+    }
+
+    it('preserva true quando horário, serviço e duração não mudaram', async () => {
+        const tx = criarTxUpdate([
+            {
+                clienteId: 'cliente-2',
+                dataHoraInicio: new Date('2026-07-24T12:30:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T13:15:00.000Z'),
+            },
+        ]);
+        tx.agendamento.findUnique
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true })
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true });
+
+        await expect(
+            prepararEncaixeDaAtualizacaoNaTransacao(
+                tx as never,
+                'agendamento-1',
+                dados,
+                { recalcular: false, permitirEncaixe: false },
+            ),
+        ).resolves.toBe(true);
+    });
+
+    it('zera um encaixe preservado quando o horário está livre', async () => {
+        const tx = criarTxUpdate([]);
+        tx.agendamento.findUnique
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true })
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true });
+
+        await expect(
+            prepararEncaixeDaAtualizacaoNaTransacao(
+                tx as never,
+                'agendamento-1',
+                dados,
+                { recalcular: false, permitirEncaixe: false },
+            ),
+        ).resolves.toBe(false);
+    });
+
+    it('ativa com sobreposição permitida e zera quando o novo horário está livre', async () => {
+        const tx = criarTxUpdate([
+            {
+                clienteId: 'cliente-2',
+                dataHoraInicio: new Date('2026-07-24T12:30:00.000Z'),
+                dataHoraFim: new Date('2026-07-24T13:15:00.000Z'),
+            },
+        ]);
+        tx.agendamento.findUnique
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: false })
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: false });
+
+        await expect(
+            prepararEncaixeDaAtualizacaoNaTransacao(
+                tx as never,
+                'agendamento-1',
+                dados,
+                { recalcular: true, permitirEncaixe: true },
+            ),
+        ).resolves.toBe(true);
+
+        tx.agendamento.findMany.mockResolvedValueOnce([]);
+        tx.agendamento.findUnique
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true })
+            .mockResolvedValueOnce({ dataHoraInicio: inicio, encaixe: true });
+        await expect(
+            prepararEncaixeDaAtualizacaoNaTransacao(
+                tx as never,
+                'agendamento-1',
+                dados,
+                { recalcular: true, permitirEncaixe: true },
+            ),
+        ).resolves.toBe(false);
     });
 });
 

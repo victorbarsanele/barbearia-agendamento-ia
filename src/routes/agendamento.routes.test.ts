@@ -67,6 +67,7 @@ describe('POST /agendamentos', () => {
             dataHoraInicio: '2026-11-02T10:00:00-03:00',
             registroRetroativo: false,
             permitirForaDoExpediente: false,
+            permitirEncaixe: false,
             origem: 'PAINEL',
         });
     });
@@ -88,6 +89,33 @@ describe('POST /agendamentos', () => {
         expect(agendamentoService.criar).toHaveBeenCalledWith(
             expect.objectContaining({
                 permitirForaDoExpediente: true,
+                origem: 'PAINEL',
+            }),
+        );
+    });
+
+    it('aceita permissão de encaixe e devolve o flag persistido', async () => {
+        vi.mocked(agendamentoService.criar).mockResolvedValueOnce({
+            id: 'agendamento-1',
+            encaixe: true,
+        } as never);
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'POST',
+            url: '/agendamentos',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T10:00:00-03:00',
+                permitirEncaixe: true,
+            },
+        });
+
+        expect(response.statusCode).toBe(201);
+        expect(response.json()).toMatchObject({ encaixe: true });
+        expect(agendamentoService.criar).toHaveBeenCalledWith(
+            expect.objectContaining({
+                permitirEncaixe: true,
                 origem: 'PAINEL',
             }),
         );
@@ -122,6 +150,30 @@ describe('POST /agendamentos', () => {
                 'Agendamento deve estar dentro do horário de funcionamento.',
             code: 'FORA_DO_EXPEDIENTE',
             motivos: ['fora_funcionamento', 'almoco'],
+        });
+    });
+
+    it('serializa o código CONFLITO_HORARIO no 409', async () => {
+        vi.mocked(agendamentoService.criar).mockRejectedValueOnce(
+            new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            }),
+        );
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'POST',
+            url: '/agendamentos',
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                dataHoraInicio: '2026-11-02T10:00:00-03:00',
+            },
+        });
+
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({
+            message: 'Já existe um agendamento nesse horário.',
+            code: 'CONFLITO_HORARIO',
         });
     });
 
@@ -264,6 +316,29 @@ describe('POST /agendamentos/lote', () => {
     );
 
     it.each([
+        ['/agendamentos/lote', 'criarLote'],
+        ['/agendamentos/lote/simular', 'simularLote'],
+    ] as const)('ignora permitirEncaixe em %s', async (url, method) => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'POST',
+            url,
+            payload: {
+                clienteId: 'cliente-1',
+                servicoId: 'servico-1',
+                slots: [{ data: '2026-11-02', horario: '10:00' }],
+                permitirEncaixe: true,
+            },
+        });
+
+        expect(response.statusCode).toBe(url.endsWith('/simular') ? 200 : 201);
+        expect(agendamentoService[method]).toHaveBeenCalledOnce();
+        expect(agendamentoService[method]).not.toHaveBeenCalledWith(
+            expect.objectContaining({ permitirEncaixe: true }),
+        );
+    });
+
+    it.each([
         ['/agendamentos/lote/simular', 'simularLote'],
         ['/agendamentos/lote', 'criarLote'],
     ] as const)('preserva payload sem pacote em %s', async (url, method) => {
@@ -371,6 +446,7 @@ describe('PUT /agendamentos/:id', () => {
         vi.clearAllMocks();
         vi.mocked(agendamentoService.atualizar).mockResolvedValue({
             id: 'agendamento-1',
+            encaixe: true,
         } as never);
         app = Fastify();
     });
@@ -390,15 +466,18 @@ describe('PUT /agendamentos/:id', () => {
                 dataHoraInicio: '2026-11-02T08:30:00-03:00',
                 status: 'AGENDADO',
                 permitirForaDoExpediente: true,
+                permitirEncaixe: true,
                 origem: 'WHATSAPP_IA',
             },
         });
 
         expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({ encaixe: true });
         expect(agendamentoService.atualizar).toHaveBeenCalledWith(
             'agendamento-1',
             expect.objectContaining({
                 permitirForaDoExpediente: true,
+                permitirEncaixe: true,
                 origem: 'PAINEL',
             }),
         );
@@ -449,4 +528,45 @@ describe('PUT /agendamentos/:id', () => {
             properties: { pacoteId: { type: 'string', minLength: 1 } },
         });
     });
+});
+
+describe('resposta de listagem e detalhe', () => {
+    let app: ReturnType<typeof Fastify>;
+    const agendamento = {
+        id: 'agendamento-1',
+        encaixe: true,
+        pacoteClienteId: null,
+        status: 'AGENDADO',
+        concluido: false,
+        dataHoraInicio: new Date('2026-11-02T13:00:00Z'),
+        dataHoraFim: new Date('2026-11-02T13:30:00Z'),
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(agendamentoService.listarTodos).mockResolvedValue([
+            agendamento,
+        ] as never);
+        vi.mocked(agendamentoService.buscarPorId).mockResolvedValue(
+            agendamento as never,
+        );
+        app = Fastify();
+    });
+
+    afterEach(async () => {
+        await app.close();
+    });
+
+    it.each(['/agendamentos', '/agendamentos/agendamento-1'])(
+        'devolve encaixe em %s',
+        async (url) => {
+            await app.register(agendamentoRoutes);
+            const response = await app.inject({ method: 'GET', url });
+            const payload = response.json();
+            expect(response.statusCode).toBe(200);
+            expect(
+                url === '/agendamentos' ? payload[0] : payload,
+            ).toMatchObject({ encaixe: true });
+        },
+    );
 });

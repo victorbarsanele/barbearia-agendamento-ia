@@ -106,6 +106,7 @@ interface CriarAgendamentoBaseData {
 export interface CriarAgendamentoPainelData extends CriarAgendamentoBaseData {
     origem?: 'PAINEL';
     registroRetroativo?: boolean;
+    permitirEncaixe?: boolean;
 }
 
 export interface CriarAgendamentoGeminiData extends CriarAgendamentoBaseData {
@@ -159,6 +160,7 @@ interface AtualizarAgendamentoData {
     status: StatusAgendamento;
     notificarCliente?: boolean;
     permitirForaDoExpediente?: boolean;
+    permitirEncaixe?: boolean;
     origem?: 'PAINEL' | 'GEMINI';
 }
 
@@ -437,9 +439,13 @@ async function validarConflito(
 
     if (conflito) {
         if (clienteId && conflito.clienteId === clienteId) {
-            throw new AppError('Você já tem agendamento nesse horário.', 409);
+            throw new AppError('Você já tem agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
-        throw new AppError('Já existe um agendamento nesse horário.', 409);
+        throw new AppError('Já existe um agendamento nesse horário.', 409, {
+            code: 'CONFLITO_HORARIO',
+        });
     }
 }
 
@@ -600,8 +606,12 @@ async function criarComPacoteDoCatalogo(
         typeof agendamentoRepository.criarComNumeroNoPacoteNaTransacao
     >[1],
     pacoteId: string,
+    permitirEncaixe: boolean,
 ): Promise<agendamentoRepository.AgendamentoComRelacoes> {
     return pacoteClienteRepository.transacionar(async (tx) => {
+        await agendamentoRepository.bloquearDiasAgendaNaTransacao(tx, [
+            dados.dataHoraInicio,
+        ]);
         const clienteExiste =
             await clienteRepository.bloquearParaCriacaoDePacote(
                 tx,
@@ -630,6 +640,7 @@ async function criarComPacoteDoCatalogo(
             { ...dados, pacoteClienteId: resolvido.pacoteClienteId! },
             resolvido.pacoteClienteId!,
             dados.servicoId,
+            ...(permitirEncaixe ? [true] : []),
         );
     });
 }
@@ -795,6 +806,7 @@ export async function validarDisponibilidade(
     permitirForaDoExpediente = false,
     ignorarAgendamentoId?: string,
     options: ValidarAntecedenciaOptions = {},
+    verificarConflito = true,
 ): Promise<{ dataHoraInicio: Date; dataHoraFim: Date }> {
     const dataHoraInicio = converterParaData(dataHoraInicioStr);
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
@@ -816,12 +828,14 @@ export async function validarDisponibilidade(
         validarLimiteRetroativo(dataHoraInicio);
     }
 
-    await validarConflito(
-        dataHoraInicio,
-        dataHoraFim,
-        ignorarAgendamentoId,
-        clienteId,
-    );
+    if (verificarConflito) {
+        await validarConflito(
+            dataHoraInicio,
+            dataHoraFim,
+            ignorarAgendamentoId,
+            clienteId,
+        );
+    }
 
     const { motivos, bloqueio, horario } = await coletarMotivosForaDoExpediente(
         dataHoraInicio,
@@ -982,6 +996,10 @@ async function criarComResultadoInterno(
             data.servicoId,
         );
         await validarPacoteCliente(data.pacoteClienteId, data.servicoId);
+        const permitirEncaixe =
+            data.origem === 'PAINEL' &&
+            'permitirEncaixe' in data &&
+            data.permitirEncaixe === true;
         const { dataHoraInicio, dataHoraFim } = await validarDisponibilidade(
             data.dataHoraInicio,
             servico.duracaoMinutos,
@@ -992,6 +1010,7 @@ async function criarComResultadoInterno(
             data.permitirForaDoExpediente,
             undefined,
             options,
+            !permitirEncaixe,
         );
 
         const dados = {
@@ -1010,6 +1029,7 @@ async function criarComResultadoInterno(
                   agendamento: await criarComPacoteDoCatalogo(
                       dados,
                       data.pacoteId,
+                      permitirEncaixe,
                   ),
               }
             : data.pacoteClienteId
@@ -1021,19 +1041,41 @@ async function criarComResultadoInterno(
                                   dados,
                                   data.pacoteClienteId,
                                   data.servicoId,
+                                  ...(permitirEncaixe ? [true] : []),
                               )
                             : await agendamentoRepository.criarComNumeroNoPacote(
                                   dados,
                                   data.pacoteClienteId,
                                   data.servicoId,
+                                  ...(permitirEncaixe ? [true] : []),
                               ),
                 }
               : data.origem === 'GEMINI' &&
                   getVinculoAutomaticoWhatsappEnabled()
-                ? await pacoteClienteRepository.transacionar((tx) =>
-                      criarComVinculoAutomaticoWhatsappNaTransacao(tx, dados),
-                  )
-                : { agendamento: await agendamentoRepository.criar(dados) };
+                ? await pacoteClienteRepository.transacionar(async (tx) => {
+                      await agendamentoRepository.bloquearDiasAgendaNaTransacao(
+                          tx,
+                          [dataHoraInicio],
+                      );
+                      const encaixe =
+                          await agendamentoRepository.validarSobreposicaoNaTransacao(
+                              tx,
+                              {
+                                  dataHoraInicio,
+                                  dataHoraFim,
+                                  clienteId: data.clienteId,
+                              },
+                          );
+                      return criarComVinculoAutomaticoWhatsappNaTransacao(tx, {
+                          ...dados,
+                          encaixe,
+                      });
+                  })
+                : {
+                      agendamento: permitirEncaixe
+                          ? await agendamentoRepository.criar(dados, true)
+                          : await agendamentoRepository.criar(dados),
+                  };
         notificarSnapshotAutoConclusao(
             resultado.agendamento,
             resultado.agendamento.pacoteClienteId
@@ -1078,66 +1120,96 @@ export async function simularLote(data: LoteAgendamentoData) {
             data.servicoId,
         );
 
-        const disponiveis: SlotLote[] = [];
-        const conflitos: (SlotLote & { motivo: string })[] = [];
-        const saldoServico = data.pacoteClienteId
-            ? pacoteCliente?.servicos.find(
-                  (item) => item.servicoId === data.servicoId,
-              )
-            : null;
-        let capacidadeCatalogo: number | null = null;
-        if (data.pacoteId) {
-            const resolvido = await pacoteClienteRepository.transacionar((tx) =>
-                resolverPacoteDoCatalogoNaTransacao(
-                    tx,
-                    data.clienteId,
-                    data.pacoteId!,
-                    data.servicoId,
-                    false,
+        return pacoteClienteRepository.transacionar(async (tx) => {
+            await agendamentoRepository.bloquearDiasAgendaNaTransacao(
+                tx,
+                data.slots.map((slot) =>
+                    converterParaData(montarDataHoraInicio(slot)),
                 ),
             );
-            capacidadeCatalogo = resolvido.capacidade;
-        }
-        let vagasDePacote =
-            capacidadeCatalogo !== null
-                ? capacidadeCatalogo
-                : saldoServico
-                  ? saldoServico.quantidadeTotal -
-                    (saldoServico.usosAnteriores ?? 0) -
-                    (await agendamentoRepository.contarNaoCanceladosPorPacoteEServico(
-                        data.pacoteClienteId!,
-                        data.servicoId,
-                    ))
-                  : Number.POSITIVE_INFINITY;
 
-        for (const slot of data.slots) {
-            try {
-                await validarDisponibilidade(
-                    montarDataHoraInicio(slot),
-                    servico.duracaoMinutos,
-                    servico.permiteExtensaoFechamento,
+            const disponiveis: SlotLote[] = [];
+            const conflitos: (SlotLote & { motivo: string })[] = [];
+            const aceitos: { inicio: Date; fim: Date }[] = [];
+            const saldoServico = data.pacoteClienteId
+                ? pacoteCliente?.servicos.find(
+                      (item) => item.servicoId === data.servicoId,
+                  )
+                : null;
+            let capacidadeCatalogo: number | null = null;
+            if (data.pacoteId) {
+                const resolvido = await resolverPacoteDoCatalogoNaTransacao(
+                    tx,
+                    data.clienteId,
+                    data.pacoteId,
+                    data.servicoId,
                     false,
-                    data.origem,
                 );
-                if (vagasDePacote > 0) {
-                    disponiveis.push(slot);
-                    vagasDePacote -= 1;
-                } else {
-                    conflitos.push({
-                        ...slot,
-                        motivo: `Todos os ${capacidadeCatalogo ?? Math.max((saldoServico?.quantidadeTotal ?? 0) - (saldoServico?.usosAnteriores ?? 0), 0)} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
-                    });
-                }
-            } catch (error) {
-                const motivo =
-                    error instanceof AppError
-                        ? error.message
-                        : 'Erro ao validar disponibilidade do horário.';
-                conflitos.push({ ...slot, motivo });
+                capacidadeCatalogo = resolvido.capacidade;
             }
-        }
+            let vagasDePacote =
+                capacidadeCatalogo !== null
+                    ? capacidadeCatalogo
+                    : saldoServico
+                      ? saldoServico.quantidadeTotal -
+                        (saldoServico.usosAnteriores ?? 0) -
+                        (await tx.agendamento.count({
+                            where: {
+                                pacoteClienteId: data.pacoteClienteId,
+                                servicoId: data.servicoId,
+                                status: { not: StatusAgendamento.CANCELADO },
+                            },
+                        }))
+                      : Number.POSITIVE_INFINITY;
 
-        return { disponiveis, conflitos };
+            for (const slot of data.slots) {
+                try {
+                    const { dataHoraInicio, dataHoraFim } =
+                        await validarDisponibilidade(
+                            montarDataHoraInicio(slot),
+                            servico.duracaoMinutos,
+                            servico.permiteExtensaoFechamento,
+                            false,
+                            data.origem,
+                            undefined,
+                            false,
+                            undefined,
+                            {},
+                            false,
+                        );
+                    await agendamentoRepository.validarSobreposicaoNaTransacao(
+                        tx,
+                        {
+                            dataHoraInicio,
+                            dataHoraFim,
+                            clienteId: data.clienteId,
+                            intervalosAdicionais: aceitos,
+                        },
+                    );
+                    if (vagasDePacote > 0) {
+                        disponiveis.push(slot);
+                        aceitos.push({
+                            inicio: dataHoraInicio,
+                            fim: dataHoraFim,
+                        });
+                        vagasDePacote -= 1;
+                    } else {
+                        conflitos.push({
+                            ...slot,
+                            motivo: `Todos os ${capacidadeCatalogo ?? Math.max((saldoServico?.quantidadeTotal ?? 0) - (saldoServico?.usosAnteriores ?? 0), 0)} usos restantes deste serviço no pacote já estão agendados ou concluídos.`,
+                        });
+                    }
+                } catch (error) {
+                    const motivo =
+                        error instanceof AppError
+                            ? error.message
+                            : 'Erro ao validar disponibilidade do horário.';
+                    conflitos.push({ ...slot, motivo });
+                }
+            }
+
+            return { disponiveis, conflitos };
+        });
     } catch (error) {
         if (error instanceof AppError) {
             throw error;
@@ -1310,22 +1382,11 @@ async function validarDisponibilidadeNoLote(
         );
     }
 
-    const conflito = await contexto.tx.agendamento.findFirst({
-        where: {
-            status: { not: StatusAgendamento.CANCELADO },
-            dataHoraInicio: { lt: dataHoraFim },
-            dataHoraFim: { gt: dataHoraInicio },
-        },
-        select: { clienteId: true },
+    await agendamentoRepository.validarSobreposicaoNaTransacao(contexto.tx, {
+        dataHoraInicio,
+        dataHoraFim,
+        clienteId: contexto.clienteId,
     });
-    if (conflito) {
-        throw new AppError(
-            conflito.clienteId === contexto.clienteId
-                ? 'Você já tem agendamento nesse horário.'
-                : 'Já existe um agendamento nesse horário.',
-            409,
-        );
-    }
 
     return { dataHoraInicio, dataHoraFim };
 }
@@ -1360,6 +1421,12 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
     try {
         return await pacoteClienteRepository.transacionar(
             async (tx) => {
+                await agendamentoRepository.bloquearDiasAgendaNaTransacao(
+                    tx,
+                    data.slots.map((slot) =>
+                        converterParaData(montarDataHoraInicio(slot)),
+                    ),
+                );
                 const clienteExiste =
                     await clienteRepository.bloquearParaCriacaoDePacote(
                         tx,
@@ -1460,6 +1527,9 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
                                 : 'Erro ao validar disponibilidade do horário.',
                             409,
                             {
+                                ...(error instanceof AppError
+                                    ? error.details
+                                    : { code: 'CONFLITO_HORARIO' }),
                                 slot,
                                 motivo: motivoFalhaLote(error),
                             },
@@ -1582,6 +1652,9 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             servico.permiteExtensaoFechamento;
         const regrasDeHorarioMudaram =
             dataHoraMudou || duracaoMudou || extensaoMudou;
+        const recalcularEncaixe = dataHoraMudou || servicoMudou || duracaoMudou;
+        const permitirEncaixe =
+            data.origem === 'PAINEL' && data.permitirEncaixe === true;
 
         if (regrasDeHorarioMudaram) {
             const horarioValidado = await validarDisponibilidade(
@@ -1593,6 +1666,8 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
                 undefined,
                 data.permitirForaDoExpediente,
                 id,
+                {},
+                !permitirEncaixe,
             );
             dataHoraFim.setTime(horarioValidado.dataHoraFim.getTime());
         }
@@ -1609,7 +1684,9 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             );
         }
 
-        const dados = {
+        const dados: Parameters<
+            typeof agendamentoRepository.atualizarNaTransacao
+        >[2] = {
             clienteId: data.clienteId,
             servicoId: data.servicoId,
             ...(servicoMudou ? { precoUnitario: servico.preco } : {}),
@@ -1617,16 +1694,32 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             dataHoraFim,
             status: data.status,
         };
-        const agendamentoAtualizado = agendamentoExistente.pacoteClienteId
-            ? await agendamentoRepository.atualizarComNumeroNoPacote(
-                  id,
-                  dados,
-                  agendamentoExistente.pacoteClienteId,
-                  agendamentoExistente.servicoId,
-                  agendamentoExistente.numeroNoPacote ?? null,
-                  agendamentoExistente.status,
-              )
-            : await agendamentoRepository.atualizar(id, dados);
+        const agendamentoAtualizado =
+            await pacoteClienteRepository.transacionar(async (tx) => {
+                const encaixe =
+                    await agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao(
+                        tx,
+                        id,
+                        dados,
+                        { recalcular: recalcularEncaixe, permitirEncaixe },
+                    );
+                const dadosComEncaixe = { ...dados, encaixe };
+                return agendamentoExistente.pacoteClienteId
+                    ? agendamentoRepository.atualizarComNumeroNoPacoteNaTransacao(
+                          tx,
+                          id,
+                          dadosComEncaixe,
+                          agendamentoExistente.pacoteClienteId,
+                          agendamentoExistente.servicoId,
+                          agendamentoExistente.numeroNoPacote ?? null,
+                          agendamentoExistente.status,
+                      )
+                    : agendamentoRepository.atualizarNaTransacao(
+                          tx,
+                          id,
+                          dadosComEncaixe,
+                      );
+            });
 
         notificarSnapshotAutoConclusao(agendamentoAtualizado);
 
@@ -1704,6 +1797,9 @@ async function atualizarComPacoteDoCatalogo(
         servico.permiteExtensaoFechamento;
     const regrasDeHorarioMudaram =
         dataHoraMudou || duracaoMudou || extensaoMudou;
+    const recalcularEncaixe = dataHoraMudou || servicoMudou || duracaoMudou;
+    const permitirEncaixe =
+        data.origem === 'PAINEL' && data.permitirEncaixe === true;
 
     if (regrasDeHorarioMudaram) {
         const horarioValidado = await validarDisponibilidade(
@@ -1715,11 +1811,15 @@ async function atualizarComPacoteDoCatalogo(
             undefined,
             data.permitirForaDoExpediente,
             id,
+            {},
+            !permitirEncaixe,
         );
         dataHoraFim.setTime(horarioValidado.dataHoraFim.getTime());
     }
 
-    const dados = {
+    const dados: Parameters<
+        typeof agendamentoRepository.atualizarNaTransacao
+    >[2] = {
         clienteId: data.clienteId,
         servicoId: data.servicoId,
         ...(servicoMudou ? { precoUnitario: servico.preco } : {}),
@@ -1728,48 +1828,57 @@ async function atualizarComPacoteDoCatalogo(
         status: data.status,
     };
 
-    const atualizado = await pacoteClienteRepository.transacionar((tx) =>
-        agendamentoRepository.atualizarComPacoteDoCatalogoNaTransacao(
-            tx,
-            id,
-            dados,
-            async (txAtual, atual) => {
-                validarStatusPermiteVinculo(atual);
-                if (atual.pacoteClienteId) {
-                    throw new AppError(
-                        'Desvincule o pacote atual antes de vender um pacote do catálogo.',
-                        409,
-                    );
-                }
-                if (atual.clienteId !== data.clienteId) {
-                    throw new AppError(
-                        'Não é possível trocar o cliente ao vender um pacote do catálogo.',
-                        400,
-                    );
-                }
-
-                const resolvido = await resolverPacoteDoCatalogoNaTransacao(
-                    txAtual,
-                    atual.clienteId,
-                    data.pacoteId,
-                    data.servicoId,
-                    true,
+    const atualizado = await pacoteClienteRepository.transacionar(
+        async (tx) => {
+            const encaixe =
+                await agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao(
+                    tx,
+                    id,
+                    dados,
+                    { recalcular: recalcularEncaixe, permitirEncaixe },
                 );
-                if (resolvido.pacoteCliente) {
-                    validarPacoteClienteEncontrado(
-                        resolvido.pacoteCliente,
+            return agendamentoRepository.atualizarComPacoteDoCatalogoNaTransacao(
+                tx,
+                id,
+                { ...dados, encaixe },
+                async (txAtual, atual) => {
+                    validarStatusPermiteVinculo(atual);
+                    if (atual.pacoteClienteId) {
+                        throw new AppError(
+                            'Desvincule o pacote atual antes de vender um pacote do catálogo.',
+                            409,
+                        );
+                    }
+                    if (atual.clienteId !== data.clienteId) {
+                        throw new AppError(
+                            'Não é possível trocar o cliente ao vender um pacote do catálogo.',
+                            400,
+                        );
+                    }
+
+                    const resolvido = await resolverPacoteDoCatalogoNaTransacao(
+                        txAtual,
+                        atual.clienteId,
+                        data.pacoteId,
                         data.servicoId,
+                        true,
                     );
-                }
-                if (!resolvido.pacoteClienteId) {
-                    throw new AppError(
-                        'Não foi possível resolver o pacote do cliente.',
-                        500,
-                    );
-                }
-                return resolvido.pacoteClienteId;
-            },
-        ),
+                    if (resolvido.pacoteCliente) {
+                        validarPacoteClienteEncontrado(
+                            resolvido.pacoteCliente,
+                            data.servicoId,
+                        );
+                    }
+                    if (!resolvido.pacoteClienteId) {
+                        throw new AppError(
+                            'Não foi possível resolver o pacote do cliente.',
+                            500,
+                        );
+                    }
+                    return resolvido.pacoteClienteId;
+                },
+            );
+        },
     );
 
     await enfileirarSemFalhar([atualizado.id]);

@@ -12,6 +12,7 @@ interface CriarAgendamentoBody {
     dataHoraInicio: string;
     registroRetroativo?: boolean;
     permitirForaDoExpediente?: boolean;
+    permitirEncaixe?: boolean;
 }
 
 interface AtualizarAgendamentoBody {
@@ -22,6 +23,7 @@ interface AtualizarAgendamentoBody {
     status: StatusAgendamento;
     notificarCliente?: boolean;
     permitirForaDoExpediente?: boolean;
+    permitirEncaixe?: boolean;
 }
 
 interface CancelarAgendamentoBody {
@@ -106,6 +108,7 @@ export async function criar(
             registroRetroativo: request.body.registroRetroativo === true,
             permitirForaDoExpediente:
                 request.body.permitirForaDoExpediente === true,
+            permitirEncaixe: request.body.permitirEncaixe === true,
             origem: 'PAINEL',
         });
         void reply.status(201).send(complementarAgendamento(agendamento));
@@ -166,6 +169,7 @@ export async function atualizar(
                 ...request.body,
                 permitirForaDoExpediente:
                     request.body.permitirForaDoExpediente === true,
+                permitirEncaixe: request.body.permitirEncaixe === true,
                 origem: 'PAINEL',
             },
         );

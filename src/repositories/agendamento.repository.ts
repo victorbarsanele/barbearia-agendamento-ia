@@ -9,6 +9,8 @@ import {
 import { AppError } from '../lib/app-error';
 import prisma from '../lib/prisma';
 import type { SnapshotAutoConclusao } from '../lib/auto-conclusao-events';
+import { maximoSimultaneoNoIntervalo } from '../utils/limite-encaixe';
+import { chaveDataEmBrasilia } from '../utils/dia-semana';
 import * as clienteRepository from './cliente.repository';
 import * as pacoteRepository from './pacote.repository';
 
@@ -39,6 +41,7 @@ interface SalvarAgendamentoData {
     dataHoraInicio: Date;
     dataHoraFim: Date;
     status?: StatusAgendamento;
+    encaixe?: boolean;
 }
 
 type AtualizarAgendamentoData = Omit<SalvarAgendamentoData, 'origem'>;
@@ -50,6 +53,155 @@ interface BuscarConflitoParams {
 }
 
 type Transacao = Prisma.TransactionClient;
+
+const NAMESPACE_LOCK_AGENDA = 1_342_154_837;
+const MILISSEGUNDOS_POR_DIA = 86_400_000;
+
+interface IntervaloAgenda {
+    inicio: Date;
+    fim: Date;
+}
+
+function numeroDiaLocal(instante: Date): number {
+    const [ano, mes, dia] = chaveDataEmBrasilia(instante)
+        .split('-')
+        .map(Number);
+    return Math.floor(Date.UTC(ano, mes - 1, dia) / MILISSEGUNDOS_POR_DIA);
+}
+
+export async function bloquearDiasAgendaNaTransacao(
+    tx: Transacao,
+    instantes: Date[],
+): Promise<void> {
+    const dias = [...new Set(instantes.map(numeroDiaLocal))].sort(
+        (a, b) => a - b,
+    );
+    for (const dia of dias) {
+        await tx.$executeRaw(
+            Prisma.sql`SELECT pg_advisory_xact_lock(${NAMESPACE_LOCK_AGENDA}, ${dia})`,
+        );
+    }
+}
+
+export async function validarSobreposicaoNaTransacao(
+    tx: Transacao,
+    params: BuscarConflitoParams & {
+        permitirEncaixe?: boolean;
+        clienteId?: string;
+        intervalosAdicionais?: IntervaloAgenda[];
+    },
+): Promise<boolean> {
+    const conflitos = await tx.agendamento.findMany({
+        where: {
+            status: { not: StatusAgendamento.CANCELADO },
+            dataHoraInicio: { lt: params.dataHoraFim },
+            dataHoraFim: { gt: params.dataHoraInicio },
+            ...(params.ignorarAgendamentoId
+                ? { id: { not: params.ignorarAgendamentoId } }
+                : {}),
+        },
+        select: {
+            clienteId: true,
+            dataHoraInicio: true,
+            dataHoraFim: true,
+        },
+    });
+    const intervalosAdicionais = (params.intervalosAdicionais ?? []).filter(
+        ({ inicio, fim }) =>
+            inicio < params.dataHoraFim && fim > params.dataHoraInicio,
+    );
+    const intervalos = [
+        ...conflitos.map(({ dataHoraInicio, dataHoraFim }) => ({
+            inicio: dataHoraInicio,
+            fim: dataHoraFim,
+        })),
+        ...intervalosAdicionais,
+    ];
+    if (intervalos.length === 0) return false;
+
+    if (!params.permitirEncaixe) {
+        const conflitoMesmoCliente = conflitos.some(
+            ({ clienteId }) => clienteId === params.clienteId,
+        );
+        throw new AppError(
+            conflitoMesmoCliente
+                ? 'Você já tem agendamento nesse horário.'
+                : 'Já existe um agendamento nesse horário.',
+            409,
+            { code: 'CONFLITO_HORARIO' },
+        );
+    }
+
+    if (
+        maximoSimultaneoNoIntervalo(
+            params.dataHoraInicio,
+            params.dataHoraFim,
+            intervalos,
+        ) > 1
+    ) {
+        throw new AppError('Limite de encaixes simultâneos atingido.', 409, {
+            code: 'LIMITE_ENCAIXE',
+        });
+    }
+    return true;
+}
+
+export async function prepararEncaixeNaTransacao(
+    tx: Transacao,
+    data: SalvarAgendamentoData,
+    permitirEncaixe = false,
+    ignorarAgendamentoId?: string,
+): Promise<boolean> {
+    await bloquearDiasAgendaNaTransacao(tx, [data.dataHoraInicio]);
+    return validarSobreposicaoNaTransacao(tx, {
+        dataHoraInicio: data.dataHoraInicio,
+        dataHoraFim: data.dataHoraFim,
+        ignorarAgendamentoId,
+        clienteId: data.clienteId,
+        permitirEncaixe,
+    });
+}
+
+export async function prepararEncaixeDaAtualizacaoNaTransacao(
+    tx: Transacao,
+    id: string,
+    data: AtualizarAgendamentoData,
+    opcoes: { recalcular: boolean; permitirEncaixe: boolean },
+): Promise<boolean> {
+    const anterior = await tx.agendamento.findUnique({
+        where: { id },
+        select: { dataHoraInicio: true, encaixe: true },
+    });
+    if (!anterior) throw new AppError('Agendamento não encontrado.', 404);
+
+    await bloquearDiasAgendaNaTransacao(tx, [
+        anterior.dataHoraInicio,
+        data.dataHoraInicio,
+    ]);
+
+    const atual = await tx.agendamento.findUnique({
+        where: { id },
+        select: { dataHoraInicio: true, encaixe: true },
+    });
+    if (!atual) throw new AppError('Agendamento não encontrado.', 404);
+    if (atual.dataHoraInicio.getTime() !== anterior.dataHoraInicio.getTime()) {
+        throw new AppError(
+            'Agendamento foi alterado durante a edição. Atualize e tente novamente.',
+            409,
+        );
+    }
+
+    const sobrepoe = await validarSobreposicaoNaTransacao(tx, {
+        dataHoraInicio: data.dataHoraInicio,
+        dataHoraFim: data.dataHoraFim,
+        ignorarAgendamentoId: id,
+        clienteId: data.clienteId,
+        permitirEncaixe: opcoes.recalcular
+            ? opcoes.permitirEncaixe
+            : atual.encaixe,
+    });
+    return sobrepoe && (opcoes.recalcular || atual.encaixe);
+}
 
 export interface AgendamentoPacoteCatalogoLock {
     clienteId: string;
@@ -143,15 +295,17 @@ export function isViolacaoDeSobreposicao(error: unknown): boolean {
 
 export async function criar(
     data: SalvarAgendamentoData,
+    permitirEncaixe = false,
 ): Promise<AgendamentoComRelacoes> {
     try {
-        return await prisma.agendamento.create({
-            data,
-            include: includeRelacoes,
-        });
+        return await prisma.$transaction((tx) =>
+            criarNaTransacao(tx, data, permitirEncaixe),
+        );
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
@@ -257,12 +411,23 @@ export async function reservarNumeroNoPacoteOportunistaNaTransacao(
 export async function criarNaTransacao(
     tx: Transacao,
     data: SalvarAgendamentoData,
+    permitirEncaixe = false,
 ): Promise<AgendamentoComRelacoes> {
     try {
-        return await tx.agendamento.create({ data, include: includeRelacoes });
+        const encaixe = await prepararEncaixeNaTransacao(
+            tx,
+            data,
+            permitirEncaixe,
+        );
+        return await tx.agendamento.create({
+            data: { ...data, encaixe },
+            include: includeRelacoes,
+        });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
@@ -273,9 +438,16 @@ export async function criarComNumeroNoPacote(
     data: SalvarAgendamentoData,
     pacoteClienteId: string,
     servicoId: string,
+    permitirEncaixe = false,
 ): Promise<AgendamentoComRelacoes> {
     return prisma.$transaction((tx) =>
-        criarComNumeroNoPacoteNaTransacao(tx, data, pacoteClienteId, servicoId),
+        criarComNumeroNoPacoteNaTransacao(
+            tx,
+            data,
+            pacoteClienteId,
+            servicoId,
+            permitirEncaixe,
+        ),
     );
 }
 
@@ -284,8 +456,14 @@ export async function criarComNumeroNoPacoteNaTransacao(
     data: SalvarAgendamentoData,
     pacoteClienteId: string,
     servicoId: string,
+    permitirEncaixe = false,
 ): Promise<AgendamentoComRelacoes> {
     try {
+        const encaixe = await prepararEncaixeNaTransacao(
+            tx,
+            data,
+            permitirEncaixe,
+        );
         // Slot novo reserva saldo antes do INSERT porque ainda não existe linha de Agendamento.
         const numeroNoPacote = await reservarNumeroNoPacote(
             tx,
@@ -294,12 +472,14 @@ export async function criarComNumeroNoPacoteNaTransacao(
         );
 
         return await tx.agendamento.create({
-            data: { ...data, numeroNoPacote },
+            data: { ...data, numeroNoPacote, encaixe },
             include: includeRelacoes,
         });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
@@ -525,15 +705,38 @@ export async function atualizar(
         });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
     }
 }
 
+export async function atualizarNaTransacao(
+    tx: Transacao,
+    id: string,
+    data: AtualizarAgendamentoData,
+): Promise<AgendamentoComRelacoes> {
+    try {
+        return await tx.agendamento.update({
+            where: { id },
+            data,
+            include: includeRelacoes,
+        });
+    } catch (error) {
+        if (isViolacaoDeSobreposicao(error)) {
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
+        }
+        throw error;
+    }
+}
+
 /**
- * Ordem dos locks: Cliente, Agendamento, catálogo (FOR SHARE), saldo.
+ * Ordem dos locks: advisory da agenda, Cliente, Agendamento, catálogo (FOR SHARE), saldo.
  * Cliente primeiro alinha estorno e conclusão automática com renovação.
  * Operações administrativas usam FOR UPDATE, mas não pedem esses locks depois.
  * Renovação pode travar saldo antes do catálogo, mantendo cliente primeiro.
@@ -600,7 +803,9 @@ export async function atualizarComPacoteDoCatalogoNaTransacao(
         });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
@@ -615,43 +820,62 @@ export async function atualizarComNumeroNoPacote(
     numeroNoPacoteAtual: number | null,
     statusAtual: StatusAgendamento,
 ): Promise<AgendamentoComRelacoes> {
+    return prisma.$transaction((tx) =>
+        atualizarComNumeroNoPacoteNaTransacao(
+            tx,
+            id,
+            data,
+            pacoteClienteId,
+            servicoId,
+            numeroNoPacoteAtual,
+            statusAtual,
+        ),
+    );
+}
+
+export async function atualizarComNumeroNoPacoteNaTransacao(
+    tx: Transacao,
+    id: string,
+    data: AtualizarAgendamentoData,
+    pacoteClienteId: string | null,
+    servicoId: string,
+    numeroNoPacoteAtual: number | null,
+    statusAtual: StatusAgendamento,
+): Promise<AgendamentoComRelacoes> {
     try {
-        return await prisma.$transaction(async (tx) => {
-            // Ordem canônica para linha existente: Agendamento -> Cliente -> saldo -> PacoteCliente.
-            await tx.$queryRaw(Prisma.sql`
-                SELECT "id" FROM "agendamentos" WHERE "id" = ${id} FOR UPDATE
-            `);
+        // O chamador adquire o lock advisory da agenda antes deste lock de linha.
+        await tx.$queryRaw(Prisma.sql`
+            SELECT "id" FROM "agendamentos" WHERE "id" = ${id} FOR UPDATE
+        `);
 
-            let numeroNoPacote: number | null = null;
+        let numeroNoPacote: number | null = null;
 
-            if (
-                pacoteClienteId &&
-                data.status !== StatusAgendamento.CANCELADO
-            ) {
-                const podeManterNumero =
-                    servicoId === data.servicoId &&
-                    statusAtual !== StatusAgendamento.CANCELADO &&
-                    numeroNoPacoteAtual !== null;
+        if (pacoteClienteId && data.status !== StatusAgendamento.CANCELADO) {
+            const podeManterNumero =
+                servicoId === data.servicoId &&
+                statusAtual !== StatusAgendamento.CANCELADO &&
+                numeroNoPacoteAtual !== null;
 
-                numeroNoPacote = podeManterNumero
-                    ? numeroNoPacoteAtual
-                    : await reservarNumeroNoPacote(
-                          tx,
-                          pacoteClienteId,
-                          data.servicoId,
-                          id,
-                      );
-            }
+            numeroNoPacote = podeManterNumero
+                ? numeroNoPacoteAtual
+                : await reservarNumeroNoPacote(
+                      tx,
+                      pacoteClienteId,
+                      data.servicoId,
+                      id,
+                  );
+        }
 
-            return tx.agendamento.update({
-                where: { id },
-                data: { ...data, numeroNoPacote },
-                include: includeRelacoes,
-            });
+        return await tx.agendamento.update({
+            where: { id },
+            data: { ...data, numeroNoPacote },
+            include: includeRelacoes,
         });
     } catch (error) {
         if (isViolacaoDeSobreposicao(error)) {
-            throw new AppError('Já existe um agendamento nesse horário.', 409);
+            throw new AppError('Já existe um agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            });
         }
 
         throw error;
@@ -1136,6 +1360,7 @@ export async function criarEConcluirRetroativoComPacote(
     data: SalvarAgendamentoData,
     pacoteClienteId: string,
     servicoId: string,
+    permitirEncaixe = false,
 ): Promise<AgendamentoComRelacoes> {
     return prisma.$transaction(async (tx) => {
         const agendamento = await criarComNumeroNoPacoteNaTransacao(
@@ -1143,6 +1368,7 @@ export async function criarEConcluirRetroativoComPacote(
             data,
             pacoteClienteId,
             servicoId,
+            permitirEncaixe,
         );
         const resultado = await concluirComPacote(
             agendamento.id,
