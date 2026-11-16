@@ -10,6 +10,7 @@ import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
 import { IconButton } from './ui/IconButton';
+import { SeloEncaixe } from './SeloEncaixe';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 
@@ -202,7 +203,7 @@ export function AgendamentosClienteModal({
                                 className={`rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]/30 p-3 ${opaca ? 'opacity-65' : ''}`}
                             >
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <div>
+                                    <div className="min-w-0">
                                         <p className="text-sm font-semibold text-[var(--color-text-primary)]">
                                             {formatarDataHoraEmBrasilia(
                                                 agendamento.dataHoraInicio,
@@ -212,7 +213,10 @@ export function AgendamentosClienteModal({
                                             {agendamento.servico.nome}
                                         </p>
                                     </div>
-                                    <Badge status={agendamento.status} />
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        {agendamento.encaixe && <SeloEncaixe />}
+                                        <Badge status={agendamento.status} />
+                                    </div>
                                 </div>
 
                                 <div className="mt-3 flex flex-wrap gap-2">
@@ -266,9 +270,9 @@ export function AgendamentosClienteModal({
                                                     {removendoId ===
                                                     agendamento.id
                                                         ? 'Removendo...'
-                                                                                                                : agendamento.estornavel
-                                                                                                                    ? 'Sim, remover e estornar'
-                                                                                                                    : 'Sim, remover'}
+                                                        : agendamento.estornavel
+                                                          ? 'Sim, remover e estornar'
+                                                          : 'Sim, remover'}
                                                 </Button>
                                                 <Button
                                                     type="button"

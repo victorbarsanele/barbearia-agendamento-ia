@@ -29,6 +29,7 @@ test.beforeEach(async ({ page }) => {
 
 const AGENDAMENTO = {
     id: 'agendamento-edicao',
+    encaixe: false,
     dataHoraInicio: dataHoraSaoPaulo('13:00:00.000'),
     dataHoraFim: dataHoraSaoPaulo('13:30:00.000'),
     status: 'AGENDADO',
@@ -99,6 +100,7 @@ async function mockEdicao(
     exigirOverride = true,
     pacoteAtivo: Record<string, unknown> | null = null,
     vinculos: Record<string, unknown>[] = [],
+    respostasAtualizacao?: { status: number; body: unknown }[],
 ): Promise<Record<string, unknown>[]> {
     const atualizacoes: Record<string, unknown>[] = [];
     const agendamento = { ...AGENDAMENTO, dataHoraInicio };
@@ -159,7 +161,8 @@ async function mockEdicao(
                 >,
             );
             response =
-                exigirOverride && atualizacoes.length === 1
+                respostasAtualizacao?.[atualizacoes.length - 1] ??
+                (exigirOverride && atualizacoes.length === 1
                     ? {
                           status: 422,
                           body: {
@@ -168,7 +171,7 @@ async function mockEdicao(
                               motivos: ['dia_fechado'],
                           },
                       }
-                    : { status: 200, body: agendamento };
+                    : { status: 200, body: agendamento });
         }
 
         await route.fulfill({ status: response.status, json: response.body });
@@ -509,6 +512,219 @@ test('edição confirma expediente e repete PUT com override temporário', async
     await expect.poll(() => atualizacoes.length).toBe(2);
     expect(atualizacoes[1]).toEqual({
         ...atualizacoes[0],
+        permitirForaDoExpediente: true,
+    });
+});
+
+test('edição confirma conflito e repete PUT com permitirEncaixe', async ({
+    page,
+}) => {
+    const atualizacoes = await mockEdicao(
+        page,
+        undefined,
+        false,
+        null,
+        [],
+        [
+            {
+                status: 409,
+                body: {
+                    message: 'Já existe um agendamento nesse horário.',
+                    code: 'CONFLITO_HORARIO',
+                },
+            },
+            { status: 200, body: AGENDAMENTO },
+        ],
+    );
+
+    await page.goto('/editar/agendamento-edicao');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Registrar como encaixe?');
+    expect(atualizacoes).toHaveLength(1);
+    expect(atualizacoes[0]).not.toHaveProperty('permitirEncaixe');
+
+    await dialog.getByRole('button', { name: 'Encaixar mesmo assim' }).click();
+    await expect.poll(() => atualizacoes.length).toBe(2);
+    expect(atualizacoes[1]).toEqual({
+        ...atualizacoes[0],
+        permitirEncaixe: true,
+    });
+});
+
+test('cancelar confirmação de conflito na edição não faz novo PUT', async ({
+    page,
+}) => {
+    const atualizacoes = await mockEdicao(
+        page,
+        undefined,
+        false,
+        null,
+        [],
+        [
+            {
+                status: 409,
+                body: {
+                    message: 'Já existe um agendamento nesse horário.',
+                    code: 'CONFLITO_HORARIO',
+                },
+            },
+        ],
+    );
+
+    await page.goto('/editar/agendamento-edicao');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Registrar como encaixe?');
+    await dialog.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(atualizacoes).toHaveLength(1);
+});
+
+test('limite de encaixes na edição fica inline sem diálogo', async ({
+    page,
+}) => {
+    const atualizacoes = await mockEdicao(
+        page,
+        undefined,
+        false,
+        null,
+        [],
+        [
+            {
+                status: 409,
+                body: {
+                    message: 'Mensagem do backend.',
+                    code: 'LIMITE_ENCAIXE',
+                },
+            },
+        ],
+    );
+
+    await page.goto('/editar/agendamento-edicao');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(
+        page.getByText(
+            'Já existem dois agendamentos nesse horário. Escolha outro horário.',
+        ),
+    ).toBeVisible();
+    expect(atualizacoes).toHaveLength(1);
+});
+
+test('edição acumula expediente e encaixe quando recebe ambos os códigos', async ({
+    page,
+}) => {
+    const atualizacoes = await mockEdicao(
+        page,
+        undefined,
+        false,
+        null,
+        [],
+        [
+            {
+                status: 422,
+                body: {
+                    message: 'Horário fora do expediente.',
+                    code: 'FORA_DO_EXPEDIENTE',
+                    motivos: ['dia_fechado'],
+                },
+            },
+            {
+                status: 409,
+                body: {
+                    message: 'Já existe um agendamento nesse horário.',
+                    code: 'CONFLITO_HORARIO',
+                },
+            },
+            { status: 200, body: AGENDAMENTO },
+        ],
+    );
+
+    await page.goto('/editar/agendamento-edicao');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Encaixar fora do expediente?',
+    );
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Registrar como encaixe?',
+    );
+    expect(atualizacoes[1]).toEqual({
+        ...atualizacoes[0],
+        permitirForaDoExpediente: true,
+    });
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect.poll(() => atualizacoes.length).toBe(3);
+    expect(atualizacoes[2]).toEqual({
+        ...atualizacoes[0],
+        permitirForaDoExpediente: true,
+        permitirEncaixe: true,
+    });
+});
+
+test('edição acumula encaixe e expediente quando recebe ambos os códigos', async ({
+    page,
+}) => {
+    const atualizacoes = await mockEdicao(
+        page,
+        undefined,
+        false,
+        null,
+        [],
+        [
+            {
+                status: 409,
+                body: {
+                    message: 'Já existe um agendamento nesse horário.',
+                    code: 'CONFLITO_HORARIO',
+                },
+            },
+            {
+                status: 409,
+                body: {
+                    message: 'Horário bloqueado pelo barbeiro.',
+                    code: 'FORA_DO_EXPEDIENTE',
+                    motivos: ['bloqueio_total'],
+                },
+            },
+            { status: 200, body: AGENDAMENTO },
+        ],
+    );
+
+    await page.goto('/editar/agendamento-edicao');
+    await page.getByRole('button', { name: 'Salvar alterações' }).click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Registrar como encaixe?',
+    );
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Encaixar fora do expediente?',
+    );
+    expect(atualizacoes[1]).toEqual({
+        ...atualizacoes[0],
+        permitirEncaixe: true,
+    });
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect.poll(() => atualizacoes.length).toBe(3);
+    expect(atualizacoes[2]).toEqual({
+        ...atualizacoes[0],
+        permitirEncaixe: true,
         permitirForaDoExpediente: true,
     });
 });

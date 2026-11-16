@@ -10,6 +10,7 @@ import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconButton } from './ui/IconButton';
+import { SeloEncaixe } from './SeloEncaixe';
 
 interface AgendamentoItemProps {
     agendamento: Agendamento;
@@ -254,7 +255,8 @@ export function AgendamentoItem({
                 {(podeEditar ||
                     podeCancelar ||
                     podeEnviarLembrete ||
-                    lembreteAceito) && (
+                    lembreteAceito ||
+                    agendamento.encaixe) && (
                     <div className="flex flex-wrap items-center gap-2 border-t border-white/10 pt-3">
                         {podeEditar && (
                             <Button
@@ -320,6 +322,8 @@ export function AgendamentoItem({
                                 </div>
                             )
                         )}
+
+                        {agendamento.encaixe && <SeloEncaixe />}
 
                         {agendamento.status !== 'CANCELADO' &&
                             formatarNumeroNoPacote(

@@ -15,6 +15,7 @@ export interface UltimoLembreteAgendamento {
 
 export interface Agendamento {
     id: string;
+    encaixe: boolean;
     origem?: 'PAINEL' | 'WHATSAPP_IA' | null;
     dataHoraInicio: string;
     dataHoraFim: string;
@@ -48,6 +49,7 @@ export interface CriarAgendamentoBasePayload {
     dataHoraInicio: string;
     registroRetroativo?: boolean;
     permitirForaDoExpediente?: boolean;
+    permitirEncaixe?: boolean;
 }
 
 export type CriarAgendamentoPayload = CriarAgendamentoBasePayload &
@@ -81,6 +83,7 @@ export interface AtualizarAgendamentoPayload {
     pacoteId?: string;
     notificarCliente?: boolean;
     permitirForaDoExpediente?: boolean;
+    permitirEncaixe?: boolean;
 }
 
 export interface CancelarAgendamentoPayload {

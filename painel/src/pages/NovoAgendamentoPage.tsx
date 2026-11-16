@@ -27,7 +27,16 @@ import { DateTimePicker } from '../components/DateTimePicker';
 import { getBrazilDateKey, getBrazilDateParts } from '../utils/dateTime';
 import { calcularPisoAntecedencia } from '../utils/antecedenciaAgendamento';
 import { getAgendaUrlForAgendamento } from '../utils/agendamentoNavigation';
-import { obterMotivosOverride } from '../utils/overrideExpediente';
+import {
+    acumularPermissaoOverride,
+    classificarErroOverride,
+    MENSAGEM_LIMITE_ENCAIXE,
+    permissaoOverrideJaConcedida,
+    PERMISSOES_OVERRIDE_VAZIAS,
+    montarPayloadReenvio,
+    type ErroOverrideAgendamento,
+    type PermissoesOverrideAgendamento,
+} from '../utils/overrideAgendamento';
 import {
     buscarSaldoPorServico,
     filtrarServicosPorPacoteAtivo,
@@ -43,6 +52,17 @@ import {
 
 const DEBOUNCE_MS = 300;
 const RETROATIVO_MAX_DIAS = 90; // Keep aligned with backend RETROATIVO_MAX_DIAS.
+
+type ErroComDialogoOverride = Exclude<
+    ErroOverrideAgendamento,
+    { tipo: 'LIMITE_ENCAIXE' }
+>;
+
+interface OverridePendenteCriacao {
+    payload: CriarAgendamentoPayload;
+    permissoes: PermissoesOverrideAgendamento;
+    erro: ErroComDialogoOverride;
+}
 const TIME_ZONE = 'America/Sao_Paulo';
 const MENSAGEM_PACOTE_ATIVO_DIVERGENTE =
     'Cliente já possui pacote ativo diferente do pacote selecionado.';
@@ -178,10 +198,9 @@ export function NovoAgendamentoPage() {
         payload: CriarAgendamentoPayload;
         pacoteSeraConcluido: boolean;
     } | null>(null);
-    const [overridePendente, setOverridePendente] = useState<{
-        payload: CriarAgendamentoPayload;
-        motivos: string[];
-    } | null>(null);
+    const [overridePendente, setOverridePendente] =
+        useState<OverridePendenteCriacao | null>(null);
+    const submitLatchRef = useRef(false);
 
     const clienteIdSelecionado = clienteSelecionado?.id ?? null;
     const resultadoConsultaPacoteAtivoAtual =
@@ -634,23 +653,51 @@ export function NovoAgendamentoPage() {
         setSucesso(null);
     };
 
-    const enviarAgendamento = async (payload: CriarAgendamentoPayload) => {
+    const enviarAgendamento = async (
+        payload: CriarAgendamentoPayload,
+        permissoes: PermissoesOverrideAgendamento = PERMISSOES_OVERRIDE_VAZIAS,
+    ) => {
         setSubmetendo(true);
         setErro(null);
         setSucesso(null);
         try {
-            await criarAgendamento(payload);
+            await criarAgendamento(montarPayloadReenvio(payload, permissoes));
+            setOverridePendente(null);
             setSucesso('Agendamento criado com sucesso! Redirecionando...');
             redirectTimeoutRef.current = window.setTimeout(() => {
                 navigate(getAgendaUrlForAgendamento(payload.dataHoraInicio));
             }, 1200);
         } catch (error) {
-            const motivosOverride = obterMotivosOverride(error);
-            if (motivosOverride) {
-                setOverridePendente({ payload, motivos: motivosOverride });
+            const erroOverride = classificarErroOverride(error);
+            if (erroOverride?.tipo === 'LIMITE_ENCAIXE') {
+                setOverridePendente(null);
+                setErro(MENSAGEM_LIMITE_ENCAIXE);
+                setSucesso(null);
+                return;
+            }
+            if (erroOverride) {
+                if (
+                    permissaoOverrideJaConcedida(permissoes, erroOverride.tipo)
+                ) {
+                    setOverridePendente(null);
+                    setErro(
+                        error instanceof Error
+                            ? error.message
+                            : 'Não foi possível criar o agendamento.',
+                    );
+                    setSucesso(null);
+                    return;
+                }
+
+                setOverridePendente({
+                    payload,
+                    permissoes,
+                    erro: erroOverride,
+                });
                 return;
             }
 
+            setOverridePendente(null);
             if (
                 error instanceof ApiError &&
                 error.status === 409 &&
@@ -700,112 +747,110 @@ export function NovoAgendamentoPage() {
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-
-        if (!clienteSelecionado?.id) {
-            setErro('Selecione um cliente da lista de sugestões.');
+        if (submitLatchRef.current) {
             return;
         }
+        submitLatchRef.current = true;
 
-        if (!servicoId || !data || !hora) {
-            setErro('Preencha todos os campos obrigatórios.');
-            return;
-        }
+        try {
+            if (!clienteSelecionado?.id) {
+                setErro('Selecione um cliente da lista de sugestões.');
+                return;
+            }
 
-        if (
-            usarPacoteAtivo &&
-            (!saldoServicoSelecionado ||
-                saldoServicoSelecionado.quantidadeRestante <= 0)
-        ) {
-            setErro('Serviço selecionado não possui saldo no pacote.');
-            return;
-        }
+            if (!servicoId || !data || !hora) {
+                setErro('Preencha todos os campos obrigatórios.');
+                return;
+            }
 
-        const retroativo = calcularDataHoraNoPassado(data, hora);
-        if (retroativo && pacoteCatalogoSelecionado) {
-            setPacoteCatalogoId('');
-            setAvisoCatalogoRetroativo(true);
-            setErro(
-                'Venda de pacote do catálogo não está disponível em data passada.',
-            );
-            return;
-        }
-
-        const payloadBase: CriarAgendamentoBasePayload = {
-            clienteId: clienteSelecionado.id,
-            servicoId,
-            dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
-            ...(retroativo ? { registroRetroativo: true } : {}),
-        };
-        const payload: CriarAgendamentoPayload = montarPayloadAgendamento(
-            payloadBase,
-            usarPacoteAtivo && pacoteAtivoDoCliente
-                ? { tipo: 'ativo', pacoteClienteId: pacoteAtivoDoCliente.id }
-                : pacoteCatalogoSelecionado
-                  ? {
-                        tipo: 'catalogo',
-                        pacoteId: pacoteCatalogoSelecionado.id,
-                    }
-                  : { tipo: 'nenhum' },
-        );
-
-        if (retroativo) {
-            const pacoteSeraConcluido = Boolean(
+            if (
                 usarPacoteAtivo &&
-                servicoSelecionado &&
-                dataHoraSelecionada &&
-                dataHoraSelecionada.getTime() +
-                    servicoSelecionado.duracaoMinutos * 60_000 <=
-                    Date.now(),
-            );
-            setRetroativoPendente({ payload, pacoteSeraConcluido });
-            return;
-        }
+                (!saldoServicoSelecionado ||
+                    saldoServicoSelecionado.quantidadeRestante <= 0)
+            ) {
+                setErro('Serviço selecionado não possui saldo no pacote.');
+                return;
+            }
 
-        await enviarAgendamento(payload);
+            const retroativo = calcularDataHoraNoPassado(data, hora);
+            if (retroativo && pacoteCatalogoSelecionado) {
+                setPacoteCatalogoId('');
+                setAvisoCatalogoRetroativo(true);
+                setErro(
+                    'Venda de pacote do catálogo não está disponível em data passada.',
+                );
+                return;
+            }
+
+            const payloadBase: CriarAgendamentoBasePayload = {
+                clienteId: clienteSelecionado.id,
+                servicoId,
+                dataHoraInicio: toIsoWithBrasiliaOffset(data, hora),
+                ...(retroativo ? { registroRetroativo: true } : {}),
+            };
+            const payload: CriarAgendamentoPayload = montarPayloadAgendamento(
+                payloadBase,
+                usarPacoteAtivo && pacoteAtivoDoCliente
+                    ? {
+                          tipo: 'ativo',
+                          pacoteClienteId: pacoteAtivoDoCliente.id,
+                      }
+                    : pacoteCatalogoSelecionado
+                      ? {
+                            tipo: 'catalogo',
+                            pacoteId: pacoteCatalogoSelecionado.id,
+                        }
+                      : { tipo: 'nenhum' },
+            );
+
+            if (retroativo) {
+                const pacoteSeraConcluido = Boolean(
+                    usarPacoteAtivo &&
+                    servicoSelecionado &&
+                    dataHoraSelecionada &&
+                    dataHoraSelecionada.getTime() +
+                        servicoSelecionado.duracaoMinutos * 60_000 <=
+                        Date.now(),
+                );
+                setRetroativoPendente({ payload, pacoteSeraConcluido });
+                return;
+            }
+
+            await enviarAgendamento(payload);
+        } finally {
+            submitLatchRef.current = false;
+        }
     };
 
     const confirmarRegistroRetroativo = async () => {
-        if (!retroativoPendente) {
+        if (!retroativoPendente || submitLatchRef.current) {
             return;
         }
 
+        submitLatchRef.current = true;
         const payload = retroativoPendente.payload;
         setRetroativoPendente(null);
-        await enviarAgendamento(payload);
+        try {
+            await enviarAgendamento(payload);
+        } finally {
+            submitLatchRef.current = false;
+        }
     };
 
-    const confirmarOverrideExpediente = async () => {
-        if (!overridePendente) {
+    const confirmarOverridePendente = async () => {
+        if (!overridePendente || submitLatchRef.current) {
             return;
         }
 
-        setSubmetendo(true);
-        setErro(null);
+        submitLatchRef.current = true;
+        const permissoes = acumularPermissaoOverride(
+            overridePendente.permissoes,
+            overridePendente.erro.tipo,
+        );
         try {
-            await criarAgendamento({
-                ...overridePendente.payload,
-                permitirForaDoExpediente: true,
-            });
-            setOverridePendente(null);
-            setSucesso('Agendamento criado com sucesso! Redirecionando...');
-            redirectTimeoutRef.current = window.setTimeout(() => {
-                navigate(
-                    getAgendaUrlForAgendamento(
-                        overridePendente.payload.dataHoraInicio,
-                    ),
-                );
-            }, 1200);
-        } catch (error) {
-            const message =
-                obterMensagemErroRetroativo(error) ??
-                (error instanceof Error
-                    ? error.message
-                    : 'Não foi possível criar o agendamento.');
-            setOverridePendente(null);
-            setErro(message);
-            setSucesso(null);
+            await enviarAgendamento(overridePendente.payload, permissoes);
         } finally {
-            setSubmetendo(false);
+            submitLatchRef.current = false;
         }
     };
 
@@ -1321,16 +1366,32 @@ export function NovoAgendamentoPage() {
             <ConfirmDialog
                 open={overridePendente !== null}
                 alertDialog
-                title="Encaixar fora do expediente?"
-                description="O horário selecionado está fora da disponibilidade configurada:"
-                descriptionItems={overridePendente?.motivos}
+                title={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Registrar como encaixe?'
+                        : 'Encaixar fora do expediente?'
+                }
+                description={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Já existe um agendamento nesse horário. O limite é de dois atendimentos simultâneos.'
+                        : 'O horário selecionado está fora da disponibilidade configurada:'
+                }
+                descriptionItems={
+                    overridePendente?.erro.tipo === 'FORA_DO_EXPEDIENTE'
+                        ? overridePendente.erro.motivos
+                        : undefined
+                }
                 confirmText="Encaixar mesmo assim"
-                loadingText="Encaixando..."
+                loadingText={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Registrando...'
+                        : 'Encaixando...'
+                }
                 confirmVariant="primary"
                 cancelVariant="outline"
                 restoreFocusId="novo-agendamento-submit"
                 loading={submetendo}
-                onConfirm={() => void confirmarOverrideExpediente()}
+                onConfirm={() => void confirmarOverridePendente()}
                 onCancel={() => setOverridePendente(null)}
             />
         </main>
