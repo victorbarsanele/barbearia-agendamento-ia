@@ -21,6 +21,7 @@ function criarAgendamento(
             dataHoraInicio.getTime() + 30 * 60 * 1000,
         ).toISOString(),
         status: 'AGENDADO',
+        encaixe: false,
         pacoteClienteId: null,
         numeroNoPacote: null,
         totalServicoNoPacote: null,
@@ -80,6 +81,27 @@ test('posiciona selo sem colisão ou overflow em mobile e desktop', async ({
                     'Cliente sem origem',
                     '14:00',
                 ),
+                {
+                    ...criarAgendamento(
+                        'encaixe-pacote',
+                        null,
+                        'Cliente encaixe com pacote',
+                        '14:30',
+                    ),
+                    encaixe: true,
+                    pacoteClienteId: 'pacote-cliente-1',
+                    numeroNoPacote: 1,
+                    totalServicoNoPacote: 4,
+                },
+                {
+                    ...criarAgendamento(
+                        'sem-encaixe',
+                        null,
+                        'Cliente sem encaixe',
+                        '15:00',
+                    ),
+                    encaixe: false,
+                },
             ];
         }
 
@@ -96,17 +118,32 @@ test('posiciona selo sem colisão ou overflow em mobile e desktop', async ({
         has: page.getByRole('img', { name: rotuloPainel }),
     });
     const cardSemOrigem = cards.filter({ hasText: 'Cliente sem origem' });
+    const cardEncaixe = cards.filter({
+        hasText: 'Cliente encaixe com pacote',
+    });
+    const cardSemEncaixe = cards.filter({ hasText: 'Cliente sem encaixe' });
 
     await expect(cardWhatsApp).toHaveCount(1);
     await expect(cardPainel).toHaveCount(1);
     await expect(cardSemOrigem).toHaveCount(1);
+    await expect(cardEncaixe).toHaveCount(1);
+    await expect(cardSemEncaixe).toHaveCount(1);
+    await expect(
+        cardEncaixe.getByText('Encaixe', { exact: true }),
+    ).toBeVisible();
+    await expect(
+        cardEncaixe.getByText('1º de 4', { exact: true }),
+    ).toBeVisible();
+    await expect(
+        cardSemEncaixe.getByText('Encaixe', { exact: true }),
+    ).toHaveCount(0);
     await expect(cardSemOrigem.getByRole('img')).toHaveCount(0);
 
     const nome = cardWhatsApp.locator('p').first();
     const selo = cardWhatsApp.getByRole('img', { name: rotuloWhatsApp });
     const horario = cardWhatsApp.getByText('10:00', { exact: true });
 
-    for (const largura of [390, 1280]) {
+    for (const largura of [360, 1280]) {
         await page.setViewportSize({ width: largura, height: 844 });
         await expect(nome).toHaveCSS('text-overflow', 'ellipsis');
         expect(
@@ -145,12 +182,110 @@ test('posiciona selo sem colisão ou overflow em mobile e desktop', async ({
         });
         expect(overflowPais).toEqual([]);
 
-        if (largura === 390) {
+        const cardComPacote = cardEncaixe.locator(':scope > div');
+        expect(
+            await cardComPacote.evaluate(
+                (element) => element.scrollWidth <= element.clientWidth,
+            ),
+        ).toBe(true);
+        expect(
+            await page.evaluate(
+                () =>
+                    document.documentElement.scrollWidth <=
+                    document.documentElement.clientWidth,
+            ),
+        ).toBe(true);
+
+        if (largura === 360) {
             console.log(
-                `[${testInfo.project.name} 390px] selo=${JSON.stringify(caixaSelo)} horario=${JSON.stringify(caixaHorario)}`,
+                `[${testInfo.project.name} 360px] selo=${JSON.stringify(caixaSelo)} horario=${JSON.stringify(caixaHorario)}`,
             );
         }
     }
+});
+
+test('modal do cliente mostra Encaixe somente no agendamento marcado', async ({
+    page,
+}) => {
+    const cliente = {
+        id: 'cliente-selo',
+        nome: 'Cliente com agendamentos',
+        telefone: '11999990000',
+    };
+    const dataBase = Date.now() + 24 * 60 * 60 * 1000;
+    const criarAgendamentoCliente = (
+        id: string,
+        nomeServico: string,
+        encaixe: boolean,
+        data: number,
+    ) => ({
+        ...criarAgendamento(id, 'PAINEL', cliente.nome, '13:00'),
+        dataHoraInicio: new Date(data).toISOString(),
+        dataHoraFim: new Date(data + 30 * 60 * 1000).toISOString(),
+        encaixe,
+        cliente,
+        servico: {
+            id: `servico-${id}`,
+            nome: nomeServico,
+            duracaoMinutos: 30,
+            preco: '50.00',
+        },
+    });
+
+    await page.route('**/api/**', async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        let status = 404;
+        let body: unknown = { message: 'Rota não prevista pelo teste.' };
+
+        if (url.pathname === '/api/auth/me') {
+            status = 200;
+            body = { username: 'e2e', role: 'admin' };
+        } else if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/clientes'
+        ) {
+            status = 200;
+            body = { data: [cliente], total: 1, page: 1, totalPages: 1 };
+        } else if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/agendamentos'
+        ) {
+            status = 200;
+            body = [
+                criarAgendamentoCliente(
+                    'cliente-encaixe',
+                    'Serviço marcado',
+                    true,
+                    dataBase,
+                ),
+                criarAgendamentoCliente(
+                    'cliente-normal',
+                    'Serviço normal',
+                    false,
+                    dataBase + 60 * 60 * 1000,
+                ),
+            ];
+        }
+
+        await route.fulfill({ status, json: body });
+    });
+
+    await page.goto('/clientes');
+    await page.getByRole('button', { name: 'Ver agendamentos (2)' }).click();
+
+    const modal = page.getByRole('dialog', {
+        name: 'Agendamentos de Cliente com agendamentos',
+    });
+    await expect(modal).toBeVisible();
+    const marcado = modal
+        .getByRole('listitem')
+        .filter({ hasText: 'Serviço marcado' });
+    const normal = modal
+        .getByRole('listitem')
+        .filter({ hasText: 'Serviço normal' });
+    await expect(marcado.getByText('Encaixe', { exact: true })).toBeVisible();
+    await expect(normal.getByText('Encaixe', { exact: true })).toHaveCount(0);
 });
 
 test('exibe conclusão automática e confirma estorno autorizado pelo DTO', async ({

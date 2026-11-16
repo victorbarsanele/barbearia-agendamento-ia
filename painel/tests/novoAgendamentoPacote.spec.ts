@@ -507,7 +507,45 @@ test('cancelar confirmação de expediente não reenvia agendamento', async ({
     expect(api.posts).toHaveLength(1);
 });
 
-test('conflito duro continua inline e não oferece override', async ({
+test('conflito oferece registrar encaixe e reenvia com permissão', async ({
+    page,
+}) => {
+    const respostas = [
+        {
+            status: 409,
+            body: {
+                message: 'Já existe um agendamento nesse horário.',
+                code: 'CONFLITO_HORARIO',
+            },
+        },
+        { status: 201, body: { id: 'agendamento-mock' } },
+    ];
+    const api = await mockApi(page, {
+        createResponse: (attempt) => respostas[attempt - 1],
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Registrar como encaixe?');
+    await expect(dialog).toContainText(
+        'O limite é de dois atendimentos simultâneos.',
+    );
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]).not.toHaveProperty('permitirEncaixe');
+
+    await dialog.getByRole('button', { name: 'Encaixar mesmo assim' }).click();
+    await expect.poll(() => api.posts.length).toBe(2);
+    expect(api.posts[1]).toEqual({
+        ...api.posts[0],
+        permitirEncaixe: true,
+    });
+});
+
+test('cancelar confirmação de encaixe não reenvia agendamento', async ({
     page,
 }) => {
     const api = await mockApi(page, {
@@ -525,11 +563,150 @@ test('conflito duro continua inline e não oferece override', async ({
     await selecionarDataHoraFutura(page);
     await salvar(page);
 
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Registrar como encaixe?');
+    await dialog.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(api.posts).toHaveLength(1);
+});
+
+test('limite de encaixes fica inline sem abrir diálogo', async ({ page }) => {
+    const api = await mockApi(page, {
+        createResponse: () => ({
+            status: 409,
+            body: {
+                message: 'Mensagem do backend.',
+                code: 'LIMITE_ENCAIXE',
+            },
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
     await expect(
-        page.getByText('Já existe um agendamento nesse horário.'),
+        page.getByText(
+            'Já existem dois agendamentos nesse horário. Escolha outro horário.',
+        ),
     ).toBeVisible();
     expect(api.posts).toHaveLength(1);
+});
+
+test('acumula expediente e encaixe quando o expediente é devolvido primeiro', async ({
+    page,
+}) => {
+    const respostas = [
+        {
+            status: 422,
+            body: {
+                message: 'Horário fora do expediente.',
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['dia_fechado'],
+            },
+        },
+        {
+            status: 409,
+            body: {
+                message: 'Já existe um agendamento nesse horário.',
+                code: 'CONFLITO_HORARIO',
+            },
+        },
+        { status: 201, body: { id: 'agendamento-mock' } },
+    ];
+    const api = await mockApi(page, {
+        createResponse: (attempt) => respostas[attempt - 1],
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Encaixar fora do expediente?',
+    );
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Registrar como encaixe?',
+    );
+    expect(api.posts[1]).toEqual({
+        ...api.posts[0],
+        permitirForaDoExpediente: true,
+    });
+
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect.poll(() => api.posts.length).toBe(3);
+    expect(api.posts[2]).toEqual({
+        ...api.posts[0],
+        permitirForaDoExpediente: true,
+        permitirEncaixe: true,
+    });
+});
+
+test('acumula encaixe e expediente quando o conflito é devolvido primeiro', async ({
+    page,
+}) => {
+    const respostas = [
+        {
+            status: 409,
+            body: {
+                message: 'Já existe um agendamento nesse horário.',
+                code: 'CONFLITO_HORARIO',
+            },
+        },
+        {
+            status: 409,
+            body: {
+                message: 'Horário bloqueado pelo barbeiro.',
+                code: 'FORA_DO_EXPEDIENTE',
+                motivos: ['bloqueio_total'],
+            },
+        },
+        { status: 201, body: { id: 'agendamento-mock' } },
+    ];
+    const api = await mockApi(page, {
+        createResponse: (attempt) => respostas[attempt - 1],
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+    await salvar(page);
+
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Registrar como encaixe?',
+    );
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Encaixar fora do expediente?',
+    );
+    expect(api.posts[1]).toEqual({
+        ...api.posts[0],
+        permitirEncaixe: true,
+    });
+
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect.poll(() => api.posts.length).toBe(3);
+    expect(api.posts[2]).toEqual({
+        ...api.posts[0],
+        permitirEncaixe: true,
+        permitirForaDoExpediente: true,
+    });
 });
 
 test('pacote ativo com saldo oculta catálogo e alterna o vínculo', async ({

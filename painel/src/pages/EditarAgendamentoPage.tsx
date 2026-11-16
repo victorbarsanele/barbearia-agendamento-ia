@@ -31,7 +31,16 @@ import {
     filtrarPacotesCatalogoPorServico,
     resolverPacoteCatalogoAposTrocaServico,
 } from '../utils/pacoteCatalogo';
-import { obterMotivosOverride } from '../utils/overrideExpediente';
+import {
+    acumularPermissaoOverride,
+    classificarErroOverride,
+    MENSAGEM_LIMITE_ENCAIXE,
+    permissaoOverrideJaConcedida,
+    PERMISSOES_OVERRIDE_VAZIAS,
+    montarPayloadReenvio,
+    type ErroOverrideAgendamento,
+    type PermissoesOverrideAgendamento,
+} from '../utils/overrideAgendamento';
 import {
     horarioAgendamentoAlterado,
     montarDataHoraInicioParaSalvar,
@@ -40,6 +49,17 @@ import {
 import { horarioRepresentavelNoSeletor } from '../utils/timePicker.js';
 
 const TIME_ZONE = 'America/Sao_Paulo';
+
+type ErroComDialogoOverride = Exclude<
+    ErroOverrideAgendamento,
+    { tipo: 'LIMITE_ENCAIXE' }
+>;
+
+interface OverridePendenteEdicao {
+    payload: AtualizarAgendamentoPayload;
+    permissoes: PermissoesOverrideAgendamento;
+    erro: ErroComDialogoOverride;
+}
 function toIsoWithBrasiliaOffset(data: string, hora: string): string {
     return `${data}T${hora}:00-03:00`;
 }
@@ -149,15 +169,14 @@ export function EditarAgendamentoPage() {
     const [submetendo, setSubmetendo] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
     const [sucesso, setSucesso] = useState<string | null>(null);
-    const [overridePendente, setOverridePendente] = useState<{
-        payload: AtualizarAgendamentoPayload;
-        motivos: string[];
-    } | null>(null);
+    const [overridePendente, setOverridePendente] =
+        useState<OverridePendenteEdicao | null>(null);
 
     const fieldClassName =
         'h-11 w-full rounded-[8px] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text-primary)] outline-none transition placeholder:text-[var(--color-text-secondary)] focus:border-[var(--color-gold)]';
 
     const redirectTimeoutRef = useRef<number | null>(null);
+    const submitLatchRef = useRef(false);
 
     const dataHoraSelecionada = useMemo(
         () =>
@@ -436,48 +455,93 @@ export function EditarAgendamentoPage() {
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-
-        if (!agendamento || !id) {
-            setErro('Agendamento inválido para edição.');
+        if (submitLatchRef.current) {
             return;
         }
+        submitLatchRef.current = true;
 
-        if (!servicoId || !data || !hora) {
-            setErro('Preencha serviço, data e hora para remarcar.');
+        try {
+            if (!agendamento || !id) {
+                setErro('Agendamento inválido para edição.');
+                return;
+            }
+
+            if (!servicoId || !data || !hora) {
+                setErro('Preencha serviço, data e hora para remarcar.');
+                return;
+            }
+
+            const payload: AtualizarAgendamentoPayload = {
+                clienteId: agendamento.cliente.id,
+                servicoId,
+                dataHoraInicio: horarioOriginal
+                    ? montarDataHoraInicioParaSalvar(
+                          horarioOriginal.dataHoraInicio,
+                          horarioOriginal.partes,
+                          partesSelecionadas,
+                      )
+                    : toIsoWithBrasiliaOffset(data, hora),
+                status: agendamento.status,
+                notificarCliente,
+                ...(podeOferecerPacoteCatalogo &&
+                pacotesElegiveis.some(
+                    (pacote) => pacote.id === pacoteCatalogoId,
+                )
+                    ? { pacoteId: pacoteCatalogoId }
+                    : {}),
+            };
+
+            await enviarAtualizacao(payload);
+        } finally {
+            submitLatchRef.current = false;
+        }
+    };
+
+    const enviarAtualizacao = async (
+        payload: AtualizarAgendamentoPayload,
+        permissoes: PermissoesOverrideAgendamento = PERMISSOES_OVERRIDE_VAZIAS,
+    ) => {
+        if (!id) {
             return;
         }
 
         setSubmetendo(true);
         setErro(null);
         setSucesso(null);
-        const payload: AtualizarAgendamentoPayload = {
-            clienteId: agendamento.cliente.id,
-            servicoId,
-            dataHoraInicio: horarioOriginal
-                ? montarDataHoraInicioParaSalvar(
-                      horarioOriginal.dataHoraInicio,
-                      horarioOriginal.partes,
-                      partesSelecionadas,
-                  )
-                : toIsoWithBrasiliaOffset(data, hora),
-            status: agendamento.status,
-            notificarCliente,
-            ...(podeOferecerPacoteCatalogo &&
-            pacotesElegiveis.some((pacote) => pacote.id === pacoteCatalogoId)
-                ? { pacoteId: pacoteCatalogoId }
-                : {}),
-        };
-
         try {
-            await atualizarAgendamento(id, payload);
+            await atualizarAgendamento(
+                id,
+                montarPayloadReenvio(payload, permissoes),
+            );
+            setOverridePendente(null);
             await finalizarAtualizacao(payload);
         } catch (error) {
-            const motivosOverride = obterMotivosOverride(error);
-            if (motivosOverride) {
-                setOverridePendente({ payload, motivos: motivosOverride });
+            const erroOverride = classificarErroOverride(error);
+            if (erroOverride?.tipo === 'LIMITE_ENCAIXE') {
+                setOverridePendente(null);
+                setErro(MENSAGEM_LIMITE_ENCAIXE);
+                setSucesso(null);
+                return;
+            }
+            if (erroOverride) {
+                if (
+                    permissaoOverrideJaConcedida(permissoes, erroOverride.tipo)
+                ) {
+                    setOverridePendente(null);
+                    setErro(mensagemErroAtualizarAgendamento(error));
+                    setSucesso(null);
+                    return;
+                }
+
+                setOverridePendente({
+                    payload,
+                    permissoes,
+                    erro: erroOverride,
+                });
                 return;
             }
 
+            setOverridePendente(null);
             setErro(mensagemErroAtualizarAgendamento(error));
             setSucesso(null);
         } finally {
@@ -485,26 +549,20 @@ export function EditarAgendamentoPage() {
         }
     };
 
-    const confirmarOverrideExpediente = async () => {
-        if (!overridePendente || !id) {
+    const confirmarOverridePendente = async () => {
+        if (!overridePendente || !id || submitLatchRef.current) {
             return;
         }
 
-        setSubmetendo(true);
-        setErro(null);
+        submitLatchRef.current = true;
+        const permissoes = acumularPermissaoOverride(
+            overridePendente.permissoes,
+            overridePendente.erro.tipo,
+        );
         try {
-            await atualizarAgendamento(id, {
-                ...overridePendente.payload,
-                permitirForaDoExpediente: true,
-            });
-            setOverridePendente(null);
-            await finalizarAtualizacao(overridePendente.payload);
-        } catch (error) {
-            setOverridePendente(null);
-            setErro(mensagemErroAtualizarAgendamento(error));
-            setSucesso(null);
+            await enviarAtualizacao(overridePendente.payload, permissoes);
         } finally {
-            setSubmetendo(false);
+            submitLatchRef.current = false;
         }
     };
 
@@ -816,16 +874,32 @@ export function EditarAgendamentoPage() {
             <ConfirmDialog
                 open={overridePendente !== null}
                 alertDialog
-                title="Encaixar fora do expediente?"
-                description="O horário selecionado está fora da disponibilidade configurada:"
-                descriptionItems={overridePendente?.motivos}
+                title={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Registrar como encaixe?'
+                        : 'Encaixar fora do expediente?'
+                }
+                description={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Já existe um agendamento nesse horário. O limite é de dois atendimentos simultâneos.'
+                        : 'O horário selecionado está fora da disponibilidade configurada:'
+                }
+                descriptionItems={
+                    overridePendente?.erro.tipo === 'FORA_DO_EXPEDIENTE'
+                        ? overridePendente.erro.motivos
+                        : undefined
+                }
                 confirmText="Encaixar mesmo assim"
-                loadingText="Encaixando..."
+                loadingText={
+                    overridePendente?.erro.tipo === 'CONFLITO_HORARIO'
+                        ? 'Registrando...'
+                        : 'Encaixando...'
+                }
                 confirmVariant="primary"
                 cancelVariant="outline"
                 restoreFocusId="editar-agendamento-submit"
                 loading={submetendo}
-                onConfirm={() => void confirmarOverrideExpediente()}
+                onConfirm={() => void confirmarOverridePendente()}
                 onCancel={() => setOverridePendente(null)}
             />
         </main>
