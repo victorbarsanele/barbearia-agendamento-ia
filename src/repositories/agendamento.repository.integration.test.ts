@@ -163,6 +163,69 @@ function slotsDeLote(quantidade: number, inicioData = 1) {
     });
 }
 
+describe('agendamento.repository.listarTodos ordenação de encaixes', () => {
+    it('prioriza o principal e desempata encaixes por createdAt e id', async () => {
+        const inicio = horarioUnico(10_000);
+        const fim = new Date(inicio.getTime() + 30 * 60_000);
+        const prefixo = `ordem-${entidades.clienteId}`;
+        const registros = [
+            {
+                id: `${prefixo}-encaixe-antigo`,
+                encaixe: true,
+                createdAt: new Date('2030-01-01T00:00:00.000Z'),
+            },
+            {
+                id: `${prefixo}-principal`,
+                encaixe: false,
+                createdAt: new Date('2030-01-02T00:00:00.000Z'),
+            },
+            {
+                id: `${prefixo}-encaixe-id-z`,
+                encaixe: true,
+                createdAt: new Date('2030-01-03T00:00:00.000Z'),
+            },
+            {
+                id: `${prefixo}-encaixe-id-a`,
+                encaixe: true,
+                createdAt: new Date('2030-01-03T00:00:00.000Z'),
+            },
+            {
+                id: `${prefixo}-encaixe-recente`,
+                encaixe: true,
+                createdAt: new Date('2030-01-04T00:00:00.000Z'),
+            },
+        ];
+
+        for (const registro of registros) {
+            await prisma.agendamento.create({
+                data: {
+                    id: registro.id,
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    dataHoraInicio: inicio,
+                    dataHoraFim: fim,
+                    status: StatusAgendamento.AGENDADO,
+                    encaixe: registro.encaixe,
+                    createdAt: registro.createdAt,
+                },
+            });
+        }
+
+        const idsCriados = new Set(registros.map(({ id }) => id));
+        const ordenados = (await agendamentoRepository.listarTodos())
+            .filter(({ id }) => idsCriados.has(id))
+            .map(({ id }) => id);
+
+        expect(ordenados).toEqual([
+            `${prefixo}-principal`,
+            `${prefixo}-encaixe-antigo`,
+            `${prefixo}-encaixe-id-a`,
+            `${prefixo}-encaixe-id-z`,
+            `${prefixo}-encaixe-recente`,
+        ]);
+    });
+});
+
 async function criarLotePeloCatalogo(
     pacoteId: string,
     slots: { data: string; horario: string }[],

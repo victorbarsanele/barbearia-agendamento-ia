@@ -17,6 +17,7 @@ import {
     listarPendentesParaAgendamentoAutoConclusao,
     listarParaConclusaoAutomatica,
     listarSiblingsEditaveisDoLote,
+    listarTodos,
     prepararEncaixeDaAtualizacaoNaTransacao,
     reservarNumeroNoPacoteOportunistaNaTransacao,
     validarSobreposicaoNaTransacao,
@@ -39,6 +40,29 @@ vi.mock('./cliente.repository', () => ({
 
 import * as pacoteRepository from './pacote.repository';
 import * as clienteRepository from './cliente.repository';
+
+describe('agendamento.repository.listarTodos', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('ordena por início, encaixe, criação e id', async () => {
+        vi.mocked(prisma.agendamento.findMany).mockResolvedValue([] as never);
+
+        await listarTodos();
+
+        expect(prisma.agendamento.findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                orderBy: [
+                    { dataHoraInicio: 'asc' },
+                    { encaixe: 'asc' },
+                    { createdAt: 'asc' },
+                    { id: 'asc' },
+                ],
+            }),
+        );
+    });
+});
 
 type PrismaTransactionMock = {
     $queryRaw: ReturnType<typeof vi.fn>;
