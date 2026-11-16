@@ -305,6 +305,207 @@ function criarAgendamentoGemini(dataHoraInicio: Date) {
 }
 
 describe('agendamento.repository integração concorrência', () => {
+    it('reverte criação retroativa inteira quando débito do saldo falha', async () => {
+        const ciclo = await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 2,
+                usosAnteriores: 0,
+                quantidadeRestante: 0,
+            },
+        ]);
+        const inicio = new Date('2040-03-10T13:00:00.000Z');
+
+        await expect(
+            agendamentoRepository.criarEConcluirRetroativoComPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
+                    pacoteClienteId: ciclo.id,
+                    dataHoraInicio: inicio,
+                    dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                ciclo.id,
+                entidades.servicoId,
+            ),
+        ).rejects.toMatchObject({
+            message: 'Pacote do cliente está esgotado.',
+            statusCode: 400,
+        });
+
+        await expect(
+            prisma.agendamento.count({
+                where: { pacoteClienteId: ciclo.id },
+            }),
+        ).resolves.toBe(0);
+        await expect(
+            prisma.pacoteClienteServico.findUniqueOrThrow({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: ciclo.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { quantidadeRestante: true },
+            }),
+        ).resolves.toMatchObject({ quantidadeRestante: 0 });
+    });
+
+    it('aborta retroativo quando todos os números do ciclo estão ocupados', async () => {
+        const ciclo = await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 1,
+                usosAnteriores: 0,
+                quantidadeRestante: 1,
+            },
+        ]);
+        const primeiroInicio = new Date('2040-03-10T13:00:00.000Z');
+        await agendamentoRepository.criarComNumeroNoPacote(
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
+                pacoteClienteId: ciclo.id,
+                dataHoraInicio: primeiroInicio,
+                dataHoraFim: new Date(primeiroInicio.getTime() + 30 * 60_000),
+                status: StatusAgendamento.AGENDADO,
+            },
+            ciclo.id,
+            entidades.servicoId,
+        );
+        const inicioRetroativo = new Date('2040-03-09T13:00:00.000Z');
+
+        await expect(
+            agendamentoRepository.criarEConcluirRetroativoComPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
+                    pacoteClienteId: ciclo.id,
+                    dataHoraInicio: inicioRetroativo,
+                    dataHoraFim: new Date(
+                        inicioRetroativo.getTime() + 30 * 60_000,
+                    ),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                ciclo.id,
+                entidades.servicoId,
+            ),
+        ).rejects.toMatchObject({ statusCode: 400 });
+
+        await expect(
+            prisma.agendamento.count({
+                where: { pacoteClienteId: ciclo.id },
+            }),
+        ).resolves.toBe(1);
+    });
+
+    it('serializa criação retroativa e auto-conclusão sem débito duplicado', async () => {
+        const ciclo = await criarCicloComSaldos([
+            {
+                servicoId: entidades.servicoId,
+                quantidadeTotal: 3,
+                usosAnteriores: 0,
+                quantidadeRestante: 3,
+            },
+        ]);
+        const primeiroInicio = new Date('2040-03-10T13:00:00.000Z');
+        const primeiro = await agendamentoRepository.criarComNumeroNoPacote(
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
+                pacoteClienteId: ciclo.id,
+                dataHoraInicio: primeiroInicio,
+                dataHoraFim: new Date(primeiroInicio.getTime() + 30 * 60_000),
+                status: StatusAgendamento.AGENDADO,
+            },
+            ciclo.id,
+            entidades.servicoId,
+        );
+        const segundoInicio = new Date('2040-03-09T13:00:00.000Z');
+
+        const resultados = await Promise.allSettled([
+            agendamentoService.concluirAutomaticamente(
+                {
+                    id: primeiro.id,
+                    pacoteClienteId: ciclo.id,
+                    servicoId: entidades.servicoId,
+                },
+                new Date('2040-03-10T13:30:00.000Z'),
+                new Date('2040-03-01T00:00:00.000Z'),
+                new Date('2040-03-12T00:00:00.000Z'),
+            ),
+            agendamentoRepository.criarEConcluirRetroativoComPacote(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
+                    pacoteClienteId: ciclo.id,
+                    dataHoraInicio: segundoInicio,
+                    dataHoraFim: new Date(
+                        segundoInicio.getTime() + 30 * 60_000,
+                    ),
+                    status: StatusAgendamento.AGENDADO,
+                },
+                ciclo.id,
+                entidades.servicoId,
+            ),
+        ]);
+
+        expect(
+            resultados.filter((resultado) => resultado.status === 'fulfilled'),
+        ).toHaveLength(2);
+        await expect(
+            prisma.agendamento.findMany({
+                where: { pacoteClienteId: ciclo.id },
+                orderBy: { numeroNoPacote: 'asc' },
+                select: { numeroNoPacote: true, concluido: true },
+            }),
+        ).resolves.toEqual([
+            { numeroNoPacote: 1, concluido: true },
+            { numeroNoPacote: 2, concluido: true },
+        ]);
+        await expect(
+            prisma.pacoteClienteServico.findUniqueOrThrow({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: ciclo.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { quantidadeRestante: true },
+            }),
+        ).resolves.toMatchObject({ quantidadeRestante: 1 });
+
+        await expect(
+            agendamentoService.concluirAutomaticamente(
+                {
+                    id: primeiro.id,
+                    pacoteClienteId: ciclo.id,
+                    servicoId: entidades.servicoId,
+                },
+                new Date('2040-03-10T13:30:00.000Z'),
+                new Date('2040-03-01T00:00:00.000Z'),
+                new Date('2040-03-12T00:00:00.000Z'),
+            ),
+        ).resolves.toMatchObject({ estado: 'IGNORADO' });
+        await expect(
+            prisma.pacoteClienteServico.findUniqueOrThrow({
+                where: {
+                    pacoteClienteId_servicoId: {
+                        pacoteClienteId: ciclo.id,
+                        servicoId: entidades.servicoId,
+                    },
+                },
+                select: { quantidadeRestante: true },
+            }),
+        ).resolves.toMatchObject({ quantidadeRestante: 1 });
+    });
+
     it('reverte ciclo quando a reserva do número falha', async () => {
         const pacoteId = await criarPacoteCatalogo(1);
         const inicio = horarioUnico();

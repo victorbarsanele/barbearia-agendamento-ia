@@ -194,6 +194,24 @@ describe('confirmação de agendamento', () => {
         expect(mocks.criar).not.toHaveBeenCalled();
     });
 
+    it('mantém data passada proibida e prepara sem opção retroativa', async () => {
+        mocks.validarDisponibilidade.mockRejectedValueOnce(
+            new AppError('Agendamento não pode ser feito no passado.', 422),
+        );
+
+        await expect(
+            prepare('past', {
+                ...draft,
+                dataHoraInicio: '2026-07-19T11:00:00-03:00',
+            }),
+        ).resolves.toMatchObject({ sucesso: false });
+
+        const argumentos = mocks.validarDisponibilidade.mock.calls[0];
+        expect(argumentos?.[3]).toBe(false);
+        expect(argumentos?.[4]).toBe('GEMINI');
+        expect(mocks.criar).not.toHaveBeenCalled();
+    });
+
     it('confirmação revalida e não grava quando horário deixou de ser permitido', async () => {
         await prepare('prepare-before-change');
         mocks.criar.mockRejectedValueOnce(

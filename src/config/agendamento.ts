@@ -32,6 +32,23 @@ function lerInteiroConfigurado(
     return valor;
 }
 
+function lerRetroativoMaxDias(): number {
+    try {
+        return lerInteiroConfigurado(
+            'RETROATIVO_MAX_DIAS',
+            90,
+            0,
+            Number.MAX_SAFE_INTEGER,
+        );
+    } catch {
+        return 90;
+    }
+}
+
+export function getRetroativoMaxDias(): number {
+    return lerRetroativoMaxDias();
+}
+
 export function getAgendamentoConfig(): AgendamentoConfig {
     return {
         minAntecedenciaMinutos: lerInteiroConfigurado(
@@ -91,4 +108,5 @@ export function getConfirmacaoAgendamentoConfig(): Pick<
 
 export function validarAgendamentoConfig(): void {
     getAgendamentoConfig();
+    getRetroativoMaxDias();
 }

@@ -565,6 +565,40 @@ describe('agendamento.repository.concluirComPacote renovação automática', () 
         );
     });
 
+    it('suprime e registra renovação ao concluir criação retroativa', async () => {
+        vi.stubEnv('RENOVACAO_AUTOMATICA_ENABLED', 'true');
+        const tx = configurarTransacao({ id: 'saldo-1' });
+        tx.$queryRaw
+            .mockReset()
+            .mockResolvedValueOnce([{ id: 'saldo-1', quantidadeRestante: 1 }]);
+        tx.pacoteClienteServico.count.mockResolvedValue(0);
+        const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        const resultado = await concluirComPacote(
+            'agendamento-1',
+            'pacote-cliente-1',
+            'servico-1',
+            OrigemConclusaoAgendamento.MANUAL,
+            new Date('2026-07-20T12:00:00Z'),
+            undefined,
+            { suprimirRenovacaoAutomatica: true },
+        );
+
+        expect(resultado.renovacao).toEqual({
+            criada: false,
+            motivo: 'REGISTRO_RETROATIVO',
+        });
+        expect(tx.pacoteCliente.findUnique).not.toHaveBeenCalled();
+        expect(tx.pacoteCliente.createMany).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(
+            JSON.stringify({
+                evento: 'renovacao_automatica_pacote_suprimida',
+                motivo: 'REGISTRO_RETROATIVO',
+            }),
+        );
+        expect(JSON.stringify(log.mock.calls)).not.toContain('cliente-1');
+    });
+
     it.each([
         ['flag desligada', false, null, null, 'FLAG_DESLIGADA'],
         [

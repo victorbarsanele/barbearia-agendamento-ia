@@ -825,6 +825,10 @@ export async function concluirComPacote(
     concluidoPor: OrigemConclusaoAgendamento,
     concluidoEm: Date,
     elegibilidadeAutomatica?: { aPartirDe: Date; corte: Date },
+    opcoes: {
+        tx?: Transacao;
+        suprimirRenovacaoAutomatica?: boolean;
+    } = {},
 ): Promise<{
     estado: 'CONCLUIDO' | 'IGNORADO' | 'SALDO_ESGOTADO';
     agendamento: AgendamentoComRelacoes;
@@ -835,7 +839,8 @@ export async function concluirComPacote(
     class PacoteInativo extends Error {}
 
     const renovacaoAutomaticaHabilitada =
-        process.env.RENOVACAO_AUTOMATICA_ENABLED === 'true';
+        process.env.RENOVACAO_AUTOMATICA_ENABLED === 'true' &&
+        !opcoes.suprimirRenovacaoAutomatica;
 
     function registrarRenovacaoIgnorada(motivo: string) {
         console.info(
@@ -949,7 +954,7 @@ export async function concluirComPacote(
     }
 
     try {
-        return await prisma.$transaction(async (tx) => {
+        const executarConclusao = async (tx: Transacao) => {
             let cicloAnterior: { clienteId: string; pacoteId: string } | null =
                 null;
             if (renovacaoAutomaticaHabilitada) {
@@ -1062,10 +1067,27 @@ export async function concluirComPacote(
                 );
             }
 
-            const renovacao =
-                saldosRestantes === 0
-                    ? await criarRenovacaoNaTransacao(tx, cicloAnterior)
-                    : { criada: false, motivo: 'SALDO_RESTANTE' };
+            let renovacao: {
+                criada: boolean;
+                pacoteClienteId?: string;
+                motivo?: string;
+            };
+            if (saldosRestantes !== 0) {
+                renovacao = { criada: false, motivo: 'SALDO_RESTANTE' };
+            } else if (opcoes.suprimirRenovacaoAutomatica) {
+                console.info(
+                    JSON.stringify({
+                        evento: 'renovacao_automatica_pacote_suprimida',
+                        motivo: 'REGISTRO_RETROATIVO',
+                    }),
+                );
+                renovacao = {
+                    criada: false,
+                    motivo: 'REGISTRO_RETROATIVO',
+                };
+            } else {
+                renovacao = await criarRenovacaoNaTransacao(tx, cicloAnterior);
+            }
 
             const agendamento = await tx.agendamento.findUniqueOrThrow({
                 where: { id: agendamentoId },
@@ -1081,8 +1103,15 @@ export async function concluirComPacote(
                 pacoteCliente,
                 renovacao,
             };
-        });
+        };
+
+        return opcoes.tx
+            ? await executarConclusao(opcoes.tx)
+            : await prisma.$transaction(executarConclusao);
     } catch (error) {
+        if (opcoes.tx) {
+            throw error;
+        }
         if (error instanceof ConclusaoSemSaldo) {
             return {
                 estado: 'SALDO_ESGOTADO',
@@ -1101,6 +1130,39 @@ export async function concluirComPacote(
         }
         throw error;
     }
+}
+
+export async function criarEConcluirRetroativoComPacote(
+    data: SalvarAgendamentoData,
+    pacoteClienteId: string,
+    servicoId: string,
+): Promise<AgendamentoComRelacoes> {
+    return prisma.$transaction(async (tx) => {
+        const agendamento = await criarComNumeroNoPacoteNaTransacao(
+            tx,
+            data,
+            pacoteClienteId,
+            servicoId,
+        );
+        const resultado = await concluirComPacote(
+            agendamento.id,
+            pacoteClienteId,
+            servicoId,
+            OrigemConclusaoAgendamento.MANUAL,
+            new Date(),
+            undefined,
+            { tx, suprimirRenovacaoAutomatica: true },
+        );
+
+        if (resultado.estado !== 'CONCLUIDO') {
+            throw new AppError(
+                'Não foi possível concluir o agendamento retroativo.',
+                409,
+            );
+        }
+
+        return resultado.agendamento;
+    });
 }
 
 export async function listarParaConclusaoAutomatica(
