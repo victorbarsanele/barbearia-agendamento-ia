@@ -117,6 +117,8 @@ Essential variables: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, dashboard c
 
 The dashboard calls `GET /configuracao-agendamento` (JWT cookie authentication) to get `minAntecedenciaMinutos` and apply the local cutoff. The backend remains the source of truth.
 
+`RETROATIVO_MAX_DIAS` limits retroactive bookings created from the dashboard (default `90`; non-negative integer; invalid values use the default). The limit applies only when `registroRetroativo=true` and the start date/time is in the past; `0` disables dates before today.
+
 When Gemini confirms a booking with lead time below `AVISO_CURTO_PRAZO_MINUTOS`, the barber receives YCloud template `aviso_agendamento_ultima_hora` (`pt_BR`, four parameters: customer, service(s), time, and minutes) at `BARBER_PHONE`. YCloud/Meta must approve the template before lowering `MIN_ANTECEDENCIA_MINUTOS` to 15.
 
 #### 6.2 Backend (repository root)

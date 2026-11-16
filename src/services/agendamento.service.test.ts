@@ -33,6 +33,7 @@ vi.mock('../repositories/agendamento.repository', () => ({
     criarNaTransacao: vi.fn(),
     criarComNumeroNoPacote: vi.fn(),
     criarComNumeroNoPacoteNaTransacao: vi.fn(),
+    criarEConcluirRetroativoComPacote: vi.fn(),
     reservarNumeroNoPacoteOportunistaNaTransacao: vi.fn(),
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
@@ -471,6 +472,85 @@ describe('agendamento.service.criar', () => {
         ).resolves.toBeDefined();
 
         expect(agendamentoRepository.criar).toHaveBeenCalled();
+        expect(agendamentoRepository.criar).toHaveBeenCalledWith(
+            expect.objectContaining({ status: StatusAgendamento.AGENDADO }),
+        );
+        expect(
+            agendamentoRepository.criarEConcluirRetroativoComPacote,
+        ).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['dentro do limite', '2026-04-22T10:00:00-03:00'],
+        ['no limite', '2026-04-21T10:00:00-03:00'],
+    ])('aceita retroativo %s', async (_caso, dataHoraInicio) => {
+        vi.stubEnv('RETROATIVO_MAX_DIAS', '90');
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio,
+                registroRetroativo: true,
+            }),
+        ).resolves.toBeDefined();
+    });
+
+    it('rejeita retroativo acima do limite configurado', async () => {
+        vi.stubEnv('RETROATIVO_MAX_DIAS', '90');
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-04-20T10:00:00-03:00',
+                registroRetroativo: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: {
+                code: 'RETROATIVO_FORA_DO_LIMITE',
+                limiteDias: 90,
+            },
+        });
+        expect(agendamentoRepository.criar).not.toHaveBeenCalled();
+    });
+
+    it('rejeita a flag retroativa em runtime quando origem é Gemini', async () => {
+        const dadosInvalidos = {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            origem: 'GEMINI',
+            registroRetroativo: false,
+        };
+
+        await expect(
+            agendamentoService.criar(dadosInvalidos as never),
+        ).rejects.toMatchObject({
+            statusCode: 403,
+            details: { code: 'REGISTRO_RETROATIVO_SOMENTE_PAINEL' },
+        });
+        expect(clienteRepository.buscarPorId).not.toHaveBeenCalled();
+    });
+
+    it('rejeita venda de pacote do catálogo com registro retroativo', async () => {
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteId: 'pacote-1',
+                dataHoraInicio: '2026-07-20T10:00:00-03:00',
+                registroRetroativo: true,
+            }),
+        ).rejects.toMatchObject({
+            statusCode: 422,
+            details: { code: 'RETROATIVO_NAO_PERMITE_VENDA_PACOTE' },
+        });
+        expect(servicoRepository.buscarPorId).not.toHaveBeenCalled();
     });
 
     it('rejeita criação quando horário colide com bloqueio', async () => {
@@ -870,8 +950,8 @@ describe('agendamento.service.criar', () => {
     it('retorna todos os motivos brandos e permite override no painel', async () => {
         vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue({
             id: 'bloqueio-1',
-            dataHoraInicio: new Date('2026-07-20T08:00:00-03:00'),
-            dataHoraFim: new Date('2026-07-20T09:00:00-03:00'),
+            dataHoraInicio: new Date('2026-07-17T08:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-17T09:00:00-03:00'),
             motivo: 'Compromisso',
             escopo: 'TODOS',
             recorrencia: 'PONTUAL',
@@ -888,7 +968,7 @@ describe('agendamento.service.criar', () => {
             agendamentoService.criar({
                 clienteId: clienteBase.id,
                 servicoId: servicoBase.id,
-                dataHoraInicio: '2026-07-20T08:30:00-03:00',
+                dataHoraInicio: '2026-07-17T08:30:00-03:00',
                 registroRetroativo: true,
             }),
         ).rejects.toMatchObject({
@@ -902,7 +982,7 @@ describe('agendamento.service.criar', () => {
         await agendamentoService.criar({
             clienteId: clienteBase.id,
             servicoId: servicoBase.id,
-            dataHoraInicio: '2026-07-20T08:30:00-03:00',
+            dataHoraInicio: '2026-07-17T08:30:00-03:00',
             registroRetroativo: true,
             permitirForaDoExpediente: true,
         });
@@ -2417,6 +2497,75 @@ describe('agendamento.service.criar com pacoteClienteId', () => {
             'pacote-cliente-1',
             servicoBase.id,
         );
+    });
+
+    it('cria e conclui pacote retroativo encerrado no fluxo transacional', async () => {
+        vi.setSystemTime(new Date('2026-07-20T16:00:00Z'));
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            pacote: { servicos: [{ servicoId: servicoBase.id }] },
+            servicos: [{ servicoId: servicoBase.id, quantidadeRestante: 2 }],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarEConcluirRetroativoComPacote,
+        ).mockResolvedValue({
+            ...agendamentoAtual,
+            pacoteClienteId: 'pacote-cliente-1',
+            numeroNoPacote: 2,
+            concluido: true,
+        } as never);
+
+        await expect(
+            agendamentoService.criar({
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                pacoteClienteId: 'pacote-cliente-1',
+                dataHoraInicio: '2026-07-17T10:00:00-03:00',
+                registroRetroativo: true,
+            }),
+        ).resolves.toMatchObject({ concluido: true });
+
+        expect(
+            agendamentoRepository.criarEConcluirRetroativoComPacote,
+        ).toHaveBeenCalledWith(
+            expect.objectContaining({
+                pacoteClienteId: 'pacote-cliente-1',
+                status: StatusAgendamento.AGENDADO,
+            }),
+            'pacote-cliente-1',
+            servicoBase.id,
+        );
+        expect(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).not.toHaveBeenCalled();
+    });
+
+    it('mantém pacote retroativo ainda em andamento como não concluído', async () => {
+        vi.mocked(pacoteClienteRepository.buscarPorId).mockResolvedValue({
+            id: 'pacote-cliente-1',
+            status: 'ATIVO',
+            pacote: { servicos: [{ servicoId: servicoBase.id }] },
+            servicos: [{ servicoId: servicoBase.id, quantidadeRestante: 2 }],
+        } as never);
+        vi.mocked(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).mockResolvedValue({ ...agendamentoAtual, concluido: false } as never);
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            pacoteClienteId: 'pacote-cliente-1',
+            dataHoraInicio: '2026-07-20T09:00:00-03:00',
+            registroRetroativo: true,
+        });
+
+        expect(
+            agendamentoRepository.criarComNumeroNoPacote,
+        ).toHaveBeenCalledOnce();
+        expect(
+            agendamentoRepository.criarEConcluirRetroativoComPacote,
+        ).not.toHaveBeenCalled();
     });
 
     it('rejeita quando serviço não está incluso no pacote selecionado', async () => {

@@ -117,6 +117,8 @@ Variáveis essenciais: `DATABASE_URL`, `GEMINI_API_KEY`, `JWT_SECRET`, credencia
 
 O painel consulta `GET /configuracao-agendamento` (autenticado por cookie JWT) para obter `minAntecedenciaMinutos` e aplicar o corte local. Backend continua como fonte da verdade.
 
+`RETROATIVO_MAX_DIAS` limita registros retroativos do painel (padrão `90`; inteiro não negativo; valor inválido usa o padrão). O limite é aplicado somente quando `registroRetroativo=true` e a data/hora de início já passou; `0` desabilita datas anteriores a hoje.
+
 Quando Gemini confirma agendamento com antecedência menor que `AVISO_CURTO_PRAZO_MINUTOS`, barbeiro recebe template YCloud `aviso_agendamento_ultima_hora` (`pt_BR`, quatro parâmetros: cliente, serviço(s), horário e minutos), enviado a `BARBER_PHONE`. Template precisa de aprovação da YCloud/Meta antes de reduzir `MIN_ANTECEDENCIA_MINUTOS` para 15.
 
 #### 6.2 Backend (raiz)

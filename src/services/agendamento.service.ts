@@ -5,8 +5,12 @@ import {
     StatusAgendamento,
     StatusPacoteCliente,
 } from '@prisma/client';
+import { differenceInCalendarDays } from 'date-fns';
 import { toZonedTime } from 'date-fns-tz';
-import { getAgendamentoConfig } from '../config/agendamento';
+import {
+    getAgendamentoConfig,
+    getRetroativoMaxDias,
+} from '../config/agendamento';
 import { getVinculoAutomaticoWhatsappEnabled } from '../config/vinculo-automatico-whatsapp';
 import {
     calcularCorteAutoConclusao,
@@ -90,16 +94,28 @@ export function origemParaPersistencia(
         : OrigemAgendamento.PAINEL;
 }
 
-interface CriarAgendamentoData {
+interface CriarAgendamentoBaseData {
     clienteId: string;
     servicoId: string;
     pacoteId?: string;
     pacoteClienteId?: string;
     dataHoraInicio: string;
-    registroRetroativo?: boolean;
     permitirForaDoExpediente?: boolean;
-    origem?: 'PAINEL' | 'GEMINI';
 }
+
+export interface CriarAgendamentoPainelData extends CriarAgendamentoBaseData {
+    origem?: 'PAINEL';
+    registroRetroativo?: boolean;
+}
+
+export interface CriarAgendamentoGeminiData extends CriarAgendamentoBaseData {
+    origem: 'GEMINI';
+    registroRetroativo?: never;
+}
+
+type CriarAgendamentoData =
+    | CriarAgendamentoPainelData
+    | CriarAgendamentoGeminiData;
 
 interface ValidarAntecedenciaOptions {
     minAntecedenciaMinutos?: number;
@@ -315,6 +331,26 @@ function validarAntecedenciaMinima(
         throw new AppError(
             `Agendamento deve ser feito com no mínimo ${formatarAntecedenciaMinima(minAntecedenciaMinutos)} de antecedência.`,
             422,
+        );
+    }
+}
+
+function validarLimiteRetroativo(dataHoraInicio: Date): void {
+    const limiteDias = getRetroativoMaxDias();
+    const agora = new Date();
+    const diasRetroativos = differenceInCalendarDays(
+        toZonedTime(agora, TIME_ZONE),
+        toZonedTime(dataHoraInicio, TIME_ZONE),
+    );
+
+    if (diasRetroativos > limiteDias) {
+        throw new AppError(
+            `Registro retroativo excede o limite de ${limiteDias} dias.`,
+            422,
+            {
+                code: 'RETROATIVO_FORA_DO_LIMITE',
+                limiteDias,
+            },
         );
     }
 }
@@ -764,11 +800,20 @@ export async function validarDisponibilidade(
     const dataHoraFim = adicionarMinutos(dataHoraInicio, duracaoMinutos);
 
     validarMesmoDiaEmBrasilia(dataHoraInicio, dataHoraFim);
+    if (origem === 'GEMINI' && registroRetroativo) {
+        throw new AppError(
+            'Registro retroativo está disponível somente pelo painel.',
+            403,
+            { code: 'REGISTRO_RETROATIVO_SOMENTE_PAINEL' },
+        );
+    }
     if (!registroRetroativo) {
         validarAntecedenciaMinima(
             dataHoraInicio,
             options.minAntecedenciaMinutos,
         );
+    } else if (dataHoraInicio.getTime() < Date.now()) {
+        validarLimiteRetroativo(dataHoraInicio);
     }
 
     await validarConflito(
@@ -896,6 +941,23 @@ async function criarComResultadoInterno(
     options: ValidarAntecedenciaOptions = {},
 ): Promise<ResultadoCriacaoAgendamento> {
     try {
+        if (
+            data.origem === 'GEMINI' &&
+            Object.prototype.hasOwnProperty.call(data, 'registroRetroativo')
+        ) {
+            throw new AppError(
+                'Gemini não pode solicitar registro retroativo.',
+                403,
+                { code: 'REGISTRO_RETROATIVO_SOMENTE_PAINEL' },
+            );
+        }
+        if (data.registroRetroativo === true && data.pacoteId) {
+            throw new AppError(
+                'Registro retroativo não pode vender pacote do catálogo.',
+                422,
+                { code: 'RETROATIVO_NAO_PERMITE_VENDA_PACOTE' },
+            );
+        }
         if (data.pacoteId && data.pacoteClienteId) {
             throw new AppError(
                 'Informe pacoteId ou pacoteClienteId, não ambos.',
@@ -953,11 +1015,18 @@ async function criarComResultadoInterno(
             : data.pacoteClienteId
               ? {
                     agendamento:
-                        await agendamentoRepository.criarComNumeroNoPacote(
-                            dados,
-                            data.pacoteClienteId,
-                            data.servicoId,
-                        ),
+                        data.registroRetroativo === true &&
+                        dataHoraFim.getTime() <= Date.now()
+                            ? await agendamentoRepository.criarEConcluirRetroativoComPacote(
+                                  dados,
+                                  data.pacoteClienteId,
+                                  data.servicoId,
+                              )
+                            : await agendamentoRepository.criarComNumeroNoPacote(
+                                  dados,
+                                  data.pacoteClienteId,
+                                  data.servicoId,
+                              ),
                 }
               : data.origem === 'GEMINI' &&
                   getVinculoAutomaticoWhatsappEnabled()

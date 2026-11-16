@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getAgendamentoConfig, validarAgendamentoConfig } from './agendamento';
+import {
+    getAgendamentoConfig,
+    getRetroativoMaxDias,
+    validarAgendamentoConfig,
+} from './agendamento';
 
 afterEach(() => {
     vi.unstubAllEnvs();
@@ -8,6 +12,7 @@ afterEach(() => {
 describe('agendamento configuration', () => {
     it('uses defaults when environment variables are unset', () => {
         vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', undefined);
+        vi.stubEnv('RETROATIVO_MAX_DIAS', undefined);
         vi.stubEnv('OFERTA_FOLGA_MINUTOS', undefined);
         vi.stubEnv('CONFIRMACAO_TOLERANCIA_MINUTOS', undefined);
         vi.stubEnv('AVISO_CURTO_PRAZO_MINUTOS', undefined);
@@ -20,6 +25,21 @@ describe('agendamento configuration', () => {
         });
         expect(validarAgendamentoConfig).not.toThrow();
     });
+
+    it('uses the configured retroactive limit', () => {
+        vi.stubEnv('RETROATIVO_MAX_DIAS', '120');
+
+        expect(getRetroativoMaxDias()).toBe(120);
+    });
+
+    it.each(['', '-1', 'texto', '1.5', '9007199254740992'])(
+        'falls back to 90 for invalid RETROATIVO_MAX_DIAS=%s',
+        (value) => {
+            vi.stubEnv('RETROATIVO_MAX_DIAS', value);
+
+            expect(getRetroativoMaxDias()).toBe(90);
+        },
+    );
 
     it.each([
         ['MIN_ANTECEDENCIA_MINUTOS', '-1', '0 e 1440'],
