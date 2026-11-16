@@ -37,6 +37,7 @@ async function criarAgendamento(data: {
     status?: StatusAgendamento;
     pacote?: boolean;
     concluido?: boolean;
+    encaixe?: boolean;
 }) {
     const dataHoraInicio = new Date(data.inicio);
     const agendamento = await prisma.agendamento.create({
@@ -49,6 +50,7 @@ async function criarAgendamento(data: {
             precoUnitario: data.precoUnitario,
             status: data.status ?? StatusAgendamento.AGENDADO,
             concluido: data.concluido ?? false,
+            ...(data.encaixe === true ? { encaixe: true } : {}),
         },
     });
     agendamentoIds.push(agendamento.id);
@@ -82,6 +84,45 @@ afterEach(async () => {
 });
 
 describe('relatorio.repository.agregarAtendimentos', () => {
+    it('conta e soma os snapshots dos dois agendamentos sobrepostos', async () => {
+        const cliente = await prisma.cliente.create({
+            data: {
+                nome: `Relatorio encaixe ${crypto.randomUUID()}`,
+                telefone: crypto.randomUUID(),
+            },
+        });
+        clienteId = cliente.id;
+        const servicoId = await criarServico('Relatorio encaixes', '200.00');
+
+        await criarAgendamento({
+            servicoId,
+            inicio: '2080-10-10T03:00:00.000Z',
+            precoUnitario: '12.50',
+        });
+        await criarAgendamento({
+            servicoId,
+            inicio: '2080-10-10T03:15:00.000Z',
+            precoUnitario: '20.00',
+            encaixe: true,
+        });
+
+        const itens = await relatorioRepository.agregarAtendimentos(
+            inicio,
+            fimExclusivo,
+            agora,
+        );
+
+        expect(itens).toContainEqual(
+            expect.objectContaining({
+                servicoId,
+                quantidade: 2,
+                quantidadeAvulso: 2,
+                valorEstimado: '32.50',
+                semPreco: 0,
+            }),
+        );
+    });
+
     it('agrega realizados, separa pacotes e respeita período local e preço snapshot', async () => {
         const cliente = await prisma.cliente.create({
             data: {

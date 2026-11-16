@@ -19,6 +19,23 @@ describe('eventos Google Agenda', () => {
         expect(first).toMatch(/^[0-9a-f]{40}$/);
     });
 
+    it('mantém eventos distintos para agendamentos que ocupam o mesmo horário', () => {
+        const encaixe = {
+            ...agendamento,
+            id: 'cmg1abc123encaixe',
+        };
+
+        const eventoOriginal = montarEvento(agendamento);
+        const eventoEncaixe = montarEvento(encaixe);
+
+        expect(eventoOriginal.id).not.toBe(eventoEncaixe.id);
+        expect(eventoOriginal.start).toEqual(eventoEncaixe.start);
+        expect(eventoOriginal.end).toEqual(eventoEncaixe.end);
+        expect(eventoEncaixe.extendedProperties.private.agendamentoId).toBe(
+            encaixe.id,
+        );
+    });
+
     it('monta evento com instante ISO, fuso e metadados privados', () => {
         const evento = montarEvento(agendamento);
 

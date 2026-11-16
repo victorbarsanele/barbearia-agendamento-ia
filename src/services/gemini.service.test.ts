@@ -133,6 +133,7 @@ const agendamentoAtivoProximo = {
     precoUnitario: null,
     dataHoraInicio: new Date('2026-07-22T10:00:00-03:00'),
     dataHoraFim: new Date('2026-07-22T10:30:00-03:00'),
+    encaixe: false,
     status: StatusAgendamento.AGENDADO,
     concluido: false,
     createdAt: new Date('2026-07-20T00:00:00Z'),
@@ -772,9 +773,12 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         expect(resultado.horarios).not.toContain('13:00');
     });
 
-    it('nenhuma tool Gemini declara permitirForaDoExpediente', () => {
+    it('nenhuma tool Gemini declara overrides exclusivos do painel', () => {
         expect(JSON.stringify(__testables.functionDeclarations)).not.toContain(
             'permitirForaDoExpediente',
+        );
+        expect(JSON.stringify(__testables.functionDeclarations)).not.toContain(
+            'permitirEncaixe',
         );
     });
 

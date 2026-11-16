@@ -1644,8 +1644,9 @@ describe('agendamento.repository integração concorrência', () => {
         expect(falhas).toHaveLength(1);
         expect(falhas[0].reason).toBeInstanceOf(AppError);
         expect(falhas[0].reason).toMatchObject({
-            message: 'Já existe um agendamento nesse horário.',
+            message: 'Você já tem agendamento nesse horário.',
             statusCode: 409,
+            details: { code: 'CONFLITO_HORARIO' },
         });
 
         const quantidade = await prisma.agendamento.count({
@@ -1661,7 +1662,176 @@ describe('agendamento.repository integração concorrência', () => {
         expect(quantidade).toBe(1);
     });
 
-    it('cria fora do expediente com override e constraint do banco barra sobreposição', async () => {
+    it('mantém a constraint para não encaixes e exclui cancelados, mas aceita encaixe deslocado', async () => {
+        const inicio = horarioUnico();
+        const fim = new Date(inicio.getTime() + 30 * 60_000);
+        const base = {
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
+            dataHoraInicio: inicio,
+            dataHoraFim: fim,
+        };
+        await prisma.agendamento.create({ data: base });
+
+        const conflito = await prisma.agendamento
+            .create({ data: base })
+            .catch((error: unknown) => error);
+        expect(agendamentoRepository.isViolacaoDeSobreposicao(conflito)).toBe(
+            true,
+        );
+
+        await expect(
+            prisma.agendamento.create({
+                data: {
+                    ...base,
+                    status: StatusAgendamento.CANCELADO,
+                },
+            }),
+        ).resolves.toMatchObject({ status: StatusAgendamento.CANCELADO });
+
+        const encaixe = await prisma.agendamento.create({
+            data: {
+                ...base,
+                dataHoraInicio: new Date(inicio.getTime() + 10 * 60_000),
+                dataHoraFim: new Date(inicio.getTime() + 20 * 60_000),
+                encaixe: true,
+            },
+        });
+        expect(encaixe.encaixe).toBe(true);
+    });
+
+    it('serializa criações paralelas e nunca permite terceiro simultâneo', async () => {
+        const inicio = horarioUnico();
+        const payload = {
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            origem: OrigemAgendamento.PAINEL,
+            dataHoraInicio: inicio,
+            dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+            status: StatusAgendamento.AGENDADO,
+        };
+
+        const resultados = await Promise.allSettled(
+            Array.from({ length: 8 }, () =>
+                agendamentoRepository.criar(payload, true),
+            ),
+        );
+        const sucessos = resultados.filter(
+            (resultado) => resultado.status === 'fulfilled',
+        );
+        const falhas = resultados.filter(
+            (resultado): resultado is PromiseRejectedResult =>
+                resultado.status === 'rejected',
+        );
+
+        expect(sucessos).toHaveLength(2);
+        expect(falhas).toHaveLength(6);
+        expect(
+            falhas.every(
+                ({ reason }) =>
+                    reason instanceof AppError &&
+                    reason.details?.code === 'LIMITE_ENCAIXE',
+            ),
+        ).toBe(true);
+        await expect(
+            prisma.agendamento.count({
+                where: {
+                    clienteId: entidades.clienteId,
+                    dataHoraInicio: inicio,
+                    status: { not: StatusAgendamento.CANCELADO },
+                },
+            }),
+        ).resolves.toBe(2);
+    });
+
+    it('conta agendamentos concluídos no limite de simultaneidade', async () => {
+        const inicio = horarioUnico();
+        const fim = new Date(inicio.getTime() + 30 * 60_000);
+        await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                status: StatusAgendamento.CONCLUIDO,
+                concluido: true,
+            },
+        });
+
+        await agendamentoRepository.criar(
+            {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
+                dataHoraInicio: inicio,
+                dataHoraFim: fim,
+                status: StatusAgendamento.AGENDADO,
+            },
+            true,
+        );
+        await expect(
+            agendamentoRepository.criar(
+                {
+                    clienteId: entidades.clienteId,
+                    servicoId: entidades.servicoId,
+                    origem: OrigemAgendamento.PAINEL,
+                    dataHoraInicio: inicio,
+                    dataHoraFim: fim,
+                    status: StatusAgendamento.AGENDADO,
+                },
+                true,
+            ),
+        ).rejects.toMatchObject({
+            statusCode: 409,
+            details: { code: 'LIMITE_ENCAIXE' },
+        });
+    });
+
+    it('lote sem permissão recusa sobreposição com encaixe já existente', async () => {
+        const inicio = new Date('2035-06-04T12:00:00-03:00');
+        await prisma.agendamento.create({
+            data: {
+                clienteId: entidades.clienteId,
+                servicoId: entidades.servicoId,
+                origem: OrigemAgendamento.PAINEL,
+                dataHoraInicio: inicio,
+                dataHoraFim: new Date(inicio.getTime() + 30 * 60_000),
+                encaixe: true,
+            },
+        });
+
+        const resultado = await agendamentoService.criarLote({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            origem: 'PAINEL',
+            slots: [{ data: '2035-06-04', horario: '12:00' }],
+        });
+        expect(resultado.criados).toHaveLength(0);
+        expect(resultado.falhados).toMatchObject([
+            { data: '2035-06-04', horario: '12:00' },
+        ]);
+    });
+
+    it('permite encaixe com pacote e reserva número de uso distinto', async () => {
+        const pacoteId = await criarPacoteCatalogo(3);
+        const inicio = horarioUnico();
+        const primeiro = await criarAgendamentoPeloServico(pacoteId, inicio);
+        const segundo = await agendamentoService.criar({
+            clienteId: entidades.clienteId,
+            servicoId: entidades.servicoId,
+            pacoteId,
+            dataHoraInicio: inicio.toISOString(),
+            permitirEncaixe: true,
+            origem: 'PAINEL',
+        });
+
+        expect(primeiro.numeroNoPacote).toBe(1);
+        expect(segundo).toMatchObject({ encaixe: true, numeroNoPacote: 2 });
+    });
+
+    it('permite override fora do expediente, mas bloqueia sobreposição transacional', async () => {
         vi.mocked(
             horarioFuncionamentoService.estaDentroDoHorarioDoAgendamentoComConfiguracao,
         ).mockReturnValue(false);
@@ -1686,8 +1856,9 @@ describe('agendamento.repository integração concorrência', () => {
                 status: StatusAgendamento.AGENDADO,
             }),
         ).rejects.toMatchObject({
-            message: 'Já existe um agendamento nesse horário.',
+            message: 'Você já tem agendamento nesse horário.',
             statusCode: 409,
+            details: { code: 'CONFLITO_HORARIO' },
         });
 
         await expect(

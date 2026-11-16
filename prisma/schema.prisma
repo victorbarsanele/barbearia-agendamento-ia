@@ -118,6 +118,7 @@ model Agendamento {
   pacoteClienteId String?
   numeroNoPacote  Int?
   loteId          String?
+  encaixe         Boolean           @default(false)
   dataHoraInicio  DateTime          @db.Timestamptz(3)
   dataHoraFim     DateTime          @db.Timestamptz(3)
   status          StatusAgendamento @default(AGENDADO)

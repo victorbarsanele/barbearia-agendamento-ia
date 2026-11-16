@@ -34,11 +34,16 @@ vi.mock('../repositories/agendamento.repository', () => ({
     criarComNumeroNoPacote: vi.fn(),
     criarComNumeroNoPacoteNaTransacao: vi.fn(),
     criarEConcluirRetroativoComPacote: vi.fn(),
+    bloquearDiasAgendaNaTransacao: vi.fn(),
+    validarSobreposicaoNaTransacao: vi.fn(),
+    prepararEncaixeDaAtualizacaoNaTransacao: vi.fn(),
     reservarNumeroNoPacoteOportunistaNaTransacao: vi.fn(),
     listarTodos: vi.fn(),
     buscarPorId: vi.fn(),
     buscarConflito: vi.fn(),
     atualizar: vi.fn(),
+    atualizarNaTransacao: vi.fn(),
+    atualizarComNumeroNoPacoteNaTransacao: vi.fn(),
     cancelar: vi.fn(),
     concluirComPacote: vi.fn(),
     estornarConclusaoAutomatica: vi.fn(),
@@ -145,6 +150,7 @@ const agendamentoAtual = {
     precoUnitario: null,
     dataHoraInicio: new Date('2026-07-20T09:00:00-03:00'),
     dataHoraFim: new Date('2026-07-20T09:30:00-03:00'),
+    encaixe: false,
     status: StatusAgendamento.AGENDADO,
     concluido: false,
     createdAt: new Date('2026-07-20T00:00:00Z'),
@@ -228,6 +234,36 @@ beforeEach(() => {
     vi.mocked(pacoteClienteRepository.transacionar).mockImplementation(
         (operation) => operation(transacaoMock as never),
     );
+    vi.mocked(
+        agendamentoRepository.bloquearDiasAgendaNaTransacao,
+    ).mockResolvedValue(undefined);
+    vi.mocked(
+        agendamentoRepository.validarSobreposicaoNaTransacao,
+    ).mockResolvedValue(false);
+    vi.mocked(
+        agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao,
+    ).mockResolvedValue(false);
+    vi.mocked(agendamentoRepository.atualizarNaTransacao).mockImplementation(
+        (_tx, id, dados) => agendamentoRepository.atualizar(id, dados),
+    );
+    vi.mocked(
+        agendamentoRepository.atualizarComNumeroNoPacoteNaTransacao,
+    ).mockImplementation((_tx, id, dados, pacoteClienteId) =>
+        agendamentoRepository.atualizarComNumeroNoPacote(
+            id,
+            dados,
+            pacoteClienteId,
+            dados.servicoId,
+            null,
+            dados.status ?? StatusAgendamento.AGENDADO,
+        ),
+    );
+    vi.mocked(agendamentoRepository.atualizar).mockResolvedValue(
+        agendamentoAtual,
+    );
+    vi.mocked(
+        agendamentoRepository.atualizarComNumeroNoPacote,
+    ).mockResolvedValue(agendamentoAtual);
     transacaoMock.agendamento.count.mockResolvedValue(0);
     transacaoMock.agendamento.findFirst.mockResolvedValue(null);
     transacaoMock.servico.findUnique.mockResolvedValue(servicoBase);
@@ -241,6 +277,55 @@ afterEach(() => {
 });
 
 describe('agendamento.service.criar', () => {
+    it('só encaminha a permissão de encaixe para origem PAINEL', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-24T13:00:00-03:00',
+            origem: 'PAINEL',
+            permitirEncaixe: true,
+        });
+        expect(agendamentoRepository.criar).toHaveBeenLastCalledWith(
+            expect.any(Object),
+            true,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-24T13:00:00-03:00',
+            origem: 'GEMINI',
+            permitirEncaixe: true,
+        } as never);
+        expect(agendamentoRepository.criar).toHaveBeenLastCalledWith(
+            expect.any(Object),
+        );
+    });
+
+    it('aceita permitirEncaixe no registro retroativo do painel', async () => {
+        vi.mocked(agendamentoRepository.criar).mockResolvedValue(
+            agendamentoAtual,
+        );
+
+        await agendamentoService.criar({
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-17T10:00:00-03:00',
+            origem: 'PAINEL',
+            registroRetroativo: true,
+            permitirEncaixe: true,
+        });
+
+        expect(agendamentoRepository.criar).toHaveBeenLastCalledWith(
+            expect.any(Object),
+            true,
+        );
+    });
+
     it('notifica o scheduler depois de criar um agendamento', async () => {
         const alteracoes: AlteracaoAutoConclusao[] = [];
         const removerObservador = observarAutoConclusao((alteracao) =>
@@ -1342,6 +1427,71 @@ describe('agendamento.service.cancelar', () => {
 });
 
 describe('agendamento.service.atualizar', () => {
+    it('ativa, desativa e preserva encaixe segundo as alterações da edição', async () => {
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+        } as never);
+
+        vi.mocked(
+            agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao,
+        ).mockResolvedValueOnce(true);
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+            origem: 'PAINEL',
+            permitirEncaixe: true,
+        });
+        expect(agendamentoRepository.atualizar).toHaveBeenLastCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ encaixe: true }),
+        );
+
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            encaixe: true,
+        } as never);
+        vi.mocked(
+            agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao,
+        ).mockResolvedValueOnce(false);
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T11:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+            origem: 'PAINEL',
+            permitirEncaixe: true,
+        });
+        expect(agendamentoRepository.atualizar).toHaveBeenLastCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ encaixe: false }),
+        );
+
+        vi.mocked(
+            agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao,
+        ).mockResolvedValueOnce(true);
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: servicoBase.id,
+            dataHoraInicio: '2026-07-20T09:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+            origem: 'PAINEL',
+        });
+        expect(
+            agendamentoRepository.prepararEncaixeDaAtualizacaoNaTransacao,
+        ).toHaveBeenLastCalledWith(
+            transacaoMock,
+            'agendamento-1',
+            expect.any(Object),
+            { recalcular: false, permitirEncaixe: false },
+        );
+        expect(agendamentoRepository.atualizar).toHaveBeenLastCalledWith(
+            'agendamento-1',
+            expect.objectContaining({ encaixe: true }),
+        );
+    });
+
     it.each(['PAINEL', 'GEMINI'] as const)(
         'não altera origem persistida quando origem de validação é %s',
         async (origem) => {
@@ -1361,7 +1511,7 @@ describe('agendamento.service.atualizar', () => {
             });
 
             expect(agendamentoRepository.atualizar).toHaveBeenCalledOnce();
-            expect(pacoteClienteRepository.transacionar).not.toHaveBeenCalled();
+            expect(pacoteClienteRepository.transacionar).toHaveBeenCalledOnce();
             expect(
                 vi.mocked(agendamentoRepository.atualizar).mock.calls[0]?.[1],
             ).not.toHaveProperty('origem');
@@ -3680,6 +3830,7 @@ describe('agendamento.service.simularLote', () => {
         vi.mocked(
             agendamentoRepository.contarNaoCanceladosPorPacoteEServico,
         ).mockResolvedValue(2);
+        transacaoMock.agendamento.count.mockResolvedValue(2);
 
         const resultado = await agendamentoService.simularLote({
             clienteId: clienteBase.id,
@@ -3702,9 +3853,13 @@ describe('agendamento.service.simularLote', () => {
     });
 
     it('retorna slots disponíveis e conflitos sem persistir nada', async () => {
-        vi.mocked(agendamentoRepository.buscarConflito)
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce({ ...agendamentoAtual } as never);
+        vi.mocked(agendamentoRepository.validarSobreposicaoNaTransacao)
+            .mockResolvedValueOnce(false)
+            .mockRejectedValueOnce(
+                new AppError('Já existe um agendamento nesse horário.', 409, {
+                    code: 'CONFLITO_HORARIO',
+                }),
+            );
 
         const resultado = await agendamentoService.simularLote({
             clienteId: clienteBase.id,
@@ -3989,9 +4144,13 @@ describe('agendamento.service lote com pacoteId', () => {
         vi.mocked(loteAgendamentoRepository.criar).mockResolvedValue({
             id: 'lote-1',
         } as never);
-        transacaoMock.agendamento.findFirst.mockResolvedValue({
-            clienteId: clienteBase.id,
-        } as never);
+        vi.mocked(
+            agendamentoRepository.validarSobreposicaoNaTransacao,
+        ).mockRejectedValueOnce(
+            new AppError('Você já tem agendamento nesse horário.', 409, {
+                code: 'CONFLITO_HORARIO',
+            }),
+        );
 
         await expect(
             agendamentoService.criarLote(payloadComCatalogo),
