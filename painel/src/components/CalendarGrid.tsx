@@ -15,6 +15,7 @@ type CalendarGridProps = {
     selectedKeys?: string[];
     minDateKey?: string | null;
     maxDateKey?: string | null;
+    initialViewDate?: Date;
     labels?: CalendarGridLabels;
     className?: string;
 };
@@ -76,12 +77,17 @@ export function CalendarGrid({
     selectedKeys,
     minDateKey,
     maxDateKey,
+    initialViewDate,
     labels,
     className = '',
 }: CalendarGridProps) {
     const [viewDate, setViewDate] = useState<Date>(() => {
         if (valueKey) {
             return dateKeyToViewDate(valueKey);
+        }
+
+        if (initialViewDate) {
+            return initialViewDate;
         }
 
         if (minDateKey) {

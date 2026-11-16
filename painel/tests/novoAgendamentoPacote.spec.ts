@@ -223,6 +223,30 @@ async function abrirNovoAgendamentoHoje(page: Page): Promise<void> {
     await calendario.getByRole('button', { name: '22', exact: true }).click();
 }
 
+function obterCalendario(page: Page) {
+    return page
+        .getByText('SELECIONE UMA DATA')
+        .locator('..')
+        .locator('..')
+        .locator('..');
+}
+
+async function fixarAgora(page: Page): Promise<void> {
+    await page.clock.install({
+        time: new Date('2026-11-16T15:00:00.000Z'),
+    });
+}
+
+async function selecionarDataHoraPassada(page: Page): Promise<void> {
+    const calendario = obterCalendario(page);
+    await calendario.getByRole('button', { name: 'Mês anterior' }).click();
+    await calendario.getByRole('button', { name: '15', exact: true }).click();
+
+    const seletorHora = page.getByText('SELECIONE UM HORÁRIO').locator('..');
+    await seletorHora.getByRole('button', { name: '11', exact: true }).click();
+    await seletorHora.getByRole('button', { name: '00', exact: true }).click();
+}
+
 async function salvar(page: Page): Promise<void> {
     await page.getByRole('button', { name: 'Salvar agendamento' }).click();
 }
@@ -363,6 +387,8 @@ test('sem pacote mantém o payload avulso sem campos de pacote', async ({
     });
     expect(api.posts[0]).not.toHaveProperty('pacoteId');
     expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
+    expect(api.posts[0]).not.toHaveProperty('registroRetroativo');
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
 test('configuração de 15 minutos libera horário de hoje a 20 minutos', async ({
@@ -396,6 +422,10 @@ test('falha de configuração mantém fallback de 60 minutos e permite horário 
     const seletorHora = page.getByText('SELECIONE UM HORÁRIO').locator('..');
     await expect(
         seletorHora.getByRole('button', { name: '09', exact: true }),
+    ).toBeEnabled();
+    await seletorHora.getByRole('button', { name: '09', exact: true }).click();
+    await expect(
+        seletorHora.getByRole('button', { name: '30', exact: true }).last(),
     ).toBeDisabled();
     await seletorHora.getByRole('button', { name: '10', exact: true }).click();
     await seletorHora
@@ -466,6 +496,9 @@ test('cancelar confirmação de expediente não reenvia agendamento', async ({
 
     const dialog = page.getByRole('alertdialog');
     await expect(dialog).toBeVisible();
+    await expect(
+        dialog.getByRole('button', { name: 'Cancelar' }),
+    ).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(dialog).toHaveCount(0);
     await expect(
@@ -688,4 +721,289 @@ test('409 mantém formulário e recarrega pacote ativo sem selecioná-lo', async
     expect(api.activeLookups.get('cliente-ana')).toBe(2);
     expect(api.posts[0]).toHaveProperty('pacoteId', 'pacote-corte');
     expect(api.posts[0]).not.toHaveProperty('pacoteClienteId');
+});
+
+test('data mínima permite exatamente 90 dias e bloqueia dia anterior', async ({
+    page,
+}) => {
+    await fixarAgora(page);
+    await mockApi(page);
+    await page.goto('/novo');
+
+    const calendario = obterCalendario(page);
+    for (let mes = 0; mes < 3; mes += 1) {
+        await calendario.getByRole('button', { name: 'Mês anterior' }).click();
+    }
+    await expect(
+        calendario.getByRole('button', { name: '17', exact: true }),
+    ).toBeDisabled();
+    await expect(
+        calendario.getByRole('button', { name: '18', exact: true }),
+    ).toBeEnabled();
+});
+
+test('confirma registro retroativo, envia flag e abre dia correto na agenda', async ({
+    page,
+}) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await fixarAgora(page);
+    const api = await mockApi(page);
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraPassada(page);
+    await salvar(page);
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('Registrar atendimento no passado?');
+    await expect(dialog).toContainText(
+        'quinta-feira, 15 de outubro de 2026 às 11:00',
+    );
+    await expect(dialog).toContainText('Serviço: Corte');
+    await expect(dialog).toContainText('Cliente: Ana Souza');
+    expect(api.posts).toHaveLength(0);
+
+    const dialogBox = await dialog.boundingBox();
+    const cancelBox = await dialog
+        .getByRole('button', { name: 'Cancelar' })
+        .boundingBox();
+    const confirmBox = await dialog
+        .getByRole('button', { name: 'Registrar atendimento' })
+        .boundingBox();
+    expect(dialogBox).not.toBeNull();
+    expect(cancelBox).not.toBeNull();
+    expect(confirmBox).not.toBeNull();
+    expect(dialogBox!.x).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.y).toBeGreaterThanOrEqual(0);
+    expect(dialogBox!.x + dialogBox!.width).toBeLessThanOrEqual(390);
+    expect(dialogBox!.y + dialogBox!.height).toBeLessThanOrEqual(844);
+    expect(confirmBox!.x).toBeGreaterThanOrEqual(
+        cancelBox!.x + cancelBox!.width,
+    );
+
+    await dialog.getByRole('button', { name: 'Registrar atendimento' }).click();
+    await expect.poll(() => api.posts).toHaveLength(1);
+    expect(api.posts[0]).toMatchObject({
+        clienteId: 'cliente-ana',
+        servicoId: 'servico-corte',
+        dataHoraInicio: '2026-10-15T11:00:00-03:00',
+        registroRetroativo: true,
+    });
+    await expect(page).toHaveURL(/\/\?data=2026-10-15$/);
+});
+
+test('cancelar confirmação retroativa não envia requisição e mantém formulário', async ({
+    page,
+}) => {
+    await fixarAgora(page);
+    const api = await mockApi(page);
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraPassada(page);
+    await salvar(page);
+
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.getByText('15/10/2026 às 11:00')).toBeVisible();
+    await expect(
+        page.getByRole('button', { name: 'Salvar agendamento' }),
+    ).toBeEnabled();
+    expect(api.posts).toHaveLength(0);
+});
+
+test('catálogo fica indisponível em data passada e seleção existente é removida', async ({
+    page,
+}) => {
+    await fixarAgora(page);
+    const api = await mockApi(page);
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    const catalogo = page.getByLabel('Pacote do catálogo (opcional)');
+    await catalogo.selectOption('pacote-corte');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraFutura(page);
+
+    const calendario = obterCalendario(page);
+    for (let mes = 0; mes < 2; mes += 1) {
+        await calendario.getByRole('button', { name: 'Mês anterior' }).click();
+    }
+    await calendario.getByRole('button', { name: '15', exact: true }).click();
+
+    await expect(catalogo).toHaveValue('');
+    await expect(page.getByRole('status')).toContainText(
+        'A seleção anterior foi removida.',
+    );
+    await expect(
+        catalogo.locator('option[value="pacote-corte"]'),
+    ).toBeDisabled();
+    await salvar(page);
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Registrar atendimento' })
+        .click();
+    await expect.poll(() => api.posts).toHaveLength(1);
+    expect(api.posts[0]).toMatchObject({ registroRetroativo: true });
+    expect(api.posts[0]).not.toHaveProperty('pacoteId');
+});
+
+for (const erroRetroativo of [
+    {
+        code: 'RETROATIVO_FORA_DO_LIMITE',
+        body: {
+            message: 'Registro retroativo excede o limite de 90 dias.',
+            code: 'RETROATIVO_FORA_DO_LIMITE',
+            limiteDias: 90,
+        },
+        mensagem: 'ultrapassa o limite de 90 dias',
+    },
+    {
+        code: 'RETROATIVO_NAO_PERMITE_VENDA_PACOTE',
+        body: {
+            message: 'Registro retroativo não pode vender pacote do catálogo.',
+            code: 'RETROATIVO_NAO_PERMITE_VENDA_PACOTE',
+        },
+        mensagem: 'Venda de pacote do catálogo não está disponível',
+    },
+]) {
+    test(`exibe erro inline ${erroRetroativo.code}`, async ({ page }) => {
+        await fixarAgora(page);
+        const api = await mockApi(page, {
+            createResponse: () => ({ status: 422, body: erroRetroativo.body }),
+        });
+        await page.goto('/novo');
+        await selecionarCliente(page, 'Ana Souza');
+        await selecionarServico(page, 'Corte');
+        await selecionarDataHoraPassada(page);
+        await salvar(page);
+        await page
+            .getByRole('alertdialog')
+            .getByRole('button', { name: 'Registrar atendimento' })
+            .click();
+
+        await expect(page.getByText(erroRetroativo.mensagem)).toBeVisible();
+        await expect(
+            page.getByRole('button', { name: 'Salvar agendamento' }),
+        ).toBeEnabled();
+        expect(api.posts).toHaveLength(1);
+        expect(api.posts[0]).toHaveProperty('registroRetroativo', true);
+    });
+}
+
+test('pacote ativo retroativo vencido avisa sobre débito e renovação manual', async ({
+    page,
+}) => {
+    await fixarAgora(page);
+    const api = await mockApi(page, {
+        activeLookup: (clienteId) => ({
+            status: 200,
+            body: makeActivePackage(clienteId, 1),
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    const usarPacote = page.getByRole('checkbox', {
+        name: /Usar pacote ativo/,
+    });
+    await usarPacote.locator('..').click();
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraPassada(page);
+    await salvar(page);
+
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toContainText('registrado como realizado');
+    await expect(dialog).toContainText('debitará 1 uso do pacote');
+    await expect(dialog).toContainText('renovação deve ser feita manualmente');
+    await dialog.getByRole('button', { name: 'Registrar atendimento' }).click();
+    await expect.poll(() => api.posts).toHaveLength(1);
+    expect(api.posts[0]).toHaveProperty(
+        'pacoteClienteId',
+        'pacote-cliente-cliente-ana',
+    );
+    expect(api.posts[0]).toHaveProperty('registroRetroativo', true);
+});
+
+test('preserva mensagem backend de saldo sem mascarar e mantém formulário editável', async ({
+    page,
+}) => {
+    await fixarAgora(page);
+    const mensagemBackend = 'Pacote do cliente está esgotado.';
+    const api = await mockApi(page, {
+        activeLookup: (clienteId) => ({
+            status: 200,
+            body: makeActivePackage(clienteId, 1),
+        }),
+        createResponse: () => ({
+            status: 409,
+            body: { message: mensagemBackend },
+        }),
+    });
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await page
+        .getByRole('checkbox', { name: /Usar pacote ativo/ })
+        .locator('..')
+        .click();
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraPassada(page);
+    await salvar(page);
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Registrar atendimento' })
+        .click();
+
+    await expect(page.getByText(mensagemBackend)).toBeVisible();
+    await expect(
+        page.getByRole('button', { name: 'Salvar agendamento' }),
+    ).toBeEnabled();
+    expect(api.posts).toHaveLength(1);
+    expect(api.posts[0]).toHaveProperty('registroRetroativo', true);
+});
+
+test('confirma retroativo antes do encaixe e preserva flag no reenvio', async ({
+    page,
+}) => {
+    const api = await mockApi(page, {
+        createResponse: (attempt) =>
+            attempt === 1
+                ? {
+                      status: 422,
+                      body: {
+                          message: 'Horário fora do expediente.',
+                          code: 'FORA_DO_EXPEDIENTE',
+                          motivos: ['fora_funcionamento'],
+                      },
+                  }
+                : { status: 201, body: { id: 'agendamento-mock' } },
+    });
+    await fixarAgora(page);
+    await page.goto('/novo');
+    await selecionarCliente(page, 'Ana Souza');
+    await selecionarServico(page, 'Corte');
+    await selecionarDataHoraPassada(page);
+    await salvar(page);
+
+    await expect(page.getByRole('alertdialog')).toContainText(
+        'Registrar atendimento no passado?',
+    );
+    expect(api.posts).toHaveLength(0);
+    await page
+        .getByRole('alertdialog')
+        .getByRole('button', { name: 'Registrar atendimento' })
+        .click();
+
+    const dialogEncaixe = page.getByRole('alertdialog');
+    await expect(dialogEncaixe).toContainText('Encaixar fora do expediente?');
+    await expect.poll(() => api.posts).toHaveLength(1);
+    expect(api.posts[0]).toHaveProperty('registroRetroativo', true);
+
+    await dialogEncaixe
+        .getByRole('button', { name: 'Encaixar mesmo assim' })
+        .click();
+    await expect.poll(() => api.posts).toHaveLength(2);
+    expect(api.posts[1]).toEqual({
+        ...api.posts[0],
+        permitirForaDoExpediente: true,
+    });
+    expect(api.posts[1]).toHaveProperty('registroRetroativo', true);
 });
