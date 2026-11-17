@@ -7,12 +7,13 @@ import { LoteAgendamentoModal } from '../components/LoteAgendamentoModal/LoteAge
 import { SkeletonCard } from '../components/SkeletonCard';
 import { Button } from '../components/ui/Button';
 import { IconButton } from '../components/ui/IconButton';
+import { createBrazilDate } from '../utils/dateTime';
 import {
     cancelarAgendamento,
     concluirAgendamento,
     enviarLembreteAgendamento,
     listarAgendamentos,
-    type Agendamento,
+    type AgendamentoLista,
 } from '../services/agendamentos.service';
 
 const TIME_ZONE = 'America/Sao_Paulo';
@@ -44,6 +45,24 @@ function addDaysToDateKey(dateKey: string, days: number): string {
     const nextDay = String(date.getUTCDate()).padStart(2, '0');
 
     return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
+function filtrosDoDia(dataKey: string) {
+    const [year, month, day] = dataKey.split('-').map(Number);
+    const [nextYear, nextMonth, nextDay] = addDaysToDateKey(dataKey, 1)
+        .split('-')
+        .map(Number);
+
+    return {
+        de: createBrazilDate(year, month - 1, day, 0, 0).toISOString(),
+        ate: createBrazilDate(
+            nextYear,
+            nextMonth - 1,
+            nextDay,
+            0,
+            0,
+        ).toISOString(),
+    };
 }
 
 function formatarDataCompleta(dateKey: string): string {
@@ -95,7 +114,7 @@ export function AgendamentosPage() {
         ? dataParam
         : getHojeDateKey();
 
-    const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
+    const [agendamentos, setAgendamentos] = useState<AgendamentoLista[]>([]);
     const [loading, setLoading] = useState<boolean>(true);
     const [agora, setAgora] = useState(() => Date.now());
     const [erro, setErro] = useState<string | null>(null);
@@ -123,7 +142,9 @@ export function AgendamentosPage() {
             setErro(null);
 
             try {
-                const data = await listarAgendamentos();
+                const data = await listarAgendamentos(
+                    filtrosDoDia(dataSelecionadaKey),
+                );
                 if (isMounted) {
                     setAgendamentos(data);
                 }
@@ -182,7 +203,9 @@ export function AgendamentosPage() {
                     notificarCliente,
                     aplicarParaLote,
                 });
-                const listaAtualizada = await listarAgendamentos();
+                const listaAtualizada = await listarAgendamentos(
+                    filtrosDoDia(dataSelecionadaKey),
+                );
                 setAgendamentos(listaAtualizada);
             } catch (error) {
                 const message =
@@ -194,7 +217,7 @@ export function AgendamentosPage() {
                 setCancelandoId(null);
             }
         },
-        [],
+        [dataSelecionadaKey],
     );
 
     const handleConcluir = useCallback(
@@ -204,7 +227,9 @@ export function AgendamentosPage() {
 
             try {
                 await concluirAgendamento(id, aplicarParaLote);
-                const listaAtualizada = await listarAgendamentos();
+                const listaAtualizada = await listarAgendamentos(
+                    filtrosDoDia(dataSelecionadaKey),
+                );
                 setAgendamentos(listaAtualizada);
             } catch (error) {
                 const message =
@@ -216,31 +241,40 @@ export function AgendamentosPage() {
                 setConcluindoId(null);
             }
         },
-        [],
+        [dataSelecionadaKey],
     );
 
-    const handleEnviarLembrete = useCallback(async (id: string) => {
-        setEnviandoLembreteId(id);
-        setErro(null);
+    const handleEnviarLembrete = useCallback(
+        async (id: string) => {
+            setEnviandoLembreteId(id);
+            setErro(null);
 
-        try {
-            await enviarLembreteAgendamento(id);
-            setAgendamentos(await listarAgendamentos());
-        } catch (error) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Não foi possível enviar o lembrete.';
-            setErro(message);
             try {
-                setAgendamentos(await listarAgendamentos());
-            } catch {
-                // Mantém a falha principal visível se a atualização também falhar.
+                await enviarLembreteAgendamento(id);
+                setAgendamentos(
+                    await listarAgendamentos(filtrosDoDia(dataSelecionadaKey)),
+                );
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'Não foi possível enviar o lembrete.';
+                setErro(message);
+                try {
+                    setAgendamentos(
+                        await listarAgendamentos(
+                            filtrosDoDia(dataSelecionadaKey),
+                        ),
+                    );
+                } catch {
+                    // Mantém a falha principal visível se a atualização também falhar.
+                }
+            } finally {
+                setEnviandoLembreteId(null);
             }
-        } finally {
-            setEnviandoLembreteId(null);
-        }
-    }, []);
+        },
+        [dataSelecionadaKey],
+    );
 
     const handleDiaAnterior = useCallback(() => {
         setDataSelecionadaKey((current) => addDaysToDateKey(current, -1));
@@ -421,7 +455,7 @@ export function AgendamentosPage() {
                 aberto={loteModalAberto}
                 onFechar={() => setLoteModalAberto(false)}
                 onSucesso={() => {
-                    listarAgendamentos()
+                    listarAgendamentos(filtrosDoDia(dataSelecionadaKey))
                         .then(setAgendamentos)
                         .catch(() => undefined);
                 }}

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check, CheckCircle2, Clock, Package, Send } from 'lucide-react';
-import type { Agendamento } from '../services/agendamentos.service';
+import type { AgendamentoLista } from '../services/agendamentos.service';
 import { formatarNumeroNoPacote } from '../utils/numeroNoPacote';
 import { infoOrigemAgendamento } from '../utils/origemAgendamento.js';
 import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
@@ -13,7 +13,7 @@ import { IconButton } from './ui/IconButton';
 import { SeloEncaixe } from './SeloEncaixe';
 
 interface AgendamentoItemProps {
-    agendamento: Agendamento;
+    agendamento: AgendamentoLista;
     valorVisivel: boolean;
     onEditar: (id: string) => void;
     onCancelar: (

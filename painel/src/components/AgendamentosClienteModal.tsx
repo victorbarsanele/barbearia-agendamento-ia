@@ -4,7 +4,7 @@ import type { Cliente } from '../services/clientes.service';
 import {
     excluirAgendamento,
     listarAgendamentos,
-    type Agendamento,
+    type AgendamentoLista,
 } from '../services/agendamentos.service';
 import { podeCancelarAgendamento } from '../utils/podeCancelarAgendamento';
 import { Badge } from './ui/Badge';
@@ -51,7 +51,7 @@ export function AgendamentosClienteModal({
     const navigate = useNavigate();
 
     const [agendamentosCliente, setAgendamentosCliente] = useState<
-        Agendamento[]
+        AgendamentoLista[]
     >([]);
     const [loading, setLoading] = useState(false);
     const [erro, setErro] = useState<string | null>(null);
@@ -75,7 +75,9 @@ export function AgendamentosClienteModal({
             setConfirmandoRemocaoId(null);
 
             try {
-                const lista = await listarAgendamentos();
+                const lista = await listarAgendamentos({
+                    clienteId: cliente.id,
+                });
                 if (!ativo) {
                     return;
                 }
@@ -137,7 +139,7 @@ export function AgendamentosClienteModal({
         };
     }, [agendamentosCliente, agoraReferencia]);
 
-    const handleVerNoPainel = (agendamento: Agendamento) => {
+    const handleVerNoPainel = (agendamento: AgendamentoLista) => {
         const dateKey = getDateKeyEmBrasilia(agendamento.dataHoraInicio);
         onClose();
         navigate(`/?data=${dateKey}`);
@@ -180,7 +182,7 @@ export function AgendamentosClienteModal({
 
     const renderSecao = (
         titulo: string,
-        itens: Agendamento[],
+        itens: AgendamentoLista[],
         opaca = false,
     ) => {
         return (

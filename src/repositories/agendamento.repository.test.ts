@@ -16,6 +16,7 @@ import {
     isViolacaoDeSobreposicao,
     listarPendentesParaAgendamentoAutoConclusao,
     listarParaConclusaoAutomatica,
+    listarComFiltros,
     listarSiblingsEditaveisDoLote,
     prepararEncaixeDaAtualizacaoNaTransacao,
     reservarNumeroNoPacoteOportunistaNaTransacao,
@@ -1359,6 +1360,89 @@ describe('agendamento.repository reserva oportunista de pacote', () => {
                 'servico-1',
             ),
         ).rejects.toMatchObject({ statusCode: 404 });
+    });
+});
+
+describe('agendamento.repository.listarComFiltros', () => {
+    const dataDe = new Date('2026-11-16T03:00:00.000Z');
+    const dataAte = new Date('2026-11-17T03:00:00.000Z');
+
+    it.each([
+        [{ de: dataDe }, { dataHoraInicio: { gte: dataDe } }],
+        [{ ate: dataAte }, { dataHoraInicio: { lt: dataAte } }],
+        [
+            { de: dataDe, ate: dataAte, clienteId: 'cliente-1' },
+            {
+                dataHoraInicio: { gte: dataDe, lt: dataAte },
+                clienteId: 'cliente-1',
+            },
+        ],
+        [{ clienteId: 'cliente-1' }, { clienteId: 'cliente-1' }],
+    ])('aplica filtros AND e limites corretos %#', async (filtros, where) => {
+        const findMany = vi.mocked(prisma.agendamento.findMany);
+        findMany.mockResolvedValue([]);
+
+        await expect(listarComFiltros(filtros as never)).resolves.toEqual([]);
+
+        expect(findMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where,
+                orderBy: { dataHoraInicio: 'asc' },
+                select: expect.objectContaining({
+                    cliente: { select: { id: true, nome: true } },
+                    servico: {
+                        select: {
+                            nome: true,
+                            duracaoMinutos: true,
+                            preco: true,
+                        },
+                    },
+                }),
+            }),
+        );
+    });
+
+    it('retorna lista vazia e preserva encaixe e campos derivados', async () => {
+        vi.mocked(prisma.agendamento.findMany).mockResolvedValue([
+            {
+                id: 'encaixe-1',
+                servicoId: 'servico-1',
+                origem: null,
+                pacoteClienteId: 'pacote-cliente-1',
+                numeroNoPacote: 2,
+                loteId: null,
+                encaixe: true,
+                dataHoraInicio: dataDe,
+                dataHoraFim: dataAte,
+                status: StatusAgendamento.AGENDADO,
+                concluido: false,
+                concluidoEm: null,
+                concluidoPor: null,
+                cliente: { id: 'cliente-1', nome: 'Cliente' },
+                servico: { nome: 'Corte', duracaoMinutos: 30, preco: null },
+                pacoteCliente: {
+                    servicos: [
+                        {
+                            servicoId: 'servico-1',
+                            quantidadeTotal: 5,
+                            usosAnteriores: 1,
+                        },
+                    ],
+                },
+                lembretes: [],
+            },
+        ] as never);
+
+        const resultado = await listarComFiltros({ de: dataDe, ate: dataAte });
+
+        expect(resultado[0]).toMatchObject({
+            id: 'encaixe-1',
+            encaixe: true,
+            ultimoLembrete: null,
+            totalServicoNoPacote: 5,
+            usosAnteriores: 1,
+        });
+        expect(resultado[0]).not.toHaveProperty('pacoteCliente');
     });
 });
 

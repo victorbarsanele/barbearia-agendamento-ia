@@ -215,6 +215,53 @@ const includeRelacoes = {
     servico: true,
 } satisfies Prisma.AgendamentoInclude;
 
+const selectListagemComFiltros = {
+    id: true,
+    servicoId: true,
+    origem: true,
+    pacoteClienteId: true,
+    numeroNoPacote: true,
+    loteId: true,
+    encaixe: true,
+    dataHoraInicio: true,
+    dataHoraFim: true,
+    status: true,
+    concluido: true,
+    concluidoEm: true,
+    concluidoPor: true,
+    cliente: { select: { id: true, nome: true } },
+    servico: {
+        select: { nome: true, duracaoMinutos: true, preco: true },
+    },
+    pacoteCliente: {
+        select: {
+            servicos: {
+                select: {
+                    servicoId: true,
+                    quantidadeTotal: true,
+                    usosAnteriores: true,
+                },
+            },
+        },
+    },
+    lembretes: {
+        take: 1,
+        orderBy: { criadoEm: 'desc' as const },
+        select: {
+            status: true,
+            criadoEm: true,
+            aceitoEm: true,
+            motivoFalha: true,
+        },
+    },
+} satisfies Prisma.AgendamentoSelect;
+
+export interface FiltrosListagemAgendamentos {
+    de?: Date;
+    ate?: Date;
+    clienteId?: string;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -546,6 +593,35 @@ export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
     } catch (error) {
         throw error;
     }
+}
+
+export async function listarComFiltros(filtros: FiltrosListagemAgendamentos) {
+    const dataHoraInicio: Prisma.DateTimeFilter = {};
+    if (filtros.de) dataHoraInicio.gte = filtros.de;
+    if (filtros.ate) dataHoraInicio.lt = filtros.ate;
+
+    const where: Prisma.AgendamentoWhereInput = {};
+    if (filtros.de || filtros.ate) where.dataHoraInicio = dataHoraInicio;
+    if (filtros.clienteId) where.clienteId = filtros.clienteId;
+
+    const agendamentos = await prisma.agendamento.findMany({
+        where,
+        select: selectListagemComFiltros,
+        orderBy: { dataHoraInicio: 'asc' },
+    });
+
+    return agendamentos.map(({ pacoteCliente, lembretes, ...agendamento }) => ({
+        ...agendamento,
+        ultimoLembrete: lembretes[0] ?? null,
+        totalServicoNoPacote:
+            pacoteCliente?.servicos.find(
+                (item) => item.servicoId === agendamento.servicoId,
+            )?.quantidadeTotal ?? null,
+        usosAnteriores:
+            pacoteCliente?.servicos.find(
+                (item) => item.servicoId === agendamento.servicoId,
+            )?.usosAnteriores ?? null,
+    }));
 }
 
 async function atualizarStatusConformeSaldos(
