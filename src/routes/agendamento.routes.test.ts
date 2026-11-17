@@ -5,6 +5,7 @@ import { AppError } from '../lib/app-error';
 const serviceMocks = vi.hoisted(() => ({
     criar: vi.fn(),
     listarTodos: vi.fn(),
+    listarComFiltros: vi.fn(),
     buscarPorId: vi.fn(),
     atualizar: vi.fn(),
     cancelar: vi.fn(),
@@ -538,12 +539,17 @@ describe('resposta de listagem e detalhe', () => {
         pacoteClienteId: null,
         status: 'AGENDADO',
         concluido: false,
+        concluidoEm: null,
+        concluidoPor: null,
         dataHoraInicio: new Date('2026-11-02T13:00:00Z'),
         dataHoraFim: new Date('2026-11-02T13:30:00Z'),
     };
 
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.mocked(agendamentoService.listarComFiltros).mockResolvedValue([
+            agendamento,
+        ] as never);
         vi.mocked(agendamentoService.listarTodos).mockResolvedValue([
             agendamento,
         ] as never);
@@ -569,4 +575,84 @@ describe('resposta de listagem e detalhe', () => {
             ).toMatchObject({ encaixe: true });
         },
     );
+
+    it('mantém a listagem completa e o formato atual sem query params', async () => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'GET',
+            url: '/agendamentos',
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual([
+            {
+                id: 'agendamento-1',
+                encaixe: true,
+                pacoteClienteId: null,
+                status: 'AGENDADO',
+                concluido: false,
+                concluidoEm: null,
+                concluidoPor: null,
+                dataHoraInicio: '2026-11-02T13:00:00.000Z',
+                dataHoraFim: '2026-11-02T13:30:00.000Z',
+                estornavel: false,
+                autoConclusaoPendente: false,
+            },
+        ]);
+        expect(agendamentoService.listarTodos).toHaveBeenCalledOnce();
+        expect(agendamentoService.listarComFiltros).not.toHaveBeenCalled();
+    });
+
+    it('encaminha filtros combinados como datas e cliente', async () => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'GET',
+            url: '/agendamentos?de=2026-11-16T03:00:00.000Z&ate=2026-11-17T03:00:00.000Z&clienteId=cliente-1',
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(agendamentoService.listarComFiltros).toHaveBeenCalledWith({
+            de: new Date('2026-11-16T03:00:00.000Z'),
+            ate: new Date('2026-11-17T03:00:00.000Z'),
+            clienteId: 'cliente-1',
+        });
+        expect(agendamentoService.listarTodos).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [
+            'de=2026-11-16T00:00:00-03:00',
+            { de: new Date('2026-11-16T03:00:00.000Z') },
+        ],
+        [
+            'ate=2026-11-17T00:00:00-03:00',
+            { ate: new Date('2026-11-17T03:00:00.000Z') },
+        ],
+        ['clienteId=cliente-1', { clienteId: 'cliente-1' }],
+    ])('aceita filtro isolado %s', async (query, expected) => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({
+            method: 'GET',
+            url: `/agendamentos?${query}`,
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(agendamentoService.listarComFiltros).toHaveBeenCalledWith(
+            expected,
+        );
+        expect(agendamentoService.listarTodos).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        '/agendamentos?de=invalida',
+        '/agendamentos?de=2026-11-17T03:00:00.000Z&ate=2026-11-17T03:00:00.000Z',
+        '/agendamentos?de=2026-11-18T03:00:00.000Z&ate=2026-11-17T03:00:00.000Z',
+    ])('retorna 400 para query inválida: %s', async (url) => {
+        await app.register(agendamentoRoutes);
+        const response = await app.inject({ method: 'GET', url });
+
+        expect(response.statusCode).toBe(400);
+        expect(agendamentoService.listarComFiltros).not.toHaveBeenCalled();
+        expect(agendamentoService.listarTodos).not.toHaveBeenCalled();
+    });
 });

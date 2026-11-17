@@ -43,6 +43,18 @@ export interface Agendamento {
     };
 }
 
+export type AgendamentoLista = Omit<Agendamento, 'cliente' | 'servico'> & {
+    servicoId: string;
+    cliente: Pick<Agendamento['cliente'], 'id' | 'nome'>;
+    servico: Pick<Agendamento['servico'], 'nome' | 'duracaoMinutos' | 'preco'>;
+};
+
+export interface FiltrosListagemAgendamentos {
+    de?: string;
+    ate?: string;
+    clienteId?: string;
+}
+
 export interface CriarAgendamentoBasePayload {
     clienteId: string;
     servicoId: string;
@@ -145,9 +157,22 @@ async function handleResponse<T>(response: Response): Promise<T> {
     return (await response.json()) as T;
 }
 
-export async function listarAgendamentos(): Promise<Agendamento[]> {
-    const response = await apiFetch('/api/agendamentos');
-    return handleResponse<Agendamento[]>(response);
+export function listarAgendamentos(): Promise<Agendamento[]>;
+export function listarAgendamentos(
+    filtros: FiltrosListagemAgendamentos,
+): Promise<AgendamentoLista[]>;
+export async function listarAgendamentos(
+    filtros: FiltrosListagemAgendamentos = {},
+): Promise<(Agendamento | AgendamentoLista)[]> {
+    const query = new URLSearchParams();
+    if (filtros.de) query.set('de', filtros.de);
+    if (filtros.ate) query.set('ate', filtros.ate);
+    if (filtros.clienteId) query.set('clienteId', filtros.clienteId);
+    const queryString = query.toString();
+    const response = await apiFetch(
+        `/api/agendamentos${queryString ? `?${queryString}` : ''}`,
+    );
+    return handleResponse<(Agendamento | AgendamentoLista)[]>(response);
 }
 
 export async function buscarAgendamentoPorId(id: string): Promise<Agendamento> {

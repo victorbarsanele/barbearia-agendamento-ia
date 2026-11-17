@@ -23,6 +23,7 @@ import {
     type SnapshotAutoConclusao,
 } from '../lib/auto-conclusao-events';
 import * as agendamentoRepository from '../repositories/agendamento.repository';
+import type { FiltrosListagemAgendamentos } from '../repositories/agendamento.repository';
 import * as bloqueioRepository from '../repositories/bloqueio.repository';
 import * as clienteRepository from '../repositories/cliente.repository';
 import * as loteAgendamentoRepository from '../repositories/loteAgendamento.repository';
@@ -1558,6 +1559,18 @@ async function criarLoteComPacoteDoCatalogo(data: LoteAgendamentoData) {
 export async function listarTodos() {
     try {
         return await agendamentoRepository.listarTodos();
+    } catch (error) {
+        if (error instanceof AppError) {
+            throw error;
+        }
+
+        throw new AppError('Erro ao listar agendamentos.', 500);
+    }
+}
+
+export async function listarComFiltros(filtros: FiltrosListagemAgendamentos) {
+    try {
+        return await agendamentoRepository.listarComFiltros(filtros);
     } catch (error) {
         if (error instanceof AppError) {
             throw error;

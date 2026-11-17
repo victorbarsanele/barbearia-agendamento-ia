@@ -39,6 +39,12 @@ interface AgendamentoParams {
     id: string;
 }
 
+interface ListarAgendamentosQuery {
+    de?: string;
+    ate?: string;
+    clienteId?: string;
+}
+
 interface SlotLoteBody {
     data: string;
     horario: string;
@@ -118,10 +124,32 @@ export async function criar(
 }
 
 export async function listarTodos(
-    _request: FastifyRequest,
+    request: FastifyRequest<{ Querystring: ListarAgendamentosQuery }>,
     reply: FastifyReply,
 ): Promise<void> {
     try {
+        const { de, ate, clienteId } = request.query;
+        if (de || ate || clienteId) {
+            if (
+                de &&
+                ate &&
+                new Date(de).getTime() >= new Date(ate).getTime()
+            ) {
+                throw new AppError(
+                    'O parâmetro de deve ser anterior a ate.',
+                    400,
+                );
+            }
+
+            const agendamentos = await agendamentoService.listarComFiltros({
+                ...(de ? { de: new Date(de) } : {}),
+                ...(ate ? { ate: new Date(ate) } : {}),
+                ...(clienteId ? { clienteId } : {}),
+            });
+            void reply.send(agendamentos.map(complementarAgendamento));
+            return;
+        }
+
         const agendamentos = await agendamentoService.listarTodos();
         void reply.send(agendamentos.map(complementarAgendamento));
     } catch (error) {
