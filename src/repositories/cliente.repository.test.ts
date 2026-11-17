@@ -8,6 +8,7 @@ vi.mock('../lib/prisma', () => ({
         cliente: {
             findMany: vi.fn(),
             findUnique: vi.fn(),
+            count: vi.fn(),
         },
         agendamento: {
             findMany: vi.fn(),
@@ -53,6 +54,50 @@ describe('cliente.repository busca por telefone', () => {
             );
         },
     );
+});
+
+describe('cliente.repository listar paginado com total de agendamentos', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('inclui a contagem e preserva busca, ordenação, paginação e total', async () => {
+        const clientes = [
+            {
+                id: 'cliente-1',
+                nome: 'Maria',
+                telefone: '5511999990000',
+                optOutMarketingEm: null,
+                createdAt: new Date('2026-01-02T00:00:00.000Z'),
+                _count: { agendamentos: 3 },
+            },
+        ];
+        vi.mocked(prisma.cliente.findMany).mockResolvedValue(clientes as never);
+        vi.mocked(prisma.cliente.count).mockResolvedValue(11);
+
+        const resultado =
+            await clienteRepository.listarPaginadoComTotalAgendamentos({
+                search: 'Maria',
+                skip: 10,
+                take: 10,
+            });
+
+        const where = {
+            OR: [
+                { nome: { contains: 'Maria', mode: 'insensitive' } },
+                { telefone: { contains: 'Maria' } },
+            ],
+        };
+        expect(prisma.cliente.findMany).toHaveBeenCalledWith({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: 10,
+            take: 10,
+            include: { _count: { select: { agendamentos: true } } },
+        });
+        expect(prisma.cliente.count).toHaveBeenCalledWith({ where });
+        expect(resultado).toEqual({ clientes, total: 11 });
+    });
 });
 
 it('classifica concluídos, cancelados, passados, abertos, pacotes e lotes', async () => {

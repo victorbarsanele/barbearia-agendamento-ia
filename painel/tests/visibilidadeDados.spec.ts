@@ -132,6 +132,7 @@ test('oculta e reexibe o telefone na lista de clientes', async ({ page }) => {
                             id: 'cliente-visibilidade',
                             nome: 'Cliente de teste',
                             telefone: '5511999990000',
+                            totalAgendamentos: 0,
                         },
                     ],
                     total: 1,
@@ -139,13 +140,6 @@ test('oculta e reexibe o telefone na lista de clientes', async ({ page }) => {
                     totalPages: 1,
                 },
             });
-            return;
-        }
-        if (
-            route.request().method() === 'GET' &&
-            url.pathname === '/api/agendamentos'
-        ) {
-            await route.fulfill({ status: 200, json: [] });
             return;
         }
         await route.fulfill({
@@ -174,4 +168,122 @@ test('oculta e reexibe o telefone na lista de clientes', async ({ page }) => {
         .getByRole('button', { name: 'Mostrar telefones dos clientes' })
         .click();
     await expect(page.getByText('+55 11 99999-0000')).toBeVisible();
+});
+
+test('usa a contagem paginada sem listar todos os agendamentos e decrementa ao remover', async ({
+    page,
+}) => {
+    const cliente = {
+        id: 'cliente-contagem',
+        nome: 'Cliente da contagem',
+        telefone: '5511999990001',
+    };
+    const clienteSemAgendamentos = {
+        id: 'cliente-zero',
+        nome: 'Cliente sem agendamentos',
+        telefone: '5511999990002',
+    };
+    const agendamento = {
+        id: 'agendamento-removivel',
+        origem: 'PAINEL',
+        dataHoraInicio: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        dataHoraFim: new Date(Date.now() + 90 * 60 * 1000).toISOString(),
+        status: 'AGENDADO',
+        encaixe: false,
+        pacoteClienteId: null,
+        numeroNoPacote: null,
+        totalServicoNoPacote: null,
+        loteId: null,
+        concluido: false,
+        concluidoEm: null,
+        concluidoPor: null,
+        estornavel: false,
+        autoConclusaoPendente: false,
+        ultimoLembrete: null,
+        cliente,
+        servico: {
+            id: 'servico-contagem',
+            nome: 'Corte de teste',
+            duracaoMinutos: 30,
+            preco: '50.00',
+        },
+    };
+    const requisicoesSemFiltro: string[] = [];
+
+    page.on('request', (request) => {
+        const url = new URL(request.url());
+        if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/agendamentos' &&
+            !url.search
+        ) {
+            requisicoesSemFiltro.push(url.href);
+        }
+    });
+
+    await page.route('**/api/**', async (route) => {
+        const request = route.request();
+        const url = new URL(request.url());
+        if (request.method() === 'GET' && url.pathname === '/api/auth/me') {
+            await route.fulfill({ status: 200, json: { role: 'admin' } });
+            return;
+        }
+        if (request.method() === 'GET' && url.pathname === '/api/clientes') {
+            await route.fulfill({
+                status: 200,
+                json: {
+                    data: [
+                        { ...cliente, totalAgendamentos: 3 },
+                        { ...clienteSemAgendamentos, totalAgendamentos: 0 },
+                    ],
+                    total: 2,
+                    page: 1,
+                    totalPages: 1,
+                },
+            });
+            return;
+        }
+        if (
+            request.method() === 'GET' &&
+            url.pathname === '/api/agendamentos' &&
+            url.searchParams.get('clienteId') === cliente.id
+        ) {
+            await route.fulfill({ status: 200, json: [agendamento] });
+            return;
+        }
+        if (
+            request.method() === 'DELETE' &&
+            url.pathname === '/api/agendamentos/agendamento-removivel'
+        ) {
+            await route.fulfill({ status: 200, json: { id: agendamento.id } });
+            return;
+        }
+        await route.fulfill({
+            status: 404,
+            json: { message: 'Rota não prevista pelo teste.' },
+        });
+    });
+
+    await page.goto('/clientes');
+    const botaoAgenda = page.getByRole('button', {
+        name: 'Ver agendamentos (3)',
+    });
+    await expect(botaoAgenda).toBeVisible();
+    await expect(
+        page.getByRole('button', { name: 'Ver agendamentos (0)' }),
+    ).toBeVisible();
+    expect(requisicoesSemFiltro).toEqual([]);
+
+    await botaoAgenda.click();
+    const modal = page.getByRole('dialog', {
+        name: `Agendamentos de ${cliente.nome}`,
+    });
+    await expect(modal.getByText('Corte de teste')).toBeVisible();
+    await modal.getByRole('button', { name: 'Remover' }).click();
+    await modal.getByRole('button', { name: 'Sim, remover' }).click();
+
+    await expect(
+        page.getByRole('button', { name: 'Ver agendamentos (2)' }),
+    ).toBeVisible();
+    expect(requisicoesSemFiltro).toEqual([]);
 });

@@ -211,6 +211,7 @@ test('modal do cliente mostra Encaixe somente no agendamento marcado', async ({
         id: 'cliente-selo',
         nome: 'Cliente com agendamentos',
         telefone: '11999990000',
+        totalAgendamentos: 2,
     };
     const dataBase = Date.now() + 24 * 60 * 60 * 1000;
     const criarAgendamentoCliente = (
