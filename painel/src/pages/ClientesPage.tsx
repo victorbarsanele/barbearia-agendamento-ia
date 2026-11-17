@@ -9,12 +9,12 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { IconButton } from '../components/ui/IconButton';
 import { PageHeader } from '../components/ui/PageHeader';
-import { listarAgendamentos } from '../services/agendamentos.service';
 import {
     excluirCliente,
     listarClientesPaginado,
     obterResumoExclusaoCliente,
     type Cliente,
+    type ClienteListado,
     type ResumoExclusaoCliente,
 } from '../services/clientes.service';
 import { formatarTelefone } from '../utils/formatarTelefone';
@@ -32,7 +32,7 @@ function getMensagemErro(error: unknown): string {
 export function ClientesPage() {
     const navigate = useNavigate();
 
-    const [clientes, setClientes] = useState<Cliente[]>([]);
+    const [clientes, setClientes] = useState<ClienteListado[]>([]);
     const [loading, setLoading] = useState(true);
     const [telefonesVisiveis, setTelefonesVisiveis] = useState(true);
     const [erro, setErro] = useState<string | null>(null);
@@ -46,9 +46,6 @@ export function ClientesPage() {
     const [carregandoResumoId, setCarregandoResumoId] = useState<string | null>(
         null,
     );
-    const [agendamentosPorCliente, setAgendamentosPorCliente] = useState<
-        Record<string, number>
-    >({});
     const [clienteModalAgendamentos, setClienteModalAgendamentos] =
         useState<Cliente | null>(null);
     const [clienteModalPacote, setClienteModalPacote] =
@@ -78,31 +75,18 @@ export function ClientesPage() {
             setSucesso(null);
 
             try {
-                const [clientesResponse, agendamentosResponse] =
-                    await Promise.all([
-                        listarClientesPaginado({
-                            search: buscaDebounced || undefined,
-                            page: pagina,
-                            limit: CLIENTES_POR_PAGINA,
-                        }),
-                        listarAgendamentos(),
-                    ]);
+                const clientesResponse = await listarClientesPaginado({
+                    search: buscaDebounced || undefined,
+                    page: pagina,
+                    limit: CLIENTES_POR_PAGINA,
+                });
                 if (!ativo) {
                     return;
                 }
 
-                const quantidadePorCliente = agendamentosResponse.reduce<
-                    Record<string, number>
-                >((acc, agendamento) => {
-                    const clienteId = agendamento.cliente.id;
-                    acc[clienteId] = (acc[clienteId] ?? 0) + 1;
-                    return acc;
-                }, {});
-
                 setClientes(clientesResponse.data);
                 setTotalPaginas(clientesResponse.totalPages);
                 setTotalClientes(clientesResponse.total);
-                setAgendamentosPorCliente(quantidadePorCliente);
             } catch (error) {
                 if (!ativo) {
                     return;
@@ -191,15 +175,19 @@ export function ClientesPage() {
     };
 
     const handleRemocaoAgendamentoNoModal = (clienteId: string) => {
-        setAgendamentosPorCliente((current) => {
-            const atual = current[clienteId] ?? 0;
-            const proximo = Math.max(0, atual - 1);
-
-            return {
-                ...current,
-                [clienteId]: proximo,
-            };
-        });
+        setClientes((current) =>
+            current.map((cliente) =>
+                cliente.id === clienteId
+                    ? {
+                          ...cliente,
+                          totalAgendamentos: Math.max(
+                              0,
+                              cliente.totalAgendamentos - 1,
+                          ),
+                      }
+                    : cliente,
+            ),
+        );
     };
 
     return (
@@ -310,14 +298,13 @@ export function ClientesPage() {
                                     onClick={() =>
                                         setClienteModalAgendamentos(cliente)
                                     }
-                                    title={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
-                                    aria-label={`Ver agendamentos (${agendamentosPorCliente[cliente.id] ?? 0})`}
+                                    title={`Ver agendamentos (${cliente.totalAgendamentos})`}
+                                    aria-label={`Ver agendamentos (${cliente.totalAgendamentos})`}
                                     className="relative h-auto min-h-14 w-full flex-col gap-0.5 px-0 py-1 text-xs leading-tight sm:w-14"
                                 >
                                     <Calendar size={16} aria-hidden="true" />
                                     <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[var(--color-gold)] px-1 text-xs font-bold leading-none text-[var(--color-on-gold)]">
-                                        {agendamentosPorCliente[cliente.id] ??
-                                            0}
+                                        {cliente.totalAgendamentos}
                                     </span>
                                     <span>Agenda</span>
                                 </Button>

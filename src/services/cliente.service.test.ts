@@ -24,6 +24,7 @@ vi.mock('../repositories/cliente.repository', () => ({
     atualizar: vi.fn(),
     listarTodos: vi.fn(),
     listarPaginado: vi.fn(),
+    listarPaginadoComTotalAgendamentos: vi.fn(),
     contar: vi.fn(),
     excluirPorId: vi.fn(),
     obterResumoExclusao: vi.fn(),
@@ -297,5 +298,71 @@ describe('cliente.service telefones', () => {
         await clienteService.excluirPorId('cliente-1', true);
 
         expect(clienteRepository.excluirComHistorico).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('cliente.service listar paginado com total de agendamentos', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('achata _count, preserva escalares e envelope, incluindo contagem zero', async () => {
+        const createdAt = new Date('2026-01-02T00:00:00.000Z');
+        vi.mocked(
+            clienteRepository.listarPaginadoComTotalAgendamentos,
+        ).mockResolvedValue({
+            clientes: [
+                {
+                    id: 'cliente-1',
+                    nome: 'Maria',
+                    telefone: '5511999990000',
+                    optOutMarketingEm: null,
+                    createdAt,
+                    _count: { agendamentos: 2 },
+                },
+                {
+                    id: 'cliente-2',
+                    nome: 'Joana',
+                    telefone: '5511888880000',
+                    optOutMarketingEm: null,
+                    createdAt,
+                    _count: { agendamentos: 0 },
+                },
+            ],
+            total: 11,
+        } as never);
+
+        const resultado =
+            await clienteService.listarPaginadoComTotalAgendamentos({
+                search: 'Maria',
+                page: 2,
+                limit: 10,
+            });
+
+        expect(resultado).toEqual({
+            clientes: [
+                {
+                    id: 'cliente-1',
+                    nome: 'Maria',
+                    telefone: '5511999990000',
+                    optOutMarketingEm: null,
+                    createdAt,
+                    totalAgendamentos: 2,
+                },
+                {
+                    id: 'cliente-2',
+                    nome: 'Joana',
+                    telefone: '5511888880000',
+                    optOutMarketingEm: null,
+                    createdAt,
+                    totalAgendamentos: 0,
+                },
+            ],
+            total: 11,
+            page: 2,
+            totalPages: 2,
+        });
+        expect(resultado.clientes[0]).not.toHaveProperty('_count');
+        expect(resultado.clientes[0].createdAt).toBe(createdAt);
     });
 });

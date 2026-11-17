@@ -6,6 +6,8 @@ export interface Cliente {
     telefone: string;
 }
 
+export type ClienteListado = Cliente & { totalAgendamentos: number };
+
 export interface ClientePayload {
     nome: string;
     telefone: string;
@@ -46,7 +48,7 @@ export async function listarClientes(): Promise<Cliente[]> {
 }
 
 export interface ListarClientesPaginadoResultado {
-    data: Cliente[];
+    data: ClienteListado[];
     total: number;
     page: number;
     totalPages: number;

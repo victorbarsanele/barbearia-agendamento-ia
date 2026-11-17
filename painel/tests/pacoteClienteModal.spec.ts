@@ -4,6 +4,7 @@ const cliente = {
     id: 'cliente-ana',
     nome: 'Ana Souza',
     telefone: '11999990001',
+    totalAgendamentos: 0,
 };
 
 function pacoteAtivo(renovadoEm?: string | null, arquivado = false) {

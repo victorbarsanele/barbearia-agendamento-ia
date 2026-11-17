@@ -200,3 +200,33 @@ export async function listarPaginado(params: {
         totalPages: Math.max(1, Math.ceil(total / limit)),
     };
 }
+
+export async function listarPaginadoComTotalAgendamentos(params: {
+    search?: string;
+    page: number;
+    limit: number;
+}): Promise<{
+    clientes: Array<Cliente & { totalAgendamentos: number }>;
+    total: number;
+    page: number;
+    totalPages: number;
+}> {
+    const { search, page, limit } = params;
+    const skip = (page - 1) * limit;
+    const resultado =
+        await clienteRepository.listarPaginadoComTotalAgendamentos({
+            search,
+            skip,
+            take: limit,
+        });
+
+    return {
+        clientes: resultado.clientes.map(({ _count, ...cliente }) => ({
+            ...cliente,
+            totalAgendamentos: _count.agendamentos,
+        })),
+        total: resultado.total,
+        page,
+        totalPages: Math.max(1, Math.ceil(resultado.total / limit)),
+    };
+}

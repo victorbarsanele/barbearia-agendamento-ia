@@ -68,11 +68,12 @@ export async function listarTodos(
             return;
         }
 
-        const resultado = await clienteService.listarPaginado({
-            search,
-            page: page ?? 1,
-            limit: limit ?? 10,
-        });
+        const resultado =
+            await clienteService.listarPaginadoComTotalAgendamentos({
+                search,
+                page: page ?? 1,
+                limit: limit ?? 10,
+            });
 
         void reply.send({
             data: resultado.clientes,

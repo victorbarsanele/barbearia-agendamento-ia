@@ -255,6 +255,31 @@ export async function listarPaginado(params: {
     });
 }
 
+export async function listarPaginadoComTotalAgendamentos(params: {
+    search?: string;
+    skip: number;
+    take: number;
+}): Promise<{
+    clientes: Array<Cliente & { _count: { agendamentos: number } }>;
+    total: number;
+}> {
+    const where = buildWhereBusca(params.search);
+    const [clientes, total] = await Promise.all([
+        prisma.cliente.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: params.skip,
+            take: params.take,
+            include: {
+                _count: { select: { agendamentos: true } },
+            },
+        }),
+        prisma.cliente.count({ where }),
+    ]);
+
+    return { clientes, total };
+}
+
 export async function contar(params: { search?: string }): Promise<number> {
     return prisma.cliente.count({ where: buildWhereBusca(params.search) });
 }
