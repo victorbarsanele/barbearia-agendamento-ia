@@ -573,7 +573,12 @@ export async function listarTodos(): Promise<AgendamentoComRelacoes[]> {
                     },
                 },
             },
-            orderBy: { dataHoraInicio: 'asc' },
+            orderBy: [
+                { dataHoraInicio: 'asc' },
+                { encaixe: 'asc' },
+                { createdAt: 'asc' },
+                { id: 'asc' },
+            ],
         });
 
         return agendamentos.map(
