@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    ESCALATION_MOTIVOS,
+    descreverMotivoEscalonamento,
+    type EscalationMotivo,
+} from './escalation-reason';
 import { enviarNotificacaoWhatsApp } from './whatsapp-notification.service';
 
 const API_KEY = 'ycloud-api-key-test';
@@ -248,6 +253,47 @@ describe('enviarNotificacaoWhatsApp', () => {
             { type: 'text', text: 'não informado' },
             { type: 'text', text: 'x'.repeat(200) },
         ]);
+    });
+
+    it('sends a readable description without a duplicated reason prefix for every escalation reason', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+        const descriptions: Record<EscalationMotivo, string> = {
+            palavra_chave: 'pedido de atendimento humano',
+            confusao_explicita: 'cliente demonstrou confusão',
+            sem_progresso: 'conversa sem progresso',
+            limite_de_cota: 'sistema atingiu limite de uso da API',
+            agendamento_recorrente: 'cliente quer pacote de cortes recorrentes',
+            interesse_pacote: 'cliente interessado em pacote de serviços',
+        };
+
+        for (const motivo of ESCALATION_MOTIVOS) {
+            const description = descreverMotivoEscalonamento(motivo);
+            expect(description).toBe(descriptions[motivo]);
+            expect(description.toLowerCase()).not.toContain('motivo:');
+            expect(description).not.toContain(motivo);
+
+            await enviarNotificacaoWhatsApp(
+                'atendimento_humano',
+                '5511222333444',
+                {
+                    telefoneCliente: '5511999999999',
+                    motivo: description,
+                },
+            );
+
+            const [, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+            const body = JSON.parse(String(init?.body));
+            const parameters = body.template.components[0].parameters as Array<{
+                text: string;
+            }>;
+            expect(parameters.map(({ text }) => text)).toEqual([
+                '5511999999999',
+                description,
+            ]);
+            expect(parameters.some(({ text }) => /motivo:/i.test(text))).toBe(
+                false,
+            );
+        }
     });
 
     it('does not block a notification caller when YCloud fails', async () => {

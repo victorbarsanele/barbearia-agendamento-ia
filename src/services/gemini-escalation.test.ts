@@ -178,7 +178,7 @@ describe('gemini.service escalonamento humano', () => {
             },
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (motivo: palavra_chave).',
+                text: 'Cliente 5511999999999 precisa de atendimento manual (pedido de atendimento humano).',
             },
         ]);
     });
@@ -211,7 +211,7 @@ describe('gemini.service escalonamento humano', () => {
             },
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (motivo: palavra_chave).',
+                text: 'Cliente 5511999999999 precisa de atendimento manual (pedido de atendimento humano).',
             },
         ]);
         await expect(
@@ -296,7 +296,7 @@ describe('gemini.service escalonamento humano', () => {
         expect(barbeiroMessages).toEqual([
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (motivo: confusao_explicita).',
+                text: 'Cliente 5511999999999 precisa de atendimento manual (cliente demonstrou confusão).',
             },
         ]);
     });
