@@ -99,6 +99,10 @@ import {
     type IdentidadeBarbeiro,
 } from '../utils/barbeiro-identidade';
 import { emitirLogGeminiUsage, type GeminiUsageContext } from './gemini-usage';
+import {
+    descreverMotivoEscalonamento,
+    type EscalationMotivo,
+} from './escalation-reason';
 
 export { sendWhatsAppText } from '../whatsapp/whatsapp-outbound.service';
 
@@ -237,14 +241,6 @@ interface ManifestarInteresseEmPacoteArgs {
         quantidade: number;
     }>;
 }
-
-type EscalationMotivo =
-    | 'palavra_chave'
-    | 'confusao_explicita'
-    | 'sem_progresso'
-    | 'limite_de_cota'
-    | 'agendamento_recorrente'
-    | 'interesse_pacote';
 
 type HistoricoRole = 'user' | 'model';
 
@@ -1556,21 +1552,24 @@ export async function escalarParaHumano(
         ? process.env.BARBER_PHONE?.trim()
         : undefined;
     if (barberPhone) {
-        const descricaoMotivo =
-            motivo === 'limite_de_cota'
-                ? 'sistema atingiu limite de uso da API'
-                : motivo === 'agendamento_recorrente'
-                  ? 'cliente quer pacote de cortes recorrentes'
-                  : motivo === 'interesse_pacote'
-                    ? 'cliente interessado em pacote de serviços'
-                    : `motivo: ${motivo}`;
+        let nomeCliente = 'não informado';
+        try {
+            const cliente = await buscarClientePorTelefoneVariantes(phone);
+            nomeCliente = cliente?.nome ?? nomeCliente;
+        } catch {
+            console.warn(
+                '[GEMINI SERVICE] Falha ao buscar nome para aviso de escalonamento.',
+                { evento: 'falha_busca_nome_aviso_escalonamento' },
+            );
+        }
 
         try {
             const { enviarNotificacaoWhatsApp } =
                 await import('./whatsapp-notification.service');
             await enviarNotificacaoWhatsApp('atendimento_humano', barberPhone, {
+                nomeCliente,
                 telefoneCliente: phone,
-                motivo: descricaoMotivo,
+                motivo: descreverMotivoEscalonamento(motivo),
             });
         } catch {
             console.error(

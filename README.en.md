@@ -158,7 +158,7 @@ Configure webhook as `https://<your-backend>/webhook/ycloud`. Subscribe to `what
 
 `WHATSAPP_ALLOWLIST` is an optional validation tool and is not active in production. An absent or empty variable disables the filter.
 
-In-window replies use text; proactive notifications use approved templates `aviso_reagendamento`, `aviso_cancelamento`, and `aviso_atendimento_humano`. Reactivation uses Marketing template `notificar_inativo`, with quick-reply buttons “Quero agendar” and “Não receber mais”.
+In-window replies use text; proactive notifications use approved templates `aviso_reagendamento`, `aviso_cancelamento`, and `aviso_atendimento_humano_v2`. Reactivation uses Marketing template `notificar_inativo`, with quick-reply buttons “Quero agendar” and “Não receber mais”.
 
 #### 6.5 Evolution (rollback)
 

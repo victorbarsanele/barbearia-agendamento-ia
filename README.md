@@ -158,7 +158,7 @@ Configure webhook como `https://<seu-backend>/webhook/ycloud`. Inscreva `whatsap
 
 `WHATSAPP_ALLOWLIST` é recurso opcional para validação, não está ativa em produção. Lista vazia ou variável ausente desativa filtro.
 
-Respostas dentro da janela usam texto; notificações proativas usam templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano`. Reativação usa o template de Marketing `notificar_inativo`, com botões de resposta rápida “Quero agendar” e “Não receber mais”.
+Respostas dentro da janela usam texto; notificações proativas usam templates aprovados `aviso_reagendamento`, `aviso_cancelamento` e `aviso_atendimento_humano_v2`. Reativação usa o template de Marketing `notificar_inativo`, com botões de resposta rápida “Quero agendar” e “Não receber mais”.
 
 #### 6.5 Evolution (rollback)
 
