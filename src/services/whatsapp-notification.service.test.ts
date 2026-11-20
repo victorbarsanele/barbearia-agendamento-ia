@@ -229,6 +229,7 @@ describe('enviarNotificacaoWhatsApp', () => {
         const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
         await enviarNotificacaoWhatsApp('atendimento_humano', '5511222333444', {
+            nomeCliente: 'Nome privado',
             telefoneCliente: '5511999999999',
             motivo: 'PRIVATE MESSAGE',
         });
@@ -236,23 +237,61 @@ describe('enviarNotificacaoWhatsApp', () => {
         expect(fetch).not.toHaveBeenCalled();
         expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE MESSAGE');
         expect(JSON.stringify(log.mock.calls)).not.toContain('5511999999999');
+        expect(JSON.stringify(log.mock.calls)).not.toContain('Nome privado');
         log.mockRestore();
     });
 
     it('substitutes empty values and limits sanitized template parameters to 200 chars', async () => {
         vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
         await enviarNotificacaoWhatsApp('atendimento_humano', '5511222333444', {
+            nomeCliente: '',
             telefoneCliente: '',
             motivo: `  ${'x'.repeat(220)}  `,
         });
 
         const [, init] = vi.mocked(fetch).mock.calls[0]!;
         const body = JSON.parse(String(init?.body));
-        expect(body.template.name).toBe('aviso_atendimento_humano');
+        expect(body.template.name).toBe('aviso_atendimento_humano_v2');
         expect(body.template.components[0].parameters).toEqual([
+            { type: 'text', text: 'não informado' },
             { type: 'text', text: 'não informado' },
             { type: 'text', text: 'x'.repeat(200) },
         ]);
+    });
+
+    it('normalizes and truncates the client name without splitting surrogate pairs', async () => {
+        vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+        const longName = `${'a'.repeat(59)}😀b`;
+
+        await enviarNotificacaoWhatsApp('atendimento_humano', '5511222333444', {
+            nomeCliente: '  Ana\t   Silva\n  ',
+            telefoneCliente: '5511999999999',
+            motivo: 'pedido de atendimento humano',
+        });
+
+        const [, normalizedInit] = vi.mocked(fetch).mock.calls[0]!;
+        const normalizedBody = JSON.parse(String(normalizedInit?.body));
+        expect(normalizedBody.template.components[0].parameters[0]).toEqual({
+            type: 'text',
+            text: 'Ana Silva',
+        });
+
+        await enviarNotificacaoWhatsApp('atendimento_humano', '5511222333444', {
+            nomeCliente: `  ${longName}  `,
+            telefoneCliente: '5511999999999',
+            motivo: 'pedido de atendimento humano',
+        });
+
+        const [, truncatedInit] = vi.mocked(fetch).mock.calls[1]!;
+        const truncatedBody = JSON.parse(String(truncatedInit?.body));
+        expect(truncatedBody.template.name).toBe('aviso_atendimento_humano_v2');
+        expect(truncatedBody.template.components[0].parameters[0]).toEqual({
+            type: 'text',
+            text: `${'a'.repeat(59)}😀`,
+        });
+        expect(
+            Array.from(truncatedBody.template.components[0].parameters[0].text),
+        ).toHaveLength(60);
     });
 
     it('sends a readable description without a duplicated reason prefix for every escalation reason', async () => {
@@ -276,6 +315,7 @@ describe('enviarNotificacaoWhatsApp', () => {
                 'atendimento_humano',
                 '5511222333444',
                 {
+                    nomeCliente: 'Ana Silva',
                     telefoneCliente: '5511999999999',
                     motivo: description,
                 },
@@ -287,6 +327,7 @@ describe('enviarNotificacaoWhatsApp', () => {
                 text: string;
             }>;
             expect(parameters.map(({ text }) => text)).toEqual([
+                'Ana Silva',
                 '5511999999999',
                 description,
             ]);

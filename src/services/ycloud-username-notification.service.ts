@@ -3,7 +3,9 @@ import { enviarNotificacaoWhatsApp } from './whatsapp-notification.service';
 const notifiedUsers = new Map<string, number>();
 
 function cooldownMs(): number {
-    const configured = Number(process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000);
+    const configured = Number(
+        process.env.ESCALATION_COOLDOWN_MS ?? 15 * 60 * 1000,
+    );
     return Number.isFinite(configured) && configured >= 0
         ? configured
         : 15 * 60 * 1000;
@@ -31,6 +33,7 @@ export async function avisarBarbeiroUsuarioSemTelefone(
 
     try {
         await enviarNotificacaoWhatsApp('atendimento_humano', barberPhone, {
+            nomeCliente: 'não informado',
             telefoneCliente: 'sem telefone visível (username)',
             motivo: 'cliente sem número visível; responda pelo app',
         });

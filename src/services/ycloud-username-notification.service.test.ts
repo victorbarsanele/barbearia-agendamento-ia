@@ -35,6 +35,7 @@ describe('avisarBarbeiroUsuarioSemTelefone', () => {
             'atendimento_humano',
             '5511888888888',
             {
+                nomeCliente: 'não informado',
                 telefoneCliente: 'sem telefone visível (username)',
                 motivo: 'cliente sem número visível; responda pelo app',
             },
@@ -53,7 +54,9 @@ describe('avisarBarbeiroUsuarioSemTelefone', () => {
         vi.mocked(enviarNotificacaoWhatsApp).mockRejectedValueOnce(
             new Error('sensitive failure details'),
         );
-        const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const errorLog = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {});
 
         await avisarBarbeiroUsuarioSemTelefone('username-private');
 

@@ -1552,10 +1552,22 @@ export async function escalarParaHumano(
         ? process.env.BARBER_PHONE?.trim()
         : undefined;
     if (barberPhone) {
+        let nomeCliente = 'não informado';
+        try {
+            const cliente = await buscarClientePorTelefoneVariantes(phone);
+            nomeCliente = cliente?.nome ?? nomeCliente;
+        } catch {
+            console.warn(
+                '[GEMINI SERVICE] Falha ao buscar nome para aviso de escalonamento.',
+                { evento: 'falha_busca_nome_aviso_escalonamento' },
+            );
+        }
+
         try {
             const { enviarNotificacaoWhatsApp } =
                 await import('./whatsapp-notification.service');
             await enviarNotificacaoWhatsApp('atendimento_humano', barberPhone, {
+                nomeCliente,
                 telefoneCliente: phone,
                 motivo: descreverMotivoEscalonamento(motivo),
             });

@@ -116,6 +116,30 @@ function getSentMessages() {
     });
 }
 
+function getYCloudTemplateBodies() {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+
+    return fetchMock.mock.calls.flatMap(([, init]) => {
+        const request = init as RequestInit;
+        const body = JSON.parse(String(request.body)) as {
+            type?: string;
+            template?: {
+                name?: string;
+                components?: Array<{
+                    parameters?: Array<{ text: string }>;
+                }>;
+            };
+        };
+        return body.type === 'template' ? [body] : [];
+    });
+}
+
+function configureYCloud(): void {
+    vi.stubEnv('WHATSAPP_PROVIDER', 'ycloud');
+    vi.stubEnv('YCLOUD_API_KEY', 'ycloud-test-key');
+    vi.stubEnv('YCLOUD_FROM_NUMBER', '+5511777777777');
+}
+
 describe('gemini.service escalonamento humano', () => {
     beforeEach(() => {
         vi.resetModules();
@@ -133,6 +157,10 @@ describe('gemini.service escalonamento humano', () => {
         global.fetch = vi.fn().mockResolvedValue({
             ok: true,
             text: vi.fn().mockResolvedValue(''),
+            json: vi.fn().mockResolvedValue({
+                id: 'ycloud-message-test',
+                status: 'accepted',
+            }),
         }) as typeof fetch;
 
         mocks.generateContent.mockReset();
@@ -158,11 +186,17 @@ describe('gemini.service escalonamento humano', () => {
         delete process.env.EVOLUTION_API_KEY;
         delete process.env.WHATSAPP_PROVIDER;
         delete process.env.EVOLUTION_API_URL;
+        delete process.env.YCLOUD_API_KEY;
+        delete process.env.YCLOUD_FROM_NUMBER;
     });
 
     it('envia mensagem de espera ao cliente e notifica barbeiro na primeira escalada', async () => {
         vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
         vi.spyOn(Math, 'random').mockReturnValue(0);
+        mocks.buscarClientePorTelefone.mockImplementation(
+            async (telefone: string) =>
+                telefone === '11999999999' ? { nome: 'Ana Silva' } : null,
+        );
 
         const gemini = await importGeminiModule();
 
@@ -178,7 +212,7 @@ describe('gemini.service escalonamento humano', () => {
             },
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (pedido de atendimento humano).',
+                text: 'Cliente Ana Silva (5511999999999) precisa de atendimento manual (pedido de atendimento humano).',
             },
         ]);
     });
@@ -211,7 +245,7 @@ describe('gemini.service escalonamento humano', () => {
             },
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (pedido de atendimento humano).',
+                text: 'Cliente não informado (5511999999999) precisa de atendimento manual (pedido de atendimento humano).',
             },
         ]);
         await expect(
@@ -296,9 +330,112 @@ describe('gemini.service escalonamento humano', () => {
         expect(barbeiroMessages).toEqual([
             {
                 number: NUMERO_BARBEIRO,
-                text: 'Cliente 5511999999999 precisa de atendimento manual (cliente demonstrou confusão).',
+                text: 'Cliente não informado (5511999999999) precisa de atendimento manual (cliente demonstrou confusão).',
             },
         ]);
+    });
+
+    it('usa o cadastro encontrado pela variante sem 55 no parâmetro 1 do template v2', async () => {
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
+        configureYCloud();
+        const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+        mocks.buscarClientePorTelefone.mockImplementation(
+            async (telefone: string) => {
+                expect(fetchMock).toHaveBeenCalledOnce();
+                return telefone === '11999999999'
+                    ? { nome: 'Ana Silva' }
+                    : null;
+            },
+        );
+
+        const gemini = await importGeminiModule();
+        await gemini.__testables.escalarParaHumano(
+            TELEFONE_CLIENTE,
+            'palavra_chave',
+        );
+
+        expect(mocks.buscarClientePorTelefone).toHaveBeenNthCalledWith(
+            1,
+            NUMERO_CLIENTE,
+        );
+        expect(mocks.buscarClientePorTelefone).toHaveBeenNthCalledWith(
+            2,
+            '11999999999',
+        );
+        const [template] = getYCloudTemplateBodies();
+        expect(template?.template?.name).toBe('aviso_atendimento_humano_v2');
+        expect(
+            template?.template?.components?.[0]?.parameters?.map(
+                ({ text }) => text,
+            ),
+        ).toEqual([
+            'Ana Silva',
+            NUMERO_CLIENTE,
+            'pedido de atendimento humano',
+        ]);
+    });
+
+    it.each([
+        ['cliente inexistente', null],
+        ['nome vazio', { nome: '' }],
+        ['nome com espaços', { nome: '  \n\t ' }],
+    ])('%s usa fallback no template v2', async (_cenario, cliente) => {
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
+        configureYCloud();
+        mocks.buscarClientePorTelefone.mockResolvedValue(cliente);
+
+        const gemini = await importGeminiModule();
+        await gemini.__testables.escalarParaHumano(
+            TELEFONE_CLIENTE,
+            'sem_progresso',
+        );
+
+        const [template] = getYCloudTemplateBodies();
+        expect(
+            template?.template?.components?.[0]?.parameters?.map(
+                ({ text }) => text,
+            ),
+        ).toEqual(['não informado', NUMERO_CLIENTE, 'conversa sem progresso']);
+    });
+
+    it('envia fallback quando a busca falha e não registra PII no log', async () => {
+        vi.stubEnv('BARBER_PHONE', NUMERO_BARBEIRO);
+        configureYCloud();
+        mocks.buscarClientePorTelefone.mockRejectedValueOnce(
+            new Error(`falha privada Nome Cliente ${NUMERO_CLIENTE}`),
+        );
+        const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const gemini = await importGeminiModule();
+        await gemini.__testables.escalarParaHumano(
+            TELEFONE_CLIENTE,
+            'palavra_chave',
+        );
+
+        const [template] = getYCloudTemplateBodies();
+        expect(
+            template?.template?.components?.[0]?.parameters?.map(
+                ({ text }) => text,
+            ),
+        ).toEqual([
+            'não informado',
+            NUMERO_CLIENTE,
+            'pedido de atendimento humano',
+        ]);
+        expect(warning).toHaveBeenCalledWith(
+            '[GEMINI SERVICE] Falha ao buscar nome para aviso de escalonamento.',
+            { evento: 'falha_busca_nome_aviso_escalonamento' },
+        );
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(
+            NUMERO_CLIENTE,
+        );
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(
+            'Nome Cliente',
+        );
+        expect(JSON.stringify(warning.mock.calls)).not.toContain(
+            MENSAGEM_ESCALONAMENTO,
+        );
+        warning.mockRestore();
     });
 
     it('não escala com 4 turnos normais sem tool call', async () => {

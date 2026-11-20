@@ -33,6 +33,7 @@ export type WhatsAppNotificationParameters =
       }
     | {
           tipo: 'atendimento_humano';
+          nomeCliente: string;
           telefoneCliente: string;
           motivo: string;
       }
@@ -67,16 +68,27 @@ type LastMinuteBookingParameters = Omit<
 const TEMPLATE_NAMES: Record<WhatsAppNotificationType, string> = {
     reagendamento: 'aviso_reagendamento',
     cancelamento: 'aviso_cancelamento',
-    atendimento_humano: 'aviso_atendimento_humano',
+    atendimento_humano: 'aviso_atendimento_humano_v2',
     agendamento_ultima_hora: 'aviso_agendamento_ultima_hora',
 };
 
-function sanitizeParameter(value: string): string {
-    const sanitized = value
+function normalizeParameterWhitespace(value: string): string {
+    return value
         .replace(/[\r\n\t]/g, ' ')
         .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 200);
+        .trim();
+}
+
+function sanitizeParameter(value: string): string {
+    const sanitized = normalizeParameterWhitespace(value).slice(0, 200);
+
+    return sanitized || 'não informado';
+}
+
+function sanitizeClientName(value: string): string {
+    const sanitized = Array.from(normalizeParameterWhitespace(value))
+        .slice(0, 60)
+        .join('');
 
     return sanitized || 'não informado';
 }
@@ -117,7 +129,7 @@ function buildLegacyText(parameters: WhatsAppNotificationParameters): string {
     }
 
     if (parameters.tipo === 'atendimento_humano') {
-        return `Cliente ${parameters.telefoneCliente} precisa de atendimento manual (${parameters.motivo}).`;
+        return `Cliente ${parameters.nomeCliente} (${parameters.telefoneCliente}) precisa de atendimento manual (${parameters.motivo}).`;
     }
 
     return `Novo agendamento de última hora: ${parameters.nomeCliente} (${parameters.servicos}) às ${parameters.horario}, daqui a ${parameters.minutos} minutos. Confira na agenda do painel!`;
@@ -142,7 +154,11 @@ function buildTemplateParameters(
                     parameters.contatoBarbeiro,
                 ]
               : parameters.tipo === 'atendimento_humano'
-                ? [parameters.telefoneCliente, parameters.motivo]
+                ? [
+                      parameters.nomeCliente,
+                      parameters.telefoneCliente,
+                      parameters.motivo,
+                  ]
                 : [
                       parameters.nomeCliente,
                       parameters.servicos,
@@ -200,7 +216,12 @@ export async function enviarNotificacaoWhatsApp(
                   horario: sanitizeRequiredParameter(notification.horario),
                   minutos: sanitizeRequiredParameter(notification.minutos),
               }
-            : notification;
+            : notification.tipo === 'atendimento_humano'
+              ? {
+                    ...notification,
+                    nomeCliente: sanitizeClientName(notification.nomeCliente),
+                }
+              : notification;
 
     if (getWhatsAppProvider() === 'evolution') {
         const text = buildLegacyText(sanitizedNotification);
