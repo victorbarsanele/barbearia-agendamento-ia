@@ -121,6 +121,7 @@ type CriarAgendamentoData =
 
 interface ValidarAntecedenciaOptions {
     minAntecedenciaMinutos?: number;
+    politicaAntecedencia?: 'PADRAO' | 'APENAS_FUTURO' | 'IGNORAR';
 }
 
 export enum MotivoFallbackVinculoAutomaticoWhatsapp {
@@ -315,8 +316,12 @@ async function enviarMensagemCancelamento(
 
 function validarAntecedenciaMinima(
     dataHoraInicio: Date,
-    minAntecedenciaConfigurada?: number,
+    options: ValidarAntecedenciaOptions = {},
 ): void {
+    if (options.politicaAntecedencia === 'IGNORAR') {
+        return;
+    }
+
     const agora = toZonedTime(new Date(), TIME_ZONE);
     const inicioEmBrasilia = toZonedTime(dataHoraInicio, TIME_ZONE);
 
@@ -324,10 +329,14 @@ function validarAntecedenciaMinima(
         throw new AppError('Agendamento não pode ser feito no passado.', 422);
     }
 
+    if (options.politicaAntecedencia === 'APENAS_FUTURO') {
+        return;
+    }
+
     const diferencaEmMilissegundos =
         inicioEmBrasilia.getTime() - agora.getTime();
     const minAntecedenciaMinutos =
-        minAntecedenciaConfigurada ??
+        options.minAntecedenciaMinutos ??
         getAgendamentoConfig().minAntecedenciaMinutos;
 
     if (diferencaEmMilissegundos < minAntecedenciaMinutos * 60 * 1000) {
@@ -821,10 +830,7 @@ export async function validarDisponibilidade(
         );
     }
     if (!registroRetroativo) {
-        validarAntecedenciaMinima(
-            dataHoraInicio,
-            options.minAntecedenciaMinutos,
-        );
+        validarAntecedenciaMinima(dataHoraInicio, options);
     } else if (dataHoraInicio.getTime() < Date.now()) {
         validarLimiteRetroativo(dataHoraInicio);
     }
@@ -1664,10 +1670,19 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
             agendamentoExistente.servico.permiteExtensaoFechamento !==
             servico.permiteExtensaoFechamento;
         const regrasDeHorarioMudaram =
-            dataHoraMudou || duracaoMudou || extensaoMudou;
+            dataHoraMudou ||
+            duracaoMudou ||
+            extensaoMudou ||
+            (data.origem === 'PAINEL' && servicoMudou);
         const recalcularEncaixe = dataHoraMudou || servicoMudou || duracaoMudou;
         const permitirEncaixe =
             data.origem === 'PAINEL' && data.permitirEncaixe === true;
+        const politicaAntecedencia =
+            data.origem !== 'PAINEL'
+                ? 'PADRAO'
+                : dataHoraMudou
+                  ? 'APENAS_FUTURO'
+                  : 'IGNORAR';
 
         if (regrasDeHorarioMudaram) {
             const horarioValidado = await validarDisponibilidade(
@@ -1679,7 +1694,7 @@ export async function atualizar(id: string, data: AtualizarAgendamentoData) {
                 undefined,
                 data.permitirForaDoExpediente,
                 id,
-                {},
+                { politicaAntecedencia },
                 !permitirEncaixe,
             );
             dataHoraFim.setTime(horarioValidado.dataHoraFim.getTime());

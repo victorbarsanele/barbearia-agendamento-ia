@@ -1518,6 +1518,222 @@ describe('agendamento.service.atualizar', () => {
         },
     );
 
+    it('aceita trocar serviço de um atendimento passado e recalcula fim e preço', async () => {
+        vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+        const servicoAnterior = {
+            ...servicoBase,
+            duracaoMinutos: 60,
+            preco: new Prisma.Decimal('80.00'),
+        };
+        const novoServico = {
+            ...servicoBase,
+            id: 'servico-2',
+            duracaoMinutos: 30,
+            preco: new Prisma.Decimal('45.00'),
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T12:00:00-03:00'),
+            servicoId: servicoAnterior.id,
+            servico: servicoAnterior,
+        } as never);
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            novoServico as never,
+        );
+
+        await agendamentoService.atualizar('agendamento-1', {
+            clienteId: clienteBase.id,
+            servicoId: novoServico.id,
+            dataHoraInicio: '2026-07-20T11:00:00-03:00',
+            status: StatusAgendamento.AGENDADO,
+            origem: 'PAINEL',
+        });
+
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
+                precoUnitario: novoServico.preco,
+            }),
+        );
+    });
+
+    it('permite adiantar horário futuro do painel sem antecedência mínima', async () => {
+        vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+        mockarDependenciasPadrao({ 1: null });
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T12:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T12:30:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:35:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                origem: 'PAINEL',
+            }),
+        ).resolves.toBeDefined();
+        expect(agendamentoRepository.atualizar).toHaveBeenCalledWith(
+            'agendamento-1',
+            expect.objectContaining({
+                dataHoraInicio: new Date('2026-07-20T11:35:00-03:00'),
+            }),
+        );
+    });
+
+    it('continua rejeitando edição do painel quando o novo início não é futuro', async () => {
+        vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T12:00:00-03:00'),
+        });
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoBase.id,
+                dataHoraInicio: '2026-07-20T11:32:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({
+            message: 'Agendamento não pode ser feito no passado.',
+            statusCode: 422,
+        });
+    });
+
+    it('rejeita aumento de duração do painel que colide com próximo agendamento', async () => {
+        vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+        const servicoMaior = {
+            ...servicoBase,
+            id: 'servico-2',
+            duracaoMinutos: 90,
+        };
+        vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+            ...agendamentoAtual,
+            dataHoraInicio: new Date('2026-07-20T11:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T11:30:00-03:00'),
+        });
+        vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+            servicoMaior as never,
+        );
+        vi.mocked(agendamentoRepository.buscarConflito).mockResolvedValue({
+            ...agendamentoAtual,
+            id: 'proximo-agendamento',
+            clienteId: 'outro-cliente',
+            dataHoraInicio: new Date('2026-07-20T12:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-20T12:30:00-03:00'),
+        } as never);
+
+        await expect(
+            agendamentoService.atualizar('agendamento-1', {
+                clienteId: clienteBase.id,
+                servicoId: servicoMaior.id,
+                dataHoraInicio: '2026-07-20T11:00:00-03:00',
+                status: StatusAgendamento.AGENDADO,
+                origem: 'PAINEL',
+            }),
+        ).rejects.toMatchObject({
+            message: 'Já existe um agendamento nesse horário.',
+            statusCode: 409,
+        });
+        expect(agendamentoRepository.buscarConflito).toHaveBeenCalledWith(
+            expect.objectContaining({
+                dataHoraFim: new Date('2026-07-20T12:30:00-03:00'),
+                ignorarAgendamentoId: 'agendamento-1',
+            }),
+        );
+    });
+
+    it.each([
+        {
+            caso: 'fora do expediente',
+            dataHoraInicio: '2026-07-20T21:00:00-03:00',
+            bloqueio: null,
+            mensagem:
+                'Agendamento deve estar dentro do horário de funcionamento:',
+        },
+        {
+            caso: 'em bloqueio',
+            dataHoraInicio: '2026-07-20T10:00:00-03:00',
+            bloqueio: { motivo: 'Manutenção', escopo: 'TOTAL' },
+            mensagem: 'Horário bloqueado pelo barbeiro: Manutenção.',
+        },
+    ])(
+        'mantém validação de disponibilidade com início inalterado $caso',
+        async ({ dataHoraInicio, bloqueio, mensagem }) => {
+            vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+            const inicio = new Date(dataHoraInicio);
+            const novoServico = {
+                ...servicoBase,
+                id: 'servico-2',
+            };
+            vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+                ...agendamentoAtual,
+                dataHoraInicio: inicio,
+                dataHoraFim: new Date(inicio.getTime() + 30 * 60 * 1000),
+            });
+            vi.mocked(servicoRepository.buscarPorId).mockResolvedValue(
+                novoServico as never,
+            );
+            vi.mocked(bloqueioRepository.buscarConflito).mockResolvedValue(
+                bloqueio as never,
+            );
+
+            await expect(
+                agendamentoService.atualizar('agendamento-1', {
+                    clienteId: clienteBase.id,
+                    servicoId: novoServico.id,
+                    dataHoraInicio,
+                    status: StatusAgendamento.AGENDADO,
+                    origem: 'PAINEL',
+                }),
+            ).rejects.toMatchObject({
+                message: expect.stringContaining(mensagem),
+            });
+        },
+    );
+
+    it.each([
+        {
+            caso: 'horário passado',
+            inicio: '2026-07-20T11:31:00-03:00',
+            minimo: '15',
+            mensagem: 'Agendamento não pode ser feito no passado.',
+        },
+        {
+            caso: 'menos de 15 minutos',
+            inicio: '2026-07-20T11:46:59-03:00',
+            minimo: '15',
+            mensagem:
+                'Agendamento deve ser feito com no mínimo 15 minutos de antecedência.',
+        },
+    ])(
+        'Gemini mantém validação de antecedência para $caso',
+        async ({ inicio, minimo, mensagem }) => {
+            vi.setSystemTime(new Date('2026-07-20T14:32:00Z'));
+            vi.stubEnv('MIN_ANTECEDENCIA_MINUTOS', minimo);
+            vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
+                ...agendamentoAtual,
+                dataHoraInicio: new Date('2026-07-20T12:00:00-03:00'),
+            });
+
+            await expect(
+                agendamentoService.atualizar('agendamento-1', {
+                    clienteId: clienteBase.id,
+                    servicoId: servicoBase.id,
+                    dataHoraInicio: inicio,
+                    status: StatusAgendamento.AGENDADO,
+                    origem: 'GEMINI',
+                }),
+            ).rejects.toMatchObject({ message: mensagem, statusCode: 422 });
+        },
+    );
+
     it('preserva snapshot existente ao remarcar serviço sem trocar', async () => {
         const snapshotExistente = new Prisma.Decimal('35.00');
         vi.mocked(agendamentoRepository.buscarPorId).mockResolvedValue({
