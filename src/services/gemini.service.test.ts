@@ -1592,19 +1592,142 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         );
     });
 
-    it('cancelamento válido cancela agendamento ativo mais próximo', async () => {
-        const agendamentoMaisTarde = {
+    it('cancela somente o agendamento de 14:30 entre dois no mesmo dia', async () => {
+        const agendamento1400 = {
             ...agendamentoAtivoProximo,
-            id: 'agendamento-2',
-            dataHoraInicio: new Date('2026-07-23T10:00:00-03:00'),
-            dataHoraFim: new Date('2026-07-23T10:30:00-03:00'),
+            id: 'agendamento-1400',
+            dataHoraInicio: new Date('2026-07-22T14:00:00-03:00'),
+            dataHoraFim: new Date('2026-07-22T14:30:00-03:00'),
         };
-
+        const agendamento1430 = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-1430',
+            dataHoraInicio: new Date('2026-07-22T14:30:00-03:00'),
+            dataHoraFim: new Date('2026-07-22T15:00:00-03:00'),
+        };
         vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
-            agendamentoMaisTarde,
+            agendamento1400,
+            agendamento1430,
+        ]);
+        vi.mocked(agendamentoService.cancelar).mockResolvedValue({
+            ...agendamento1430,
+            status: StatusAgendamento.CANCELADO,
+            agendamentosAfetados: [],
+        });
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T14:30:00-03:00' },
+        );
+
+        expect(agendamentoService.cancelar).toHaveBeenCalledExactlyOnceWith(
+            'agendamento-1430',
+        );
+        expect(resultado).toMatchObject({
+            sucesso: true,
+            resultado: 'cancelado',
+            agendamento: {
+                servico: 'Corte masculino',
+                status: StatusAgendamento.CANCELADO,
+            },
+        });
+        expect(resultado.agendamento?.dataHoraInicio).toContain('14:30');
+    });
+
+    it('não cancela quando faltou horário e há mais de um agendamento', async () => {
+        const agendamento1430 = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-1430',
+            dataHoraInicio: new Date('2026-07-22T14:30:00-03:00'),
+        };
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+            agendamento1430,
+        ]);
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'ambiguo',
+            agendamentos: [
+                { dataHoraInicio: expect.stringContaining('10:00') },
+                { dataHoraInicio: expect.stringContaining('14:30') },
+            ],
+        });
+        expect(JSON.stringify(resultado.agendamentos)).not.toContain(
+            'agendamento-1',
+        );
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('não cancela quando mais de um agendamento tem o início informado', async () => {
+        const agendamentoDuplicado = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-duplicado',
+            dataHoraInicio: new Date(agendamentoAtivoProximo.dataHoraInicio),
+        };
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+            agendamentoDuplicado,
+        ]);
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T10:00:00-03:00' },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'ambiguo',
+            agendamentos: [{}, {}],
+        });
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('não cancela quando o horário informado não corresponde', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
             agendamentoAtivoProximo,
         ]);
 
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T10:00:00.001-03:00' },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'sem_correspondencia',
+            agendamentos: [
+                expect.objectContaining({ servico: 'Corte masculino' }),
+            ],
+        });
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('não usa o fallback de agendamento único quando o horário é inválido', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+        ]);
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: 1430 } as any,
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'sem_correspondencia',
+        });
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('preserva cancelamento sem horário quando há um único agendamento', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamentoAtivoProximo,
+        ]);
         vi.mocked(agendamentoService.cancelar).mockResolvedValue({
             ...agendamentoAtivoProximo,
             status: StatusAgendamento.CANCELADO,
@@ -1615,17 +1738,129 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
             '5511999999999@s.whatsapp.net',
         );
 
-        expect(agendamentoService.cancelar).toHaveBeenCalledWith(
+        expect(agendamentoService.cancelar).toHaveBeenCalledExactlyOnceWith(
             'agendamento-1',
         );
         expect(resultado).toMatchObject({
             sucesso: true,
-            mensagem: 'Agendamento cancelado com sucesso.',
-            agendamento: {
-                id: 'agendamento-1',
-                status: StatusAgendamento.CANCELADO,
-            },
+            resultado: 'cancelado',
         });
+    });
+
+    it('não seleciona agendamento pertencente a outro cliente', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            { ...agendamentoAtivoProximo, clienteId: 'outro-cliente' },
+        ]);
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+            { dataHoraInicio: '2026-07-22T10:00:00-03:00' },
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'sem_correspondencia',
+            agendamentos: [],
+        });
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('não seleciona agendamento concluído com início futuro', async () => {
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            {
+                ...agendamentoAtivoProximo,
+                status: StatusAgendamento.CONCLUIDO,
+                concluido: true,
+            },
+        ]);
+
+        const resultado = await __testables.cancelarAgendamentoTool(
+            '5511999999999@s.whatsapp.net',
+        );
+
+        expect(resultado).toMatchObject({
+            sucesso: false,
+            resultado: 'sem_correspondencia',
+            agendamentos: [],
+        });
+        expect(agendamentoService.cancelar).not.toHaveBeenCalled();
+    });
+
+    it('casa 14:30 de São Paulo com 17:30 UTC sem expor PII no log', async () => {
+        const agendamento1430UTC = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-1430-utc',
+            dataHoraInicio: new Date('2026-07-22T17:30:00.000Z'),
+        };
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamento1430UTC,
+        ]);
+        vi.mocked(agendamentoService.cancelar).mockResolvedValue({
+            ...agendamento1430UTC,
+            status: StatusAgendamento.CANCELADO,
+            agendamentosAfetados: [],
+        });
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        try {
+            const resultado = await __testables.cancelarAgendamentoTool(
+                '5511999999999@s.whatsapp.net',
+                { dataHoraInicio: '2026-07-22T14:30:00-03:00' },
+                'correlation-test',
+            );
+
+            expect(resultado.sucesso).toBe(true);
+            expect(agendamentoService.cancelar).toHaveBeenCalledExactlyOnceWith(
+                'agendamento-1430-utc',
+            );
+            const log = JSON.stringify(infoSpy.mock.calls);
+            expect(log).toContain('correlation-test');
+            expect(log).toContain('2026-07-22T17:30:00.000Z');
+            expect(log).toContain('agendamento-1430-utc');
+            expect(log).not.toContain('5511999999999');
+            expect(log).not.toContain('João Silva');
+        } finally {
+            infoSpy.mockRestore();
+        }
+    });
+
+    it('executor encaminha dataHoraInicio do argumento para a tool', async () => {
+        const agendamento1400 = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-1400',
+            dataHoraInicio: new Date('2026-07-22T14:00:00-03:00'),
+        };
+        const agendamento1430 = {
+            ...agendamentoAtivoProximo,
+            id: 'agendamento-1430',
+            dataHoraInicio: new Date('2026-07-22T14:30:00-03:00'),
+        };
+        vi.mocked(agendamentoRepository.listarTodos).mockResolvedValue([
+            agendamento1400,
+            agendamento1430,
+        ]);
+        vi.mocked(agendamentoService.cancelar).mockResolvedValue({
+            ...agendamento1430,
+            status: StatusAgendamento.CANCELADO,
+            agendamentosAfetados: [],
+        });
+
+        await __testables.executeToolCall(
+            {
+                name: 'cancelarAgendamento',
+                args: { dataHoraInicio: '2026-07-22T14:30:00-03:00' },
+            } as any,
+            '5511999999999',
+            '5511999999999@s.whatsapp.net',
+            null,
+            [],
+            undefined,
+            'correlation-test',
+        );
+
+        expect(agendamentoService.cancelar).toHaveBeenCalledExactlyOnceWith(
+            'agendamento-1430',
+        );
     });
 
     it('devolve recusa do service quando cancelamento é de concluído', async () => {
@@ -1642,6 +1877,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
 
         expect(resultado).toEqual({
             sucesso: false,
+            resultado: 'falha',
             mensagem: 'Agendamento concluído não pode ser cancelado.',
             motivoRecusa: 'Agendamento concluído não pode ser cancelado.',
         });
@@ -1666,7 +1902,7 @@ describe('gemini.service tools de reagendamento e cancelamento', () => {
         });
         expect(resultadoCancelamento).toMatchObject({
             sucesso: false,
-            mensagem: 'Nenhum agendamento ativo encontrado para este telefone.',
+            resultado: 'sem_correspondencia',
         });
         expect(agendamentoService.atualizar).not.toHaveBeenCalled();
         expect(agendamentoService.cancelar).not.toHaveBeenCalled();

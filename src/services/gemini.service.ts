@@ -234,6 +234,10 @@ interface AtualizarAgendamentoArgs {
     servicoId?: string;
 }
 
+interface CancelarAgendamentoArgs {
+    dataHoraInicio?: string;
+}
+
 interface SolicitarAgendamentoRecorrenteArgs {
     duracaoMeses: number;
 }
@@ -342,6 +346,7 @@ const BASE_SYSTEM_PROMPT = [
     'Nunca diga que houve erro, problema ou falha de processamento, a menos que a tool diga isso. Nunca prometa ação futura, como "um instante", "vou refazer" ou "vou verificar".',
     'Se o cliente confirmar ("sim", "pode", "isso") e houver na conversa um resumo recente enviado por você, chame confirmarAgendamento sem argumentos e NUNCA chame prepararAgendamento apenas porque o cliente confirmou.',
     'Só chame atualizarAgendamento ou cancelarAgendamento depois de confirmação explícita do cliente em uma mensagem separada (ex.: "sim", "pode confirmar").',
+    'Para cancelar, só chame cancelarAgendamento depois da confirmação explícita do cliente em uma mensagem separada. Passe em dataHoraInicio a data e hora locais do agendamento que o cliente confirmou, no formato ISO 8601. Se a tool retornar ambiguidade ou falta de correspondência, não diga que cancelou: pergunte novamente qual horário da lista o cliente quer cancelar e aguarde nova confirmação. Após sucesso, informe somente o serviço e o horário retornados pela tool; nunca use um horário presumido da conversa.',
     'Nunca chame atualizarAgendamento ou cancelarAgendamento no mesmo turno em que você sugere novo horário ou ação.',
     'Se cliente já tiver agendamento ativo e mensagem puder significar tanto novo agendamento quanto reagendamento, pergunte explicitamente a intenção antes de chamar prepararAgendamento ou atualizarAgendamento.',
     'Nunca presuma silenciosamente se deve criar ou reagendar quando houver ambiguidade.',
@@ -647,10 +652,16 @@ const functionDeclarations: FunctionDeclaration[] = [
     {
         name: 'cancelarAgendamento',
         description:
-            'Cancela o agendamento ativo mais próximo do cliente da conversa.',
+            'Cancela somente o agendamento futuro ativo do cliente da sessão cujo início corresponde exatamente à data e hora local confirmadas. Informe dataHoraInicio em horário local de America/Sao_Paulo, no formato ISO 8601 usado em prepararAgendamento (ex.: 2026-11-21T14:30:00-03:00). Se houver ambiguidade ou não houver correspondência, não cancela e retorna a lista dos horários para perguntar novamente. Sem dataHoraInicio, só cancela quando existe exatamente um agendamento futuro ativo.',
         parametersJsonSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+                dataHoraInicio: {
+                    type: 'string',
+                    description:
+                        'Data e hora locais confirmadas pelo cliente, em ISO 8601 (ex.: 2026-11-21T14:30:00-03:00). A comparação é exata, sem tolerância.',
+                },
+            },
         },
     },
     {
@@ -816,6 +827,37 @@ function normalizeDateTimeInput(value: string): string {
 
     // Preserve wall-clock time requested in chat and force timezone de Brasilia.
     return `${date}T${hour}:${minute}:${secondSafe}-03:00`;
+}
+
+function parseHorarioLocalCancelamento(
+    value: string,
+): { dataHoraInicio: Date; horarioLocalISO: string } | null {
+    const match = value
+        .trim()
+        .match(
+            /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(?:Z|[+-]\d{2}:\d{2})?$/i,
+        );
+    if (!match) return null;
+
+    const [, data, hora, minuto, segundo = '00', fracao = ''] = match;
+    const milissegundos = fracao.padEnd(3, '0');
+    const horarioLocalISO = `${data}T${hora}:${minuto}:${segundo}${
+        fracao ? `.${milissegundos}` : ''
+    }-03:00`;
+    const dataHoraInicio = new Date(horarioLocalISO);
+    if (Number.isNaN(dataHoraInicio.getTime())) return null;
+
+    const horarioFormatado = formatInTimeZone(
+        dataHoraInicio,
+        TIME_ZONE,
+        "yyyy-MM-dd'T'HH:mm:ss.SSS",
+    );
+    const horarioEsperado = `${data}T${hora}:${minuto}:${segundo}.${
+        milissegundos || '000'
+    }`;
+    if (horarioFormatado !== horarioEsperado) return null;
+
+    return { dataHoraInicio, horarioLocalISO };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -3341,17 +3383,17 @@ async function consultarAgendamentoPorTelefoneContexto(
     return consultarAgendamentoTool(telefoneContexto);
 }
 
-async function buscarAgendamentoAtivoMaisProximoPorTelefone(telefone: string) {
+async function buscarAgendamentosAtivosFuturosPorTelefone(telefone: string) {
     const telefoneNormalizado = normalizePhone(telefone);
     if (!telefoneNormalizado) {
-        return null;
+        return [];
     }
 
     const cliente =
         await buscarClientePorTelefoneVariantes(telefoneNormalizado);
 
     if (!cliente) {
-        return null;
+        return [];
     }
 
     const allAgendamentos = await agendamentoRepository.listarTodos();
@@ -3368,6 +3410,12 @@ async function buscarAgendamentoAtivoMaisProximoPorTelefone(telefone: string) {
                 new Date(b.dataHoraInicio).getTime(),
         );
 
+    return ativosFuturos;
+}
+
+async function buscarAgendamentoAtivoMaisProximoPorTelefone(telefone: string) {
+    const ativosFuturos =
+        await buscarAgendamentosAtivosFuturosPorTelefone(telefone);
     return ativosFuturos[0] ?? null;
 }
 
@@ -3459,19 +3507,81 @@ async function atualizarAgendamentoTool(
     }
 }
 
-async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
+type ResultadoCancelarAgendamento = {
     sucesso: boolean;
     mensagem: string;
+    resultado?: 'cancelado' | 'ambiguo' | 'sem_correspondencia' | 'falha';
     motivoRecusa?: string;
-    agendamento?: unknown;
-}> {
+    agendamentos?: Array<{ servico: string; dataHoraInicio: string }>;
+    agendamento?: { servico: string; dataHoraInicio: string; status: string };
+};
+
+async function cancelarAgendamentoTool(
+    telefoneContexto: string,
+    args: CancelarAgendamentoArgs = {},
+    correlationId: string = randomUUID(),
+): Promise<ResultadoCancelarAgendamento> {
+    const horarioBruto = args?.dataHoraInicio;
+    const horarioRecebido =
+        typeof horarioBruto === 'string' ? horarioBruto.trim() : '';
+    const horarioFoiInformado =
+        horarioRecebido.length > 0 || horarioBruto !== undefined;
+    const horarioAlvo = horarioRecebido
+        ? parseHorarioLocalCancelamento(horarioRecebido)
+        : null;
+    const horarioAlvoInformado = horarioAlvo?.horarioLocalISO ?? null;
+    const ativosFuturos = (
+        await buscarAgendamentosAtivosFuturosPorTelefone(telefoneContexto)
+    ).filter(
+        (item) =>
+            !item.concluido && item.status !== StatusAgendamento.CONCLUIDO,
+    );
+    const horariosDisponiveis = ativosFuturos.map((item) => ({
+        servico: item.servico.nome,
+        dataHoraInicio: formatarDataComDiaDaSemana(
+            new Date(item.dataHoraInicio),
+        ),
+    }));
+
+    const correspondencias = horarioFoiInformado
+        ? horarioAlvo
+            ? ativosFuturos.filter(
+                  (item) =>
+                      new Date(item.dataHoraInicio).getTime() ===
+                      horarioAlvo.dataHoraInicio.getTime(),
+              )
+            : []
+        : ativosFuturos;
     const agendamentoAtivo =
-        await buscarAgendamentoAtivoMaisProximoPorTelefone(telefoneContexto);
+        correspondencias.length === 1
+            ? correspondencias[0]
+            : !horarioFoiInformado && ativosFuturos.length === 1
+              ? ativosFuturos[0]
+              : null;
 
     if (!agendamentoAtivo) {
+        const resultado =
+            correspondencias.length > 1 ||
+            (!horarioFoiInformado && ativosFuturos.length > 1)
+                ? 'ambiguo'
+                : 'sem_correspondencia';
+        const mensagem =
+            resultado === 'ambiguo'
+                ? 'Encontrei mais de um agendamento compatível. Pergunte ao cliente qual horário da lista deseja cancelar e aguarde nova confirmação.'
+                : 'Não encontrei um agendamento futuro ativo nesse horário. Pergunte ao cliente qual horário da lista deseja cancelar e aguarde nova confirmação.';
+        console.info('[GEMINI TOOL] cancelarAgendamento', {
+            correlationId,
+            tool: 'cancelarAgendamento',
+            horarioAlvoInformado,
+            resultado,
+            agendamentoId: null,
+            dataHoraInicioEfetivamenteCancelado: null,
+        });
         return {
             sucesso: false,
-            mensagem: 'Nenhum agendamento ativo encontrado para este telefone.',
+            resultado,
+            mensagem,
+            agendamentos: horariosDisponiveis,
         };
     }
 
@@ -3480,12 +3590,22 @@ async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
             agendamentoAtivo.id,
         );
 
+        console.info('[GEMINI TOOL] cancelarAgendamento', {
+            correlationId,
+            tool: 'cancelarAgendamento',
+            horarioAlvoInformado,
+            resultado: 'cancelado',
+            agendamentoId: agendamento.id,
+            dataHoraInicioEfetivamenteCancelado: new Date(
+                agendamento.dataHoraInicio,
+            ).toISOString(),
+        });
+
         return {
             sucesso: true,
+            resultado: 'cancelado',
             mensagem: 'Agendamento cancelado com sucesso.',
             agendamento: {
-                id: agendamento.id,
-                cliente: agendamento.cliente.nome,
                 servico: agendamento.servico.nome,
                 dataHoraInicio: formatarDataComDiaDaSemana(
                     new Date(agendamento.dataHoraInicio),
@@ -3500,13 +3620,18 @@ async function cancelarAgendamentoTool(telefoneContexto: string): Promise<{
                 : 'Não foi possível cancelar o agendamento.';
 
         console.warn('[GEMINI TOOL] cancelarAgendamento recusado', {
+            correlationId,
             tool: 'cancelarAgendamento',
-            telefone: mascararTelefone(telefoneContexto),
-            erro: describeSafeError(error),
+            horarioAlvoInformado,
+            resultado: 'falha',
+            agendamentoId: agendamentoAtivo.id,
+            dataHoraInicioEfetivamenteCancelado: null,
+            tipoErro: obterTipoErroParaLog(error),
         });
 
         return {
             sucesso: false,
+            resultado: 'falha',
             mensagem: message,
             motivoRecusa: message,
         };
@@ -3568,6 +3693,7 @@ async function executeToolCall(
     messageId: string | null = null,
     mensagensCliente: readonly string[] = [],
     contextoGuardaBloqueio?: ContextoGuardaBloqueio,
+    correlationId: string = randomUUID(),
 ): Promise<unknown> {
     switch (call.name) {
         case 'buscarServicos':
@@ -3600,7 +3726,11 @@ async function executeToolCall(
                 (call.args ?? {}) as unknown as AtualizarAgendamentoArgs,
             );
         case 'cancelarAgendamento':
-            return cancelarAgendamentoTool(phone);
+            return cancelarAgendamentoTool(
+                phone,
+                (call.args ?? {}) as unknown as CancelarAgendamentoArgs,
+                correlationId,
+            );
         case 'solicitarAtendimentoHumano':
             console.info('[GEMINI TOOL] Pedido de atendimento humano', {
                 origem: 'tool',
@@ -3859,6 +3989,7 @@ async function runGeminiFunctionCalling(
                     messageId,
                     mensagensCliente,
                     contextoGuardaBloqueio,
+                    usageContext.correlationId,
                 );
                 const dadosTool = dadosToolSanitizadosParaLog(
                     call,

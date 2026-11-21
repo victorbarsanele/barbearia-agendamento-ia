@@ -224,12 +224,17 @@ describe('Regressão de segurança: consultarAgendamento não deve confiar em te
             { name: 'cancelarAgendamento', args: {}, id: 'call-3' } as any,
             TELEFONE_SESSAO_REAL,
             REMOTE_JID_SESSAO_REAL,
-        )) as { sucesso: boolean; mensagem: string };
+        )) as {
+            sucesso: boolean;
+            resultado: string;
+            agendamentos: unknown[];
+        };
 
-        expect(resultadoCancelamento.sucesso).toBe(false);
-        expect(resultadoCancelamento.mensagem).toContain(
-            'Nenhum agendamento ativo encontrado',
-        );
+        expect(resultadoCancelamento).toMatchObject({
+            sucesso: false,
+            resultado: 'sem_correspondencia',
+            agendamentos: [],
+        });
     });
 });
 
