@@ -50,6 +50,9 @@ vi.mock('./agendamento.service', () => ({
 vi.mock('./horario-funcionamento.service', () => ({
     carregarConfiguracao: vi.fn().mockResolvedValue(null),
 }));
+vi.mock('./lembrete-agendamento.service', () => ({
+    consumirContextoRemarcacao: vi.fn().mockResolvedValue(null),
+}));
 vi.mock('../whatsapp/whatsapp-outbound.service', () => ({
     sendWhatsAppText: mocks.sendWhatsAppText,
 }));
@@ -455,6 +458,9 @@ describe('gemini pending context', () => {
         );
         expect(entry?.[1]).toEqual({
             toolsChamadas: ['buscarServicos', 'consultarPacotesDisponiveis'],
+            toolsDadosSanitizados: [],
+            dicaDataCitada: false,
+            datasCitadasISO: [],
             iteracoes: 2,
             rascunhoPendenteNoInicio: false,
         });

@@ -95,6 +95,10 @@ import {
     type ConfiguracaoHorizonteAgenda,
 } from '../utils/horizonte-agenda';
 import {
+    resolverDatasCitadas,
+    type DataCitadaResolvida,
+} from '../utils/data-citada';
+import {
     carregarIdentidadeBarbeiro,
     type IdentidadeBarbeiro,
 } from '../utils/barbeiro-identidade';
@@ -336,6 +340,7 @@ const BASE_SYSTEM_PROMPT = [
     'Ao falar de serviços com o cliente, identifique-os pelo nome; a duração e o preço retornados por buscarServicos podem ser informados quando úteis. IDs e códigos internos (cuid) só podem aparecer nos parâmetros de tools, nunca em texto ao cliente, nem entre parênteses.',
     'Ao interpretar datas relativas como "dia 10" ou "próxima sexta", use a data atual informada no contexto temporal abaixo.',
     'Use SOMENTE a tabela de calendário abaixo para dias da semana e datas relativas; nunca calcule. Ao citar data retornada por uma tool, use o campo data, formate como DD/MM/AAAA e use diaSemana retornado. Para demais datas, use dia da semana e DD/MM/AAAA copiados da tabela ou o número do dia informado pelo cliente.',
+    'Ao responder sobre uma data citada pelo cliente, use a linha de data citada e o calendário; nunca afirme dia da semana ou dia fechado que não esteja nesses dados. Se o cliente não informar o ano, responda citando a data completa com ano e dia da semana copiados do calendário.',
     'Se cliente citar dia da semana e número incompatíveis, não peça desculpas: informe divergência e pergunte qual quis dizer. Sempre que cliente citar dia da semana, preencha diaDaSemana nas tools exatamente como ele falou; nunca deduza pela data.',
     'Se confirmarAgendamento retornar sucesso=false com instrucao, siga instrucao; nos demais casos, repasse exatamente mensagem retornada pela tool.',
     'Nunca diga que houve erro, problema ou falha de processamento, a menos que a tool diga isso. Nunca prometa ação futura, como "um instante", "vou refazer" ou "vou verificar".',
@@ -393,6 +398,7 @@ function buildSystemPrompt(
         horizonteDias: null,
         limiteAte: null,
     }),
+    datasCitadas: readonly DataCitadaResolvida[] = [],
 ): string {
     let regraIdentidade = NEUTRAL_BARBER_IDENTITY_RULE;
     if (identidadeBarbeiro) {
@@ -431,7 +437,14 @@ function buildSystemPrompt(
     const textoPeriodosBloqueados = periodosBloqueados.length
         ? construirBlocoPeriodosBloqueados(periodosBloqueados)
         : '';
-    const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\nCalendário (hoje até ${horizonteAte}):\n${calendario}${textoPeriodosBloqueados}\nNão ofereça nem consulte datas após o último dia do calendário.`;
+    const textoDatasCitadas = datasCitadas
+        .map(
+            (data) =>
+                `Data citada pelo cliente na última mensagem: ${data.dataFormatada}, ${data.diaDaSemana}, ${data.diaDeFuncionamento ? 'dia de funcionamento' : 'FECHADO'}.`,
+        )
+        .join('\n');
+    const blocoDatasCitadas = textoDatasCitadas ? `${textoDatasCitadas}\n` : '';
+    const prompt = `${baseSystemPrompt} Contexto temporal: agora em ${TIME_ZONE} = ${getNowInBrasiliaIso()}.\n${blocoDatasCitadas}Calendário (hoje até ${horizonteAte}):\n${calendario}${textoPeriodosBloqueados}\nNão ofereça nem consulte datas após o último dia do calendário.`;
     return contextoRascunho ? `${prompt}\n${contextoRascunho}` : prompt;
 }
 
@@ -1159,6 +1172,83 @@ function getDateKeyInBrasilia(date: Date): string {
         month: '2-digit',
         day: '2-digit',
     }).format(date);
+}
+
+function obterTipoErroParaLog(error: unknown): string {
+    const tipo = error instanceof Error ? error.name : typeof error;
+    return /^[A-Za-z0-9_.-]{1,40}$/.test(tipo) ? tipo : 'desconhecido';
+}
+
+function dataIsoSanitizadaParaLog(
+    value: unknown,
+    permitirHorario: boolean,
+): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const pattern = permitirHorario
+        ? /^(\d{4}-\d{2}-\d{2})(?:T.*)?$/
+        : /^(\d{4}-\d{2}-\d{2})$/;
+    const data = value.match(pattern)?.[1];
+    if (!data) {
+        return null;
+    }
+
+    try {
+        diaDaSemanaEmBrasilia(data);
+        return data;
+    } catch {
+        return null;
+    }
+}
+
+function dadosToolSanitizadosParaLog(
+    call: FunctionCall,
+    toolResponse: unknown,
+): Record<string, unknown> | null {
+    if (
+        call.name !== 'buscarHorariosDisponiveis' &&
+        call.name !== 'prepararAgendamento'
+    ) {
+        return null;
+    }
+
+    const args =
+        typeof call.args === 'object' && call.args !== null
+            ? (call.args as Record<string, unknown>)
+            : {};
+    const data = dataIsoSanitizadaParaLog(
+        call.name === 'buscarHorariosDisponiveis'
+            ? args.data
+            : args.dataHoraInicio,
+        call.name === 'prepararAgendamento',
+    );
+    const diaDaSemanaRecebido =
+        typeof args.diaDaSemana === 'string' &&
+        DIAS_SEMANA.includes(args.diaDaSemana as DiaDaSemana)
+            ? args.diaDaSemana
+            : null;
+    let diaDaSemanaCalculado: string | null = null;
+    if (data) {
+        diaDaSemanaCalculado = nomeDiaDaSemana(diaDaSemanaEmBrasilia(data));
+    }
+
+    const response =
+        typeof toolResponse === 'object' && toolResponse !== null
+            ? (toolResponse as Record<string, unknown>)
+            : {};
+    const diaTotalmenteBloqueado = response.diaTotalmenteBloqueado;
+
+    return {
+        tool: call.name,
+        data,
+        diaDaSemanaRecebido,
+        diaDaSemanaCalculado,
+        ...(typeof diaTotalmenteBloqueado === 'boolean'
+            ? { diaTotalmenteBloqueado }
+            : {}),
+    };
 }
 
 interface OpcaoDataDia {
@@ -3619,7 +3709,9 @@ async function runGeminiFunctionCalling(
     let usouTool = false;
     let escalonado = false;
     let iteracoes = 0;
+    let datasCitadasResolvidas: DataCitadaResolvida[] = [];
     const toolsChamadas: string[] = [];
+    const toolsDadosSanitizados: Array<Record<string, unknown>> = [];
     const declarationsDisponiveis = confirmarDisponivel
         ? functionDeclarations
         : functionDeclarations.filter(
@@ -3681,6 +3773,22 @@ async function runGeminiFunctionCalling(
             );
         }
 
+        if (configuracaoFuncionamento !== undefined) {
+            try {
+                datasCitadasResolvidas = resolverDatasCitadas(
+                    userMessage,
+                    hojeIsoTurno,
+                    horizonteTurno.horizonteAte,
+                    configuracaoFuncionamento,
+                );
+            } catch (error) {
+                console.warn(
+                    '[GEMINI SERVICE] Falha ao resolver data citada.',
+                    { tipoErro: obterTipoErroParaLog(error) },
+                );
+            }
+        }
+
         for (let i = 0; i < 6; i += 1) {
             iteracoes += 1;
             const { value: result, attempts } = await executeWith429Retry(
@@ -3696,6 +3804,7 @@ async function runGeminiFunctionCalling(
                                 periodosBloqueados,
                                 hojeIsoTurno,
                                 horizonteTurno.horizonteAte,
+                                datasCitadasResolvidas,
                             ),
                             tools: [
                                 {
@@ -3752,6 +3861,13 @@ async function runGeminiFunctionCalling(
                     mensagensCliente,
                     contextoGuardaBloqueio,
                 );
+                const dadosTool = dadosToolSanitizadosParaLog(
+                    call,
+                    toolResponse,
+                );
+                if (dadosTool) {
+                    toolsDadosSanitizados.push(dadosTool);
+                }
 
                 if (
                     call.name === 'prepararAgendamento' &&
@@ -3853,6 +3969,9 @@ async function runGeminiFunctionCalling(
     } finally {
         console.info('[GEMINI TURNO]', {
             toolsChamadas,
+            toolsDadosSanitizados,
+            dicaDataCitada: datasCitadasResolvidas.length > 0,
+            datasCitadasISO: datasCitadasResolvidas.map((data) => data.dataISO),
             iteracoes,
             rascunhoPendenteNoInicio,
         });
