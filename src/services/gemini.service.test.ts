@@ -2049,6 +2049,113 @@ describe('gemini.service tools de pacotes', () => {
         expect(prompt).toContain('terça-feira 15/12/2026');
     });
 
+    it('inclui a dica determinística da data citada no prompt do turno', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-11-20T23:54:00Z'));
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: '30/11/2026 é segunda-feira.',
+        });
+
+        await processarMensagemWhatsapp(remoteJid, '30/11');
+
+        const prompt = (
+            geminiMocks.generateContent.mock.calls[0][0] as {
+                config: { systemInstruction: string };
+            }
+        ).config.systemInstruction;
+        expect(prompt).toContain(
+            'Data citada pelo cliente na última mensagem: 30/11/2026, segunda-feira, dia de funcionamento.',
+        );
+        expect(prompt).toContain('2026-11-20T20:54:00-03:00');
+    });
+
+    it('omite a dica determinística quando a mensagem não contém data', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-11-20T23:54:00Z'));
+        geminiMocks.generateContent.mockResolvedValueOnce({
+            text: 'Qual data você prefere?',
+        });
+
+        await processarMensagemWhatsapp(remoteJid, 'Quero agendar um corte.');
+
+        const prompt = (
+            geminiMocks.generateContent.mock.calls[0][0] as {
+                config: { systemInstruction: string };
+            }
+        ).config.systemInstruction;
+        expect(prompt).not.toContain(
+            'Data citada pelo cliente na última mensagem:',
+        );
+    });
+
+    it('registra argumentos de data sanitizados no log do turno', async () => {
+        prepararGemini();
+        vi.setSystemTime(new Date('2026-11-20T23:54:00Z'));
+        const bloqueio = criarBloqueioPontual(
+            '2026-11-30T00:00:00-03:00',
+            '2026-12-01T00:00:00-03:00',
+            'Recesso',
+        );
+        vi.mocked(bloqueioRepository.listarTodos).mockResolvedValueOnce([
+            bloqueio,
+        ]);
+        geminiMocks.generateContent
+            .mockResolvedValueOnce({
+                functionCalls: [
+                    {
+                        name: 'buscarHorariosDisponiveis',
+                        args: {
+                            data: '2026-11-30',
+                            servicoId: 'servico-1',
+                            diaDaSemana: 'segunda',
+                        },
+                        id: 'call-horarios-log',
+                    },
+                    {
+                        name: 'prepararAgendamento',
+                        args: {
+                            nomeCliente: 'DADO PRIVADO',
+                            telefone: '5511888888888',
+                            servicoId: 'servico-1',
+                            dataHoraInicio: '2026-11-30T12:00:00-03:00',
+                            diaDaSemana: 'domingo',
+                        },
+                        id: 'call-preparar-log',
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({ text: 'Data confirmada.' });
+        const logInfo = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+        await processarMensagemWhatsapp(remoteJid, '30/11');
+
+        const turno = logInfo.mock.calls.find(
+            ([evento]) => evento === '[GEMINI TURNO]',
+        )?.[1] as Record<string, unknown>;
+        expect(turno).toMatchObject({
+            toolsChamadas: ['buscarHorariosDisponiveis', 'prepararAgendamento'],
+            toolsDadosSanitizados: [
+                {
+                    tool: 'buscarHorariosDisponiveis',
+                    data: '2026-11-30',
+                    diaDaSemanaRecebido: 'segunda',
+                    diaDaSemanaCalculado: 'segunda-feira',
+                    diaTotalmenteBloqueado: true,
+                },
+                {
+                    tool: 'prepararAgendamento',
+                    data: '2026-11-30',
+                    diaDaSemanaRecebido: 'domingo',
+                    diaDaSemanaCalculado: 'segunda-feira',
+                },
+            ],
+            dicaDataCitada: true,
+            datasCitadasISO: ['2026-11-30'],
+        });
+        expect(JSON.stringify(turno)).not.toContain('DADO PRIVADO');
+        expect(JSON.stringify(turno)).not.toContain('5511888888888');
+    });
+
     it('calendário default e janela de 180 dias têm último dia inclusivo', () => {
         const promptPadrao = __testables.buildSystemPrompt(
             undefined,
@@ -2190,7 +2297,9 @@ describe('gemini.service tools de pacotes', () => {
         await processarMensagemWhatsapp(remoteJid, 'Quero agendar.');
 
         expect(geminiMocks.generateContent).toHaveBeenCalledOnce();
-        expect(aviso).toHaveBeenCalledOnce();
+        expect(aviso).toHaveBeenCalledWith(
+            '[GEMINI SERVICE] Falha ao carregar bloqueios para calendário.',
+        );
         const prompt = (
             geminiMocks.generateContent.mock.calls[0][0] as {
                 config: { systemInstruction: string };
@@ -2340,7 +2449,9 @@ describe('gemini.service tools de pacotes', () => {
         await processarMensagemWhatsapp(remoteJid, 'oi');
 
         expect(geminiMocks.generateContent).toHaveBeenCalledTimes(2);
-        expect(aviso).toHaveBeenCalledOnce();
+        expect(aviso).toHaveBeenCalledWith(
+            '[GEMINI SERVICE] Falha ao carregar configuração de funcionamento para calendário.',
+        );
         const prompt = (
             geminiMocks.generateContent.mock.calls[0][0] as {
                 config: { systemInstruction: string };
