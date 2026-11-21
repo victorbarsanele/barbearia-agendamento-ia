@@ -375,3 +375,22 @@ test('edição sem pacote mantém PUT sem pacoteId e redirecionamento atual', as
     expect(api.puts[0]).not.toHaveProperty('pacoteId');
     await expect(page).toHaveURL('/');
 });
+
+test('edita serviço de agendamento passado e salva com sucesso', async ({
+    page,
+}) => {
+    const api = await mockApi(page);
+    const inicioPassado = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    api.agendamento.dataHoraInicio = inicioPassado.toISOString();
+    api.agendamento.dataHoraFim = new Date(
+        inicioPassado.getTime() + 30 * 60 * 1000,
+    ).toISOString();
+
+    await abrirEdicao(page);
+    await page.getByLabel('Serviço').selectOption('servico-barba');
+    await salvar(page);
+
+    await expect.poll(() => api.puts.length).toBe(1);
+    expect(api.puts[0]).toMatchObject({ servicoId: 'servico-barba' });
+    await expect(page).toHaveURL('/');
+});
